@@ -1,0 +1,141 @@
+# Copilot Instructions for dpl
+
+## Project Overview
+
+**dpl** is a lightweight web application deployment system written in Go.
+It receives application archives via HTTP, builds container images using Podman, and runs them as systemd services on a Linux server.
+
+### Entity Model
+
+All managed entities live in `/opt/dpl/<name>/config.yaml`.
+Each config has a `type` field that determines the entity kind:
+
+- **app** — web application running in a Podman container (build, run, systemd service).
+- **domain** — domain configuration (nginx, TLS). *Future.*
+- **static** — static file site with its own deploy logic. *Future.*
+- **database** — managed database service. *Future.*
+
+Each entity type is a separate Go package (`internal/app`, `internal/domain`, etc.) with its own config struct, templates, and deploy logic.
+
+Examples:
+```
+/opt/dpl/example.com/config.yaml   # type: domain
+/opt/dpl/landing/config.yaml        # type: static
+/opt/dpl/profile/config.yaml        # type: app
+/opt/dpl/profile-db/config.yaml     # type: database
+```
+
+### Core Workflow (app)
+
+1. GitHub Actions creates a tag → builds a tar.gz archive of the web application.
+2. The archive is POSTed to `http://server:PORT/deploy/app-name` with Bearer token auth.
+3. dpl reads entity config from `/opt/dpl/app-name/config.yaml`, checks `type: app`.
+4. dpl generates build artifacts: `build.sh`, `Containerfile`, `run.sh`, systemd `.service` file.
+5. dpl builds a Podman image and starts a container via systemd.
+
+### Target Platform
+
+- Linux server with **systemd** and **Podman** (rootful or rootless).
+- No Docker dependency. Use Podman CLI and Podman-specific features (e.g., `--sdnotify=conmon`, `--cgroups=split`).
+
+## Language & Style
+
+- **Go** (latest stable, currently 1.24+).
+- Use the standard library wherever possible. Minimize external dependencies.
+- Follow idiomatic Go: short variable names in narrow scopes, exported names with doc comments, error wrapping with `fmt.Errorf("context: %w", err)`.
+- Use `slog` for structured logging.
+- Use `errors.Is` / `errors.As` for error inspection.
+- Prefer returning errors over panicking.
+
+## Project Structure
+
+```
+cmd/
+  dpl/              # main package — CLI entry point
+internal/
+  server/           # HTTP server, deploy handler, auth middleware
+  app/              # app entity: config, templates, generation, deploy pipeline
+  init/             # `dpl init` CLI wizard
+  podman/           # podman build & run commands
+  systemd/          # systemd unit management (enable, start, stop, restart)
+```
+
+- `cmd/dpl/main.go` — entry point parsing CLI args (`init` subcommand or HTTP server mode).
+- `internal/` — all internal packages, not importable from outside.
+- Packages are organized by domain entity, not by technical layer. Each entity (`app`, `domain`, `static`, `database`) owns its own config struct, templates, and deploy logic.
+- Shared infrastructure (`podman`, `systemd`) lives in separate packages and is used by entity packages.
+
+## Key Design Decisions
+
+### Configuration
+
+- All entities live in `/opt/dpl/<name>/`.
+- Every `config.yaml` has a `type` field (`app`, `domain`, `static`, `database`).
+- Config is parsed with `gopkg.in/yaml.v3`.
+- Config struct fields use `yaml:"..."` tags.
+- Server-level settings (port) are passed as environment variables (`DPL_PORT`) set in the dpl systemd service file.
+- Auth tokens are per-entity: each entity's `config.yaml` contains a `tokens` array. This allows different tokens for different entities and users.
+
+### Dispatch by Type
+
+- The HTTP handler reads the `type` field from `config.yaml` and dispatches to the corresponding entity package (`app.Deploy()`, `static.Deploy()`, etc.).
+- Each entity package implements its own deploy logic independently.
+
+### Template Rendering
+
+- Each entity package embeds its own templates via `embed.FS`.
+- Use Go `text/template` for generating scripts and config files.
+- Build/runtime env vars use heredoc syntax with a random UUID delimiter per variable to safely handle multiline values.
+
+### HTTP API
+
+- `POST /deploy/<name>` — accepts `multipart/form-data` or raw body with the tar.gz archive.
+- Bearer token authentication via `Authorization` header, validated against the `tokens` array in the entity's `config.yaml`.
+- Return meaningful HTTP status codes: 401 (bad token), 404 (unknown entity), 500 (build/deploy errors).
+- Stream build output back in the response body where practical.
+
+### Container Build (app)
+
+- Build context is assembled in a temp directory.
+- `build.sh` is mounted as a secret during build (`--secret id=build-sh`), not baked into the image.
+- The final image is tagged as `localhost/<name>:<timestamp>`.
+
+### systemd Integration (app)
+
+- Each app container is a systemd service: `dpl-<name>.service`.
+- Service uses `Type=notify` with Podman's conmon sdnotify.
+- Port mapping: `127.0.0.1:<random-host-port>:<container-port>`.
+
+### Networking / Reverse Proxy
+
+- Containers bind to `127.0.0.1` only.
+- nginx config generation is planned (via `domain` entity).
+- TLS is handled externally for now.
+
+## Testing
+
+- Unit tests with `testing` package, table-driven style.
+- Use `t.TempDir()` for file system tests.
+- Integration tests that call Podman should be guarded with a build tag `//go:build integration`.
+- Test file generation by comparing output against golden files in `testdata/`.
+
+## CLI
+
+- `dpl init` — interactive wizard that generates a systemd service file for dpl itself (prompts for HTTP port only).
+- `dpl` (no args) — starts the HTTP server (normal operation mode).
+- Use the standard `flag` package or bare `os.Args` parsing. No CLI framework needed for two modes.
+
+## File Naming Conventions
+
+- Go files: `snake_case.go`
+- Templates: `<name>.tmpl` (e.g., `containerfile.tmpl`, `build_sh.tmpl`)
+- Test files: `*_test.go`
+- Golden/test data: `testdata/` directories within each package
+
+## Important Notes
+
+- Never use Docker. All container operations use `podman` CLI.
+- The heredoc delimiter for env vars must be unique per variable (UUID v4).
+- `build.sh` runs inside the container at build time via `--mount=type=secret`.
+- `run.sh` is copied into the image and runs at container start.
+- Port allocation for host-side mapping should pick a random free port and persist it in the service file.
