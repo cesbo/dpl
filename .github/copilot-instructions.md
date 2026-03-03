@@ -55,7 +55,7 @@ cmd/
 internal/
   server/           # HTTP server, deploy handler, auth middleware
   app/              # app entity: config, templates, generation, deploy pipeline
-  init/             # `dpl init` CLI wizard
+  wizard/           # `dpl init` CLI wizard
   podman/           # podman build & run commands
   systemd/          # systemd unit management (enable, start, stop, restart)
 ```
@@ -139,3 +139,12 @@ internal/
 - `build.sh` runs inside the container at build time via `--mount=type=secret`.
 - `run.sh` is copied into the image and runs at container start.
 - Port allocation for host-side mapping should pick a random free port and persist it in the service file.
+
+## Workflow
+
+### After completing a phase
+
+When work on a phase from `TODO.md` is finished:
+
+1. Mark all phase items as done (`[x]`) and add ✅ to the phase heading.
+2. `git add -A && git commit` with a message like `phase N: short description`.
