@@ -1,0 +1,7 @@
+type: app
+image: node:20-alpine
+port: 3000
+build:
+  script: npm ci
+run:
+  cmd: "node index.js"

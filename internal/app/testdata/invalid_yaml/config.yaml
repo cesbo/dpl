@@ -1,0 +1,5 @@
+type: app
+tokens:
+  - "secret"
+image: [invalid
+  yaml: {broken

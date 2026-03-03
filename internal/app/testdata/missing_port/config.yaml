@@ -1,0 +1,8 @@
+type: app
+tokens:
+  - "secret"
+image: node:20-alpine
+build:
+  script: npm ci
+run:
+  cmd: "node index.js"

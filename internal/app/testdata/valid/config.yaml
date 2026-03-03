@@ -1,0 +1,35 @@
+type: app
+tokens:
+  - "deploy-token-1"
+  - "deploy-token-2"
+domain: example.com
+route: /api
+image: node:20-alpine
+port: 3000
+build:
+  env:
+    NODE_ENV: "production"
+    API_URL: "https://api.example.com"
+  script: |
+    npm ci
+    npm run build
+runtime:
+  env:
+    NODE_ENV: "production"
+    DATABASE_URL: "postgres://localhost/app"
+init:
+  script: |
+    npx prisma migrate deploy
+run:
+  cmd: "node server.js"
+volumes:
+  - id: appdata
+    path: /app/data
+  - id: cache
+    path: /app/.cache
+public:
+  dirs:
+    - path: /app/public
+      url: /static
+    - path: /app/uploads
+      url: /uploads
