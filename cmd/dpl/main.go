@@ -14,7 +14,11 @@ func main() {
 	args := os.Args[1:]
 
 	if len(args) == 0 {
-		if err := server.Run(); err != nil {
+		baseDir := os.Getenv("DPL_BASE_DIR")
+		if baseDir == "" {
+			baseDir = "/opt/dpl"
+		}
+		if err := server.Run(baseDir); err != nil {
 			slog.Error("server failed", "error", err)
 			os.Exit(1)
 		}
