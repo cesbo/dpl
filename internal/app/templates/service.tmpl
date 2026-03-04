@@ -16,7 +16,6 @@ ExecStart=/usr/bin/podman run \
   --rm \
   --cgroups=split \
   --sdnotify=conmon \
-  -d \
 {{- range .Volumes}}
   -v {{.ID}}:{{.Path}} \
 {{- end}}
@@ -24,8 +23,9 @@ ExecStart=/usr/bin/podman run \
   --log-driver=k8s-file \
   --log-opt=path=/var/log/podman/%N.log \
   {{.ImageRef}}
-ExecStop=/usr/bin/podman rm -v -f -i --cidfile=%t/%N.cid
+ExecStop=/usr/bin/podman stop --cidfile=%t/%N.cid
 ExecStopPost=-/usr/bin/podman rm -v -f -i --cidfile=%t/%N.cid
+ExecStopPost=-/usr/bin/rm -f %t/%N.cid
 
 [Install]
 WantedBy=default.target
