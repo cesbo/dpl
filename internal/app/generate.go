@@ -8,7 +8,7 @@ import (
 	"text/template"
 )
 
-//go:embed *.tmpl
+//go:embed templates/*.tmpl
 var templateFS embed.FS
 
 // envEntry represents a single environment variable prepared for template rendering.
@@ -107,7 +107,8 @@ func GenerateService(cfg *Config, hostPort int, imageRef string) (string, error)
 }
 
 func renderTemplate(name string, data any) (string, error) {
-	tmpl, err := template.ParseFS(templateFS, name)
+	path := "templates/" + name
+	tmpl, err := template.ParseFS(templateFS, path)
 	if err != nil {
 		return "", fmt.Errorf("app: parse template %s: %w", name, err)
 	}

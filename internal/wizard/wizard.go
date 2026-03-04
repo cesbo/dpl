@@ -13,7 +13,7 @@ import (
 	"text/template"
 )
 
-//go:embed service.tmpl
+//go:embed templates/service.tmpl
 var serviceFS embed.FS
 
 const (
@@ -76,7 +76,7 @@ func run(in io.Reader, out io.Writer, execPath string) error {
 }
 
 func renderService(params ServiceParams) (string, error) {
-	tmpl, err := template.ParseFS(serviceFS, "service.tmpl")
+	tmpl, err := template.ParseFS(serviceFS, "templates/service.tmpl")
 	if err != nil {
 		return "", fmt.Errorf("wizard: parse template: %w", err)
 	}
