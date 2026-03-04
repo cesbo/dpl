@@ -24,10 +24,17 @@ type Config struct {
 	Public  PublicConfig  `yaml:"public"`
 }
 
-// BuildConfig holds build-time settings.
-type BuildConfig struct {
+// BuildLayer describes a single build layer with its own COPY and RUN steps.
+type BuildLayer struct {
+	Name   string            `yaml:"name"`
+	Files  []string          `yaml:"files"`
 	Env    map[string]string `yaml:"env"`
 	Script string            `yaml:"script"`
+}
+
+// BuildConfig holds build-time settings as an ordered list of layers.
+type BuildConfig struct {
+	Layers []BuildLayer `yaml:"layers"`
 }
 
 // RuntimeConfig holds runtime settings: environment variables, init script, and start command.
@@ -91,8 +98,13 @@ func validate(cfg *Config) error {
 	if cfg.Image == "" {
 		return fmt.Errorf("config: image is required")
 	}
-	if cfg.Build.Script == "" {
-		return fmt.Errorf("config: build.script is required")
+	if len(cfg.Build.Layers) == 0 {
+		return fmt.Errorf("config: build.layers is required")
+	}
+	for i, l := range cfg.Build.Layers {
+		if l.Script == "" {
+			return fmt.Errorf("config: build.layers[%d].script is required", i)
+		}
 	}
 	if cfg.Runtime.Cmd == "" {
 		return fmt.Errorf("config: runtime.cmd is required")

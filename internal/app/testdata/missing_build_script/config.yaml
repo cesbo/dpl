@@ -4,7 +4,7 @@ tokens:
 image: node:20-alpine
 port: 3000
 build:
-  env:
-    KEY: value
+  layers:
+    - files: ["package.json"]
 runtime:
   cmd: "node index.js"

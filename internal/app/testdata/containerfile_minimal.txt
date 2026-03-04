@@ -1,8 +1,5 @@
 FROM node:20-alpine
 WORKDIR /app
-COPY app/package.json app/package-lock.json ./
 RUN --mount=type=secret,id=build-sh-1 /bin/sh /run/secrets/build-sh-1
-COPY app/ ./
-RUN --mount=type=secret,id=build-sh-2 /bin/sh /run/secrets/build-sh-2
 COPY run.sh /opt/dpl/run.sh
 CMD ["/bin/sh", "/opt/dpl/run.sh"]

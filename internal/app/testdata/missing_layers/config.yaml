@@ -3,6 +3,6 @@ tokens:
   - "secret"
 image: node:20-alpine
 port: 3000
-build:
-  layers:
-    - script: npm ci
+build: {}
+runtime:
+  cmd: "node index.js"

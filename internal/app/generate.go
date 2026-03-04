@@ -48,13 +48,31 @@ type buildShParams struct {
 	Script string
 }
 
-// GenerateBuildSh renders the build.sh script for an app.
-func GenerateBuildSh(cfg *Config, uuidFn func() string) (string, error) {
-	params := buildShParams{
-		Env:    buildEnvEntries(cfg.Build.Env, uuidFn),
-		Script: cfg.Build.Script,
+// BuildScript represents a generated build script for a single layer.
+type BuildScript struct {
+	Filename string
+	Content  string
+}
+
+// GenerateBuildScripts renders one build script per layer.
+// Scripts are named build-sh-1, build-sh-2, etc. (1-based index).
+func GenerateBuildScripts(cfg *Config, uuidFn func() string) ([]BuildScript, error) {
+	scripts := make([]BuildScript, len(cfg.Build.Layers))
+	for i, layer := range cfg.Build.Layers {
+		params := buildShParams{
+			Env:    buildEnvEntries(layer.Env, uuidFn),
+			Script: layer.Script,
+		}
+		content, err := renderTemplate("build_sh.tmpl", params)
+		if err != nil {
+			return nil, fmt.Errorf("layer %d: %w", i, err)
+		}
+		scripts[i] = BuildScript{
+			Filename: fmt.Sprintf("build-sh-%d", i+1),
+			Content:  content,
+		}
 	}
-	return renderTemplate("build_sh.tmpl", params)
+	return scripts, nil
 }
 
 // runShParams holds data for the run_sh.tmpl template.
@@ -74,15 +92,44 @@ func GenerateRunSh(cfg *Config, uuidFn func() string) (string, error) {
 	return renderTemplate("run_sh.tmpl", params)
 }
 
+// containerfileLayer holds data for a single layer in the Containerfile.
+type containerfileLayer struct {
+	CopyArgs string // e.g. "app/package.json app/yarn.lock ./" or "" if no files
+	SecretID string // e.g. "build-sh-1"
+}
+
 // containerfileParams holds data for the containerfile.tmpl template.
 type containerfileParams struct {
-	Image string
+	Image  string
+	Layers []containerfileLayer
 }
 
 // GenerateContainerfile renders the Containerfile for an app.
+// The build context is expected to have app/ subdirectory with the project files.
 func GenerateContainerfile(cfg *Config) (string, error) {
+	layers := make([]containerfileLayer, len(cfg.Build.Layers))
+	for i, l := range cfg.Build.Layers {
+		var copyArgs string
+		if len(l.Files) > 0 {
+			var parts []string
+			for _, f := range l.Files {
+				if f == "." {
+					parts = append(parts, "app/")
+				} else {
+					parts = append(parts, "app/"+f)
+				}
+			}
+			parts = append(parts, "./")
+			copyArgs = strings.Join(parts, " ")
+		}
+		layers[i] = containerfileLayer{
+			CopyArgs: copyArgs,
+			SecretID: fmt.Sprintf("build-sh-%d", i+1),
+		}
+	}
 	params := containerfileParams{
-		Image: cfg.Image,
+		Image:  cfg.Image,
+		Layers: layers,
 	}
 	return renderTemplate("containerfile.tmpl", params)
 }

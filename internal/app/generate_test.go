@@ -24,11 +24,25 @@ func fullTestConfig() *Config {
 		Image:  "node:20-alpine",
 		Port:   3000,
 		Build: BuildConfig{
-			Env: map[string]string{
-				"NODE_ENV": "production",
-				"API_URL":  "https://api.example.com",
+			Layers: []BuildLayer{
+				{
+					Name:  "deps",
+					Files: []string{"package.json", "package-lock.json"},
+					Env: map[string]string{
+						"NODE_ENV": "production",
+					},
+					Script: "npm ci\n",
+				},
+				{
+					Name:  "build",
+					Files: []string{"."},
+					Env: map[string]string{
+						"API_URL":  "https://api.example.com",
+						"NODE_ENV": "production",
+					},
+					Script: "npm run build\n",
+				},
 			},
-			Script: "npm ci\nnpm run build\n",
 		},
 		Runtime: RuntimeConfig{
 			Env: map[string]string{
@@ -53,7 +67,11 @@ func minimalTestConfig() *Config {
 		Image:  "node:20-alpine",
 		Port:   3000,
 		Build: BuildConfig{
-			Script: "npm ci\n",
+			Layers: []BuildLayer{
+				{
+					Script: "npm ci\n",
+				},
+			},
 		},
 		Runtime: RuntimeConfig{
 			Cmd: "node index.js",
@@ -72,20 +90,33 @@ func goldenEqual(t *testing.T, golden string, got string) {
 	}
 }
 
-func TestGenerateBuildSh(t *testing.T) {
-	got, err := GenerateBuildSh(fullTestConfig(), testUUIDFn())
+func TestGenerateBuildScripts(t *testing.T) {
+	scripts, err := GenerateBuildScripts(fullTestConfig(), testUUIDFn())
 	if err != nil {
-		t.Fatalf("GenerateBuildSh: %v", err)
+		t.Fatalf("GenerateBuildScripts: %v", err)
 	}
-	goldenEqual(t, "build_sh.txt", got)
+	if got, want := len(scripts), 2; got != want {
+		t.Fatalf("len(scripts) = %d, want %d", got, want)
+	}
+	if got, want := scripts[0].Filename, "build-sh-1"; got != want {
+		t.Errorf("scripts[0].Filename = %q, want %q", got, want)
+	}
+	if got, want := scripts[1].Filename, "build-sh-2"; got != want {
+		t.Errorf("scripts[1].Filename = %q, want %q", got, want)
+	}
+	goldenEqual(t, "build_sh_layer1.txt", scripts[0].Content)
+	goldenEqual(t, "build_sh_layer2.txt", scripts[1].Content)
 }
 
-func TestGenerateBuildShMinimal(t *testing.T) {
-	got, err := GenerateBuildSh(minimalTestConfig(), testUUIDFn())
+func TestGenerateBuildScriptsMinimal(t *testing.T) {
+	scripts, err := GenerateBuildScripts(minimalTestConfig(), testUUIDFn())
 	if err != nil {
-		t.Fatalf("GenerateBuildSh: %v", err)
+		t.Fatalf("GenerateBuildScripts: %v", err)
 	}
-	goldenEqual(t, "build_sh_minimal.txt", got)
+	if got, want := len(scripts), 1; got != want {
+		t.Fatalf("len(scripts) = %d, want %d", got, want)
+	}
+	goldenEqual(t, "build_sh_minimal.txt", scripts[0].Content)
 }
 
 func TestGenerateRunSh(t *testing.T) {
@@ -110,6 +141,14 @@ func TestGenerateContainerfile(t *testing.T) {
 		t.Fatalf("GenerateContainerfile: %v", err)
 	}
 	goldenEqual(t, "containerfile.txt", got)
+}
+
+func TestGenerateContainerfileMinimal(t *testing.T) {
+	got, err := GenerateContainerfile(minimalTestConfig())
+	if err != nil {
+		t.Fatalf("GenerateContainerfile: %v", err)
+	}
+	goldenEqual(t, "containerfile_minimal.txt", got)
 }
 
 func TestGenerateService(t *testing.T) {

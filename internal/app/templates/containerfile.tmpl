@@ -1,6 +1,10 @@
 FROM {{.Image}}
 WORKDIR /app
-ADD data.tar.gz /app
+{{- range .Layers}}
+{{- if .CopyArgs}}
+COPY {{.CopyArgs}}
+{{- end}}
+RUN --mount=type=secret,id={{.SecretID}} /bin/sh /run/secrets/{{.SecretID}}
+{{- end}}
 COPY run.sh /opt/dpl/run.sh
-RUN --mount=type=secret,id=build-sh /bin/sh /run/secrets/build-sh
 CMD ["/bin/sh", "/opt/dpl/run.sh"]

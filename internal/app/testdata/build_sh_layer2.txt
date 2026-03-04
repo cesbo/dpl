@@ -1,0 +1,20 @@
+#!/bin/sh
+
+set -e
+echo "#dpl-update: Preparing project"
+
+set -a
+
+API_URL=$(cat <<'EOF:00000000-0000-0000-0000-000000000002'
+https://api.example.com
+EOF:00000000-0000-0000-0000-000000000002
+)
+
+NODE_ENV=$(cat <<'EOF:00000000-0000-0000-0000-000000000003'
+production
+EOF:00000000-0000-0000-0000-000000000003
+)
+
+set +a
+
+npm run build
