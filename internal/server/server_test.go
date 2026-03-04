@@ -1,11 +1,15 @@
 package server
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -21,11 +25,46 @@ func writeConfig(t *testing.T, baseDir, name, content string) {
 	}
 }
 
+const validAppConfig = `type: app
+tokens: ["tok-1", "tok-2"]
+image: node:20-alpine
+port: 3000
+build:
+  - script: npm ci
+runtime:
+  cmd: "node index.js"
+`
+
+// testArchiveBody returns a minimal tar.gz body for deploy testing.
+func testArchiveBody(t *testing.T) *bytes.Reader {
+	t.Helper()
+
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+
+	content := "console.log('hello')"
+	hdr := &tar.Header{
+		Name:     "index.js",
+		Mode:     0o644,
+		Size:     int64(len(content)),
+		Typeflag: tar.TypeReg,
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte(content)); err != nil {
+		t.Fatal(err)
+	}
+	tw.Close()
+	gw.Close()
+
+	return bytes.NewReader(buf.Bytes())
+}
+
 func TestDeploy(t *testing.T) {
 	base := t.TempDir()
-	writeConfig(t, base, "myapp", `type: app
-tokens: ["tok-1", "tok-2"]
-`)
+	writeConfig(t, base, "myapp", validAppConfig)
 
 	writeConfig(t, base, "unsupported", `type: domain
 tokens: ["tok"]
@@ -38,24 +77,27 @@ tokens: ["tok"]
 		method     string
 		path       string
 		token      string
+		body       func() *bytes.Reader
 		wantStatus int
-		wantBody   string
+		wantBody   string // substring match (empty = skip)
 	}{
 		{
-			name:       "success with first token",
+			name:       "successful deploy",
 			method:     http.MethodPost,
 			path:       "/deploy/myapp",
 			token:      "tok-1",
+			body:       func() *bytes.Reader { return testArchiveBody(t) },
 			wantStatus: http.StatusOK,
-			wantBody:   "deploy started for app \"myapp\"\n",
+			wantBody:   "deployed myapp to",
 		},
 		{
 			name:       "success with second token",
 			method:     http.MethodPost,
 			path:       "/deploy/myapp",
 			token:      "tok-2",
+			body:       func() *bytes.Reader { return testArchiveBody(t) },
 			wantStatus: http.StatusOK,
-			wantBody:   "deploy started for app \"myapp\"\n",
+			wantBody:   "deployed myapp to",
 		},
 		{
 			name:       "entity not found",
@@ -89,11 +131,29 @@ tokens: ["tok"]
 			wantStatus: http.StatusBadRequest,
 			wantBody:   "unsupported entity type: domain\n",
 		},
+		{
+			name:       "invalid archive body",
+			method:     http.MethodPost,
+			path:       "/deploy/myapp",
+			token:      "tok-1",
+			body:       func() *bytes.Reader { return bytes.NewReader([]byte("not gzip")) },
+			wantStatus: http.StatusInternalServerError,
+			wantBody:   "deploy failed",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, tt.path, nil)
+			var body *bytes.Reader
+			if tt.body != nil {
+				body = tt.body()
+			}
+			var req *http.Request
+			if body != nil {
+				req = httptest.NewRequest(tt.method, tt.path, body)
+			} else {
+				req = httptest.NewRequest(tt.method, tt.path, nil)
+			}
 			if tt.token != "" {
 				req.Header.Set("Authorization", "Bearer "+tt.token)
 			}
@@ -101,12 +161,47 @@ tokens: ["tok"]
 			mux.ServeHTTP(rec, req)
 
 			if rec.Code != tt.wantStatus {
-				t.Errorf("status = %d, want %d", rec.Code, tt.wantStatus)
+				t.Errorf("status = %d, want %d (body: %s)", rec.Code, tt.wantStatus, rec.Body.String())
 			}
-			if got := rec.Body.String(); got != tt.wantBody {
-				t.Errorf("body = %q, want %q", got, tt.wantBody)
+			if tt.wantBody != "" {
+				if got := rec.Body.String(); !strings.Contains(got, tt.wantBody) {
+					t.Errorf("body = %q, want substring %q", got, tt.wantBody)
+				}
 			}
 		})
+	}
+}
+
+// TestDeploy_CreatesFiles verifies that a successful deploy creates the expected
+// files in the deploy directory.
+func TestDeploy_CreatesFiles(t *testing.T) {
+	base := t.TempDir()
+	writeConfig(t, base, "myapp", validAppConfig)
+
+	mux := newMux(base)
+
+	req := httptest.NewRequest(http.MethodPost, "/deploy/myapp", testArchiveBody(t))
+	req.Header.Set("Authorization", "Bearer tok-1")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+
+	// Extract deploy dir from response: "deployed myapp to /path\n"
+	body := strings.TrimSpace(rec.Body.String())
+	parts := strings.SplitN(body, " to ", 2)
+	if len(parts) != 2 {
+		t.Fatalf("unexpected response format: %q", body)
+	}
+	deployDir := parts[1]
+
+	// Verify files exist.
+	for _, f := range []string{"Containerfile", "run.sh", "build-sh-1", "app/index.js"} {
+		if _, err := os.Stat(filepath.Join(deployDir, f)); err != nil {
+			t.Errorf("expected %s to exist: %v", f, err)
+		}
 	}
 }
 

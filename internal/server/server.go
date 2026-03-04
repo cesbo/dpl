@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	"dpl/internal/app"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -47,7 +49,7 @@ func loadEntityMeta(baseDir, name string) (*entityMeta, error) {
 // newMux builds the HTTP routes for the given base directory.
 func newMux(baseDir string) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.Handle("POST /deploy/{name}", authMiddleware(baseDir, http.HandlerFunc(handleDeploy)))
+	mux.Handle("POST /deploy/{name}", authMiddleware(baseDir, http.HandlerFunc(makeDeployHandler(baseDir))))
 	return mux
 }
 
@@ -104,19 +106,44 @@ func matchToken(tok string, valid []string) bool {
 	return false
 }
 
-// handleDeploy is the stub handler for POST /deploy/{name}.
-// It dispatches based on entity type. Full deploy logic is added later.
-func handleDeploy(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	meta := r.Context().Value(metaKey).(*entityMeta)
+// makeDeployHandler returns the handler for POST /deploy/{name}.
+// It dispatches based on entity type and runs the deploy pipeline.
+func makeDeployHandler(baseDir string) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		meta := r.Context().Value(metaKey).(*entityMeta)
 
-	switch meta.Type {
-	case "app":
-		slog.Info("deploying app", "name", name)
-		fmt.Fprintf(w, "deploy started for app %q\n", name)
-	default:
-		http.Error(w, fmt.Sprintf("unsupported entity type: %s", meta.Type), http.StatusBadRequest)
+		switch meta.Type {
+		case "app":
+			deployApp(w, r, baseDir, name)
+		default:
+			http.Error(w, fmt.Sprintf("unsupported entity type: %s", meta.Type), http.StatusBadRequest)
+		}
 	}
+}
+
+// deployApp handles the full deploy pipeline for an app entity.
+func deployApp(w http.ResponseWriter, r *http.Request, baseDir, name string) {
+	cfg, err := app.LoadConfig(filepath.Join(baseDir, name))
+	if err != nil {
+		if errors.Is(err, app.ErrUnsupportedType) {
+			http.Error(w, "unsupported entity type", http.StatusBadRequest)
+			return
+		}
+		slog.Error("load app config", "name", name, "error", err)
+		http.Error(w, "failed to load app config", http.StatusInternalServerError)
+		return
+	}
+
+	deployDir, err := app.Deploy(cfg, name, baseDir, r.Body)
+	if err != nil {
+		slog.Error("deploy app", "name", name, "error", err)
+		http.Error(w, fmt.Sprintf("deploy failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("deploy completed", "name", name, "dir", deployDir)
+	fmt.Fprintf(w, "deployed %s to %s\n", name, deployDir)
 }
 
 // Run starts the HTTP server and blocks until it receives SIGINT/SIGTERM.
