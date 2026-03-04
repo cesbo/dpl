@@ -68,8 +68,8 @@ type runShParams struct {
 func GenerateRunSh(cfg *Config, uuidFn func() string) (string, error) {
 	params := runShParams{
 		Env:        buildEnvEntries(cfg.Runtime.Env, uuidFn),
-		InitScript: cfg.Init.Script,
-		Cmd:        cfg.Run.Cmd,
+		InitScript: cfg.Runtime.Init,
+		Cmd:        cfg.Runtime.Cmd,
 	}
 	return renderTemplate("run_sh.tmpl", params)
 }

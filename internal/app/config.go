@@ -20,8 +20,6 @@ type Config struct {
 	Port    int           `yaml:"port"`
 	Build   BuildConfig   `yaml:"build"`
 	Runtime RuntimeConfig `yaml:"runtime"`
-	Init    InitConfig    `yaml:"init"`
-	Run     RunConfig     `yaml:"run"`
 	Volumes []Volume      `yaml:"volumes"`
 	Public  PublicConfig  `yaml:"public"`
 }
@@ -32,19 +30,11 @@ type BuildConfig struct {
 	Script string            `yaml:"script"`
 }
 
-// RuntimeConfig holds runtime environment variables.
+// RuntimeConfig holds runtime settings: environment variables, init script, and start command.
 type RuntimeConfig struct {
-	Env map[string]string `yaml:"env"`
-}
-
-// InitConfig holds the pre-start init script.
-type InitConfig struct {
-	Script string `yaml:"script"`
-}
-
-// RunConfig holds the application start command.
-type RunConfig struct {
-	Cmd string `yaml:"cmd"`
+	Env  map[string]string `yaml:"env"`
+	Init string            `yaml:"init"`
+	Cmd  string            `yaml:"cmd"`
 }
 
 // Volume describes a Podman volume mount.
@@ -104,8 +94,8 @@ func validate(cfg *Config) error {
 	if cfg.Build.Script == "" {
 		return fmt.Errorf("config: build.script is required")
 	}
-	if cfg.Run.Cmd == "" {
-		return fmt.Errorf("config: run.cmd is required")
+	if cfg.Runtime.Cmd == "" {
+		return fmt.Errorf("config: runtime.cmd is required")
 	}
 	if cfg.Port <= 0 {
 		return fmt.Errorf("config: port must be positive")

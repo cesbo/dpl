@@ -35,12 +35,8 @@ func fullTestConfig() *Config {
 				"NODE_ENV":     "production",
 				"DATABASE_URL": "postgres://localhost/app",
 			},
-		},
-		Init: InitConfig{
-			Script: "npx prisma migrate deploy\n",
-		},
-		Run: RunConfig{
-			Cmd: "node server.js",
+			Init: "npx prisma migrate deploy\n",
+			Cmd:  "node server.js",
 		},
 		Volumes: []Volume{
 			{ID: "appdata", Path: "/app/data"},
@@ -59,7 +55,7 @@ func minimalTestConfig() *Config {
 		Build: BuildConfig{
 			Script: "npm ci\n",
 		},
-		Run: RunConfig{
+		Runtime: RuntimeConfig{
 			Cmd: "node index.js",
 		},
 	}

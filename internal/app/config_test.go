@@ -43,7 +43,7 @@ func TestLoadConfig(t *testing.T) {
 		{
 			name:    "missing run cmd",
 			dir:     "testdata/missing_run_cmd",
-			wantErr: "config: run.cmd is required",
+			wantErr: "config: runtime.cmd is required",
 		},
 		{
 			name:    "missing port",
@@ -113,11 +113,11 @@ func TestLoadConfig_ValidFull(t *testing.T) {
 	if got, want := len(cfg.Runtime.Env), 2; got != want {
 		t.Errorf("len(Runtime.Env) = %d, want %d", got, want)
 	}
-	if cfg.Init.Script == "" {
-		t.Error("Init.Script is empty, want non-empty")
+	if cfg.Runtime.Init == "" {
+		t.Error("Runtime.Init is empty, want non-empty")
 	}
-	if got, want := cfg.Run.Cmd, "node server.js"; got != want {
-		t.Errorf("Run.Cmd = %q, want %q", got, want)
+	if got, want := cfg.Runtime.Cmd, "node server.js"; got != want {
+		t.Errorf("Runtime.Cmd = %q, want %q", got, want)
 	}
 	if got, want := len(cfg.Volumes), 2; got != want {
 		t.Errorf("len(Volumes) = %d, want %d", got, want)

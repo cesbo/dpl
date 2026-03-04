@@ -17,10 +17,8 @@ runtime:
   env:
     NODE_ENV: "production"
     DATABASE_URL: "postgres://localhost/app"
-init:
-  script: |
+  init: |
     npx prisma migrate deploy
-run:
   cmd: "node server.js"
 volumes:
   - id: appdata
