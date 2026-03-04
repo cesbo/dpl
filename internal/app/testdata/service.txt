@@ -1,0 +1,30 @@
+[Unit]
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=notify
+NotifyAccess=all
+Delegate=yes
+KillMode=mixed
+Restart=no
+TimeoutStopFailureMode=abort
+ExecStart=/usr/bin/podman run \
+  --name %N \
+  --cidfile=%t/%N.cid \
+  --replace \
+  --rm \
+  --cgroups=split \
+  --sdnotify=conmon \
+  -d \
+  -v appdata:/app/data \
+  -v cache:/app/.cache \
+  --publish 127.0.0.1:49152:3000 \
+  --log-driver=k8s-file \
+  --log-opt=path=/var/log/podman/%N.log \
+  localhost/myapp:20260304120000
+ExecStop=/usr/bin/podman rm -v -f -i --cidfile=%t/%N.cid
+ExecStopPost=-/usr/bin/podman rm -v -f -i --cidfile=%t/%N.cid
+
+[Install]
+WantedBy=default.target

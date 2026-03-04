@@ -1,0 +1,6 @@
+FROM {{.Image}}
+WORKDIR /app
+ADD data.tar.gz /app
+COPY run.sh /opt/dpl/run.sh
+RUN --mount=type=secret,id=build-sh /bin/sh /run/secrets/build-sh
+CMD ["/bin/sh", "/opt/dpl/run.sh"]

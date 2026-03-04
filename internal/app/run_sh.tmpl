@@ -1,0 +1,15 @@
+#!/bin/sh
+{{if .Env}}
+set -a
+{{range .Env}}
+{{.Key}}=$(cat <<'EOF:{{.Delimiter}}'
+{{.Value}}
+EOF:{{.Delimiter}}
+)
+{{end}}
+set +a
+{{end}}
+{{- if .InitScript}}
+{{.InitScript}}
+{{end}}
+exec {{.Cmd}}
