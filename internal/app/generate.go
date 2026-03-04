@@ -57,8 +57,8 @@ type BuildScript struct {
 // GenerateBuildScripts renders one build script per layer.
 // Scripts are named build-sh-1, build-sh-2, etc. (1-based index).
 func GenerateBuildScripts(cfg *Config, uuidFn func() string) ([]BuildScript, error) {
-	scripts := make([]BuildScript, len(cfg.Build.Layers))
-	for i, layer := range cfg.Build.Layers {
+	scripts := make([]BuildScript, len(cfg.Build))
+	for i, layer := range cfg.Build {
 		params := buildShParams{
 			Env:    buildEnvEntries(layer.Env, uuidFn),
 			Script: layer.Script,
@@ -107,8 +107,8 @@ type containerfileParams struct {
 // GenerateContainerfile renders the Containerfile for an app.
 // The build context is expected to have app/ subdirectory with the project files.
 func GenerateContainerfile(cfg *Config) (string, error) {
-	layers := make([]containerfileLayer, len(cfg.Build.Layers))
-	for i, l := range cfg.Build.Layers {
+	layers := make([]containerfileLayer, len(cfg.Build))
+	for i, l := range cfg.Build {
 		var copyArgs string
 		if len(l.Files) > 0 {
 			var parts []string

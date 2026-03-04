@@ -3,7 +3,6 @@ tokens:
   - "secret"
 image: node:20-alpine
 build:
-  layers:
-    - script: npm ci
+  - script: npm ci
 runtime:
   cmd: "node index.js"

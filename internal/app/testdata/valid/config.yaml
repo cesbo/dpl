@@ -7,18 +7,15 @@ route: /api
 image: node:20-alpine
 port: 3000
 build:
-  layers:
-    - name: deps
-      files: ["package.json", "package-lock.json"]
-      env:
-        NODE_ENV: "production"
-      script: npm ci
-    - name: build
-      files: ["."]
-      env:
-        NODE_ENV: "production"
-        API_URL: "https://api.example.com"
-      script: npm run build
+  - files: ["package.json", "package-lock.json"]
+    env:
+      NODE_ENV: "production"
+    script: npm ci
+  - files: ["."]
+    env:
+      NODE_ENV: "production"
+      API_URL: "https://api.example.com"
+    script: npm run build
 runtime:
   env:
     NODE_ENV: "production"

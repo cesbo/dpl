@@ -38,12 +38,12 @@ func TestLoadConfig(t *testing.T) {
 		{
 			name:    "missing layers",
 			dir:     "testdata/missing_layers",
-			wantErr: "config: build.layers is required",
+			wantErr: "config: build is required",
 		},
 		{
 			name:    "layer without script",
 			dir:     "testdata/missing_build_script",
-			wantErr: "config: build.layers[0].script is required",
+			wantErr: "config: build[0].script is required",
 		},
 		{
 			name:    "missing run cmd",
@@ -112,17 +112,14 @@ func TestLoadConfig_ValidFull(t *testing.T) {
 	if got, want := len(cfg.Tokens), 2; got != want {
 		t.Errorf("len(Tokens) = %d, want %d", got, want)
 	}
-	if got, want := len(cfg.Build.Layers), 2; got != want {
-		t.Fatalf("len(Build.Layers) = %d, want %d", got, want)
+	if got, want := len(cfg.Build), 2; got != want {
+		t.Fatalf("len(Build) = %d, want %d", got, want)
 	}
-	if got, want := cfg.Build.Layers[0].Name, "deps"; got != want {
-		t.Errorf("Build.Layers[0].Name = %q, want %q", got, want)
+	if got, want := len(cfg.Build[0].Env), 1; got != want {
+		t.Errorf("len(Build[0].Env) = %d, want %d", got, want)
 	}
-	if got, want := len(cfg.Build.Layers[0].Env), 1; got != want {
-		t.Errorf("len(Build.Layers[0].Env) = %d, want %d", got, want)
-	}
-	if got, want := len(cfg.Build.Layers[1].Env), 2; got != want {
-		t.Errorf("len(Build.Layers[1].Env) = %d, want %d", got, want)
+	if got, want := len(cfg.Build[1].Env), 2; got != want {
+		t.Errorf("len(Build[1].Env) = %d, want %d", got, want)
 	}
 	if got, want := len(cfg.Runtime.Env), 2; got != want {
 		t.Errorf("len(Runtime.Env) = %d, want %d", got, want)

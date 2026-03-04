@@ -4,6 +4,6 @@ tokens:
 image: node:20-alpine
 port: 3000
 build:
-  script: npm ci
+  - script: npm ci
 runtime:
   cmd: "node index.js"

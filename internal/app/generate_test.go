@@ -23,25 +23,21 @@ func fullTestConfig() *Config {
 		Tokens: []string{"tok"},
 		Image:  "node:20-alpine",
 		Port:   3000,
-		Build: BuildConfig{
-			Layers: []BuildLayer{
-				{
-					Name:  "deps",
-					Files: []string{"package.json", "package-lock.json"},
-					Env: map[string]string{
-						"NODE_ENV": "production",
-					},
-					Script: "npm ci\n",
+		Build: []BuildLayer{
+			{
+				Files: []string{"package.json", "package-lock.json"},
+				Env: map[string]string{
+					"NODE_ENV": "production",
 				},
-				{
-					Name:  "build",
-					Files: []string{"."},
-					Env: map[string]string{
-						"API_URL":  "https://api.example.com",
-						"NODE_ENV": "production",
-					},
-					Script: "npm run build\n",
+				Script: "npm ci\n",
+			},
+			{
+				Files: []string{"."},
+				Env: map[string]string{
+					"API_URL":  "https://api.example.com",
+					"NODE_ENV": "production",
 				},
+				Script: "npm run build\n",
 			},
 		},
 		Runtime: RuntimeConfig{
@@ -66,11 +62,9 @@ func minimalTestConfig() *Config {
 		Tokens: []string{"tok"},
 		Image:  "node:20-alpine",
 		Port:   3000,
-		Build: BuildConfig{
-			Layers: []BuildLayer{
-				{
-					Script: "npm ci\n",
-				},
+		Build: []BuildLayer{
+			{
+				Script: "npm ci\n",
 			},
 		},
 		Runtime: RuntimeConfig{

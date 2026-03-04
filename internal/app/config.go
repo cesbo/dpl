@@ -18,7 +18,7 @@ type Config struct {
 	Route   string        `yaml:"route"`
 	Image   string        `yaml:"image"`
 	Port    int           `yaml:"port"`
-	Build   BuildConfig   `yaml:"build"`
+	Build   []BuildLayer  `yaml:"build"`
 	Runtime RuntimeConfig `yaml:"runtime"`
 	Volumes []Volume      `yaml:"volumes"`
 	Public  PublicConfig  `yaml:"public"`
@@ -26,15 +26,9 @@ type Config struct {
 
 // BuildLayer describes a single build layer with its own COPY and RUN steps.
 type BuildLayer struct {
-	Name   string            `yaml:"name"`
 	Files  []string          `yaml:"files"`
 	Env    map[string]string `yaml:"env"`
 	Script string            `yaml:"script"`
-}
-
-// BuildConfig holds build-time settings as an ordered list of layers.
-type BuildConfig struct {
-	Layers []BuildLayer `yaml:"layers"`
 }
 
 // RuntimeConfig holds runtime settings: environment variables, init script, and start command.
@@ -98,12 +92,12 @@ func validate(cfg *Config) error {
 	if cfg.Image == "" {
 		return fmt.Errorf("config: image is required")
 	}
-	if len(cfg.Build.Layers) == 0 {
-		return fmt.Errorf("config: build.layers is required")
+	if len(cfg.Build) == 0 {
+		return fmt.Errorf("config: build is required")
 	}
-	for i, l := range cfg.Build.Layers {
+	for i, l := range cfg.Build {
 		if l.Script == "" {
-			return fmt.Errorf("config: build.layers[%d].script is required", i)
+			return fmt.Errorf("config: build[%d].script is required", i)
 		}
 	}
 	if cfg.Runtime.Cmd == "" {
