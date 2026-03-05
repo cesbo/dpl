@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"dpl/internal/base"
 	"dpl/internal/server"
@@ -20,7 +23,12 @@ func main() {
 	}
 
 	if len(args) == 0 {
-		if err := server.Run(); err != nil {
+		base.InitEnv()
+
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+
+		if err := server.Run(ctx); err != nil {
 			slog.Error("server failed", "error", err)
 			os.Exit(1)
 		}

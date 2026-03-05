@@ -12,7 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
+
 
 	"dpl/internal/base"
 	"path/filepath"
@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"dpl/internal/app"
@@ -398,16 +397,13 @@ func makeLogsHandler(baseDir string) func(http.ResponseWriter, *http.Request) {
 	}
 }
 
-// Run starts the HTTP server and blocks until it receives SIGINT/SIGTERM.
-func Run() error {
+// Run starts the HTTP server and blocks until the context is cancelled.
+func Run(ctx context.Context) error {
 	addr := net.JoinHostPort("", base.Port)
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: newMux(base.BaseDir),
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	errCh := make(chan error, 1)
 	go func() {

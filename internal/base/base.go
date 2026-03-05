@@ -15,7 +15,7 @@ var BaseDir string
 // Port is the HTTP server listen port (default "6060").
 var Port string
 
-func init() {
+func InitEnv() {
 	BaseDir = os.Getenv("DPL_BASE")
 	if BaseDir == "" {
 		BaseDir = "/opt/dpl"
