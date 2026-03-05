@@ -71,14 +71,24 @@ Each entity type is a separate Go package with its own config struct, templates,
 - [x] Generate per-layer build scripts (`build-sh-1`, `build-sh-2`, ...)
 - [x] Call generate functions to produce build artifacts
 
-## Phase 7: Podman Build
+## Phase 7: Podman Build & Async Deploy API ✅
 
-- [ ] Create `internal/podman` — wrapper for `podman build` command
-- [ ] Build image with `--secret id=build-sh-N` for each layer build script
-- [ ] Tag image as `localhost/<name>:<timestamp>`
-- [ ] Stream build output back to HTTP response
-- [ ] Integration tests (guarded with `//go:build integration`)
-- [ ] Write build logs to `/opt/dpl/<name>/deploy_<timestamp>/logs/build.log`
+- [x] Change deploy dir timestamp format to compact `deploy_<YYYYMMDDHHMMSS>`
+- [x] `Deploy()` returns `DeployResult{Dir, Timestamp}` struct, creates `logs/` subdir
+- [x] Deploy status file on disk: `deploy_<ts>/status` (`building`, `done`, `failed`)
+- [x] `internal/app/status.go` — `WriteStatus()` / `ReadStatus()` helpers + tests
+- [x] Create `internal/podman` — wrapper for `podman build` command
+- [x] `BuildOpts` struct + `Build(ctx, opts)` — runs `podman build` with `--secret id=build-sh-N`
+- [x] Tag image as `localhost/<name>:<timestamp>`
+- [x] Write build output to `deploy_<ts>/logs/build.log` (no HTTP streaming)
+- [x] Integration tests (guarded with `//go:build integration`)
+- [x] `POST /deploy/{name}` returns `202 Accepted` + JSON `{"deploy_id": "deploy_<ts>"}`
+- [x] Podman build runs in a background goroutine; status file updated on completion
+- [x] `GET /deploy/{name}/{deployID}/status` — returns JSON deploy state
+- [x] `GET /deploy/{name}/{deployID}/logs?offset=N` — returns build log from byte offset
+- [x] `X-Offset` response header for incremental log polling
+- [x] All GET endpoints share the same Bearer token auth
+- [x] Server tests updated for 202 + JSON + new endpoints
 
 ## Phase 8: systemd Service Management
 
@@ -100,14 +110,6 @@ Each entity type is a separate Go package with its own config struct, templates,
 - [ ] Timeouts for podman build & HTTP requests
 - [ ] Concurrent deploy safety (lock per entity)
 - [ ] README with usage instructions and config.yaml example
-
-## Phase 11: Async Deploy API (202 + Polling)
-
-- [ ] `POST /deploy/<name>` returns `202 Accepted` with `{"deploy_id": "deploy_<timestamp>"}`
-- [ ] Deploy runs in a background goroutine
-- [ ] `GET /deploy/<name>/<deploy_id>/status` — returns deploy state (`building`, `running`, `done`, `failed`)
-- [ ] `GET /deploy/<name>/<deploy_id>/logs` — streams build log from file (`deploy_<timestamp>/logs/build.log`)
-- [ ] Keep streaming (Phase 7) as default, async as opt-in (`Accept` header or query param)
 
 ---
 

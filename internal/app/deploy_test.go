@@ -178,9 +178,16 @@ func TestDeploy_HappyPath(t *testing.T) {
 		"src/main.js":    "// main",
 	})
 
-	deployDir, err := Deploy(cfg, name, base, archive)
+	result, err := Deploy(cfg, name, base, archive)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
+	}
+
+	deployDir := result.Dir
+
+	// Verify timestamp is compact format.
+	if len(result.Timestamp) != 14 {
+		t.Errorf("timestamp = %q, want 14-char compact format", result.Timestamp)
 	}
 
 	// Verify deploy dir exists and is under baseDir/name/.
@@ -239,6 +246,13 @@ func TestDeploy_HappyPath(t *testing.T) {
 	if !strings.Contains(string(bs), "npm ci") {
 		t.Errorf("build-sh-1 missing script, got:\n%s", string(bs))
 	}
+
+	// Verify logs/ directory exists.
+	if fi, err := os.Stat(filepath.Join(deployDir, "logs")); err != nil {
+		t.Errorf("expected logs/ dir to exist: %v", err)
+	} else if !fi.IsDir() {
+		t.Errorf("logs/ should be a directory")
+	}
 }
 
 func TestDeploy_MultipleLayersBuildScripts(t *testing.T) {
@@ -267,10 +281,12 @@ func TestDeploy_MultipleLayersBuildScripts(t *testing.T) {
 		"server.js":    "// server",
 	})
 
-	deployDir, err := Deploy(cfg, name, base, archive)
+	result, err := Deploy(cfg, name, base, archive)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
+
+	deployDir := result.Dir
 
 	// Two build scripts should exist.
 	for _, f := range []string{"build-sh-1", "build-sh-2"} {
@@ -302,10 +318,12 @@ func TestDeploy_DirectoryStructureInArchive(t *testing.T) {
 		"src/lib/utils.js": "// utils",
 	})
 
-	deployDir, err := Deploy(cfg, name, base, archive)
+	result, err := Deploy(cfg, name, base, archive)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
+
+	deployDir := result.Dir
 
 	for _, f := range []string{"src/index.js", "src/lib/utils.js"} {
 		if _, err := os.Stat(filepath.Join(deployDir, "app", f)); err != nil {
@@ -399,10 +417,12 @@ func TestDeploy_ArchiveContents(t *testing.T) {
 	}
 	archive := createTestArchive(t, files)
 
-	deployDir, err := Deploy(cfg, name, base, archive)
+	result, err := Deploy(cfg, name, base, archive)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
+
+	deployDir := result.Dir
 
 	// Verify every file has correct content.
 	for name, want := range files {

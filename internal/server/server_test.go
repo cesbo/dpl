@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -87,8 +88,8 @@ tokens: ["tok"]
 			path:       "/deploy/myapp",
 			token:      "tok-1",
 			body:       func() *bytes.Reader { return testArchiveBody(t) },
-			wantStatus: http.StatusOK,
-			wantBody:   "deployed myapp to",
+			wantStatus: http.StatusAccepted,
+			wantBody:   `"deploy_id":"deploy_`,
 		},
 		{
 			name:       "success with second token",
@@ -96,8 +97,8 @@ tokens: ["tok"]
 			path:       "/deploy/myapp",
 			token:      "tok-2",
 			body:       func() *bytes.Reader { return testArchiveBody(t) },
-			wantStatus: http.StatusOK,
-			wantBody:   "deployed myapp to",
+			wantStatus: http.StatusAccepted,
+			wantBody:   `"deploy_id":"deploy_`,
 		},
 		{
 			name:       "entity not found",
@@ -185,23 +186,35 @@ func TestDeploy_CreatesFiles(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (body: %s)", rec.Code, rec.Body.String())
 	}
 
-	// Extract deploy dir from response: "deployed myapp to /path\n"
-	body := strings.TrimSpace(rec.Body.String())
-	parts := strings.SplitN(body, " to ", 2)
-	if len(parts) != 2 {
-		t.Fatalf("unexpected response format: %q", body)
+	// Parse deploy_id from JSON response.
+	var resp deployResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
 	}
-	deployDir := parts[1]
+	if !strings.HasPrefix(resp.DeployID, "deploy_") {
+		t.Fatalf("deploy_id = %q, want prefix 'deploy_'", resp.DeployID)
+	}
+
+	deployDir := filepath.Join(base, "myapp", resp.DeployID)
 
 	// Verify files exist.
-	for _, f := range []string{"Containerfile", "run.sh", "build-sh-1", "app/index.js"} {
+	for _, f := range []string{"Containerfile", "run.sh", "build-sh-1", "app/index.js", "logs"} {
 		if _, err := os.Stat(filepath.Join(deployDir, f)); err != nil {
 			t.Errorf("expected %s to exist: %v", f, err)
 		}
+	}
+
+	// Verify status file was created with "building" status.
+	data, err := os.ReadFile(filepath.Join(deployDir, "status"))
+	if err != nil {
+		t.Fatalf("read status file: %v", err)
+	}
+	if string(data) != "building" {
+		t.Errorf("status = %q, want %q", string(data), "building")
 	}
 }
 
@@ -288,5 +301,249 @@ func TestLoadEntityMeta_NotFound(t *testing.T) {
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("expected os.ErrNotExist, got: %v", err)
+	}
+}
+
+// --- Status endpoint tests ---
+
+// setupDeployDir creates a fake deploy directory with a status file and optionally a build log.
+func setupDeployDir(t *testing.T, base, name, deployID, status, logContent string) {
+	t.Helper()
+	dir := filepath.Join(base, name, deployID)
+	if err := os.MkdirAll(filepath.Join(dir, "logs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "status"), []byte(status), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if logContent != "" {
+		if err := os.WriteFile(filepath.Join(dir, "logs", "build.log"), []byte(logContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestStatusEndpoint(t *testing.T) {
+	base := t.TempDir()
+	writeConfig(t, base, "myapp", validAppConfig)
+	setupDeployDir(t, base, "myapp", "deploy_20260305120000", "building", "")
+	setupDeployDir(t, base, "myapp", "deploy_20260305130000", "done", "")
+	setupDeployDir(t, base, "myapp", "deploy_20260305140000", "failed\nexit code 1", "")
+
+	mux := newMux(base)
+
+	tests := []struct {
+		name       string
+		path       string
+		token      string
+		wantStatus int
+		wantJSON   *statusResponse // nil = skip JSON check
+		wantBody   string          // substring match for error bodies
+	}{
+		{
+			name:       "building status",
+			path:       "/deploy/myapp/deploy_20260305120000/status",
+			token:      "tok-1",
+			wantStatus: http.StatusOK,
+			wantJSON:   &statusResponse{DeployID: "deploy_20260305120000", Status: "building"},
+		},
+		{
+			name:       "done status",
+			path:       "/deploy/myapp/deploy_20260305130000/status",
+			token:      "tok-1",
+			wantStatus: http.StatusOK,
+			wantJSON:   &statusResponse{DeployID: "deploy_20260305130000", Status: "done"},
+		},
+		{
+			name:       "failed status with error",
+			path:       "/deploy/myapp/deploy_20260305140000/status",
+			token:      "tok-1",
+			wantStatus: http.StatusOK,
+			wantJSON:   &statusResponse{DeployID: "deploy_20260305140000", Status: "failed", Error: "exit code 1"},
+		},
+		{
+			name:       "deploy not found",
+			path:       "/deploy/myapp/deploy_20260305999999/status",
+			token:      "tok-1",
+			wantStatus: http.StatusNotFound,
+			wantBody:   "deploy not found",
+		},
+		{
+			name:       "invalid deploy ID format",
+			path:       "/deploy/myapp/bad-id/status",
+			token:      "tok-1",
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "invalid deploy ID",
+		},
+		{
+			name:       "deploy ID too short",
+			path:       "/deploy/myapp/deploy_123/status",
+			token:      "tok-1",
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "invalid deploy ID",
+		},
+		{
+			name:       "auth required",
+			path:       "/deploy/myapp/deploy_20260305120000/status",
+			token:      "",
+			wantStatus: http.StatusUnauthorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			if tt.token != "" {
+				req.Header.Set("Authorization", "Bearer "+tt.token)
+			}
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d (body: %s)", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+
+			if tt.wantJSON != nil {
+				var got statusResponse
+				if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+					t.Fatalf("decode: %v (body: %s)", err, rec.Body.String())
+				}
+				if got.DeployID != tt.wantJSON.DeployID {
+					t.Errorf("deploy_id = %q, want %q", got.DeployID, tt.wantJSON.DeployID)
+				}
+				if got.Status != tt.wantJSON.Status {
+					t.Errorf("status = %q, want %q", got.Status, tt.wantJSON.Status)
+				}
+				if got.Error != tt.wantJSON.Error {
+					t.Errorf("error = %q, want %q", got.Error, tt.wantJSON.Error)
+				}
+			}
+
+			if tt.wantBody != "" {
+				if !strings.Contains(rec.Body.String(), tt.wantBody) {
+					t.Errorf("body = %q, want substring %q", rec.Body.String(), tt.wantBody)
+				}
+			}
+		})
+	}
+}
+
+// --- Logs endpoint tests ---
+
+func TestLogsEndpoint(t *testing.T) {
+	base := t.TempDir()
+	writeConfig(t, base, "myapp", validAppConfig)
+	setupDeployDir(t, base, "myapp", "deploy_20260305120000", "building", "line1\nline2\nline3\n")
+
+	mux := newMux(base)
+
+	tests := []struct {
+		name        string
+		path        string
+		token       string
+		wantStatus  int
+		wantBody    string
+		wantOffset  string // expected X-Offset header value
+		wantBodyLen int    // if > 0, check exact length
+	}{
+		{
+			name:       "full log",
+			path:       "/deploy/myapp/deploy_20260305120000/logs",
+			token:      "tok-1",
+			wantStatus: http.StatusOK,
+			wantBody:   "line1\nline2\nline3\n",
+			wantOffset: "18", // len("line1\nline2\nline3\n")
+		},
+		{
+			name:       "log with offset",
+			path:       "/deploy/myapp/deploy_20260305120000/logs?offset=6",
+			token:      "tok-1",
+			wantStatus: http.StatusOK,
+			wantBody:   "line2\nline3\n",
+			wantOffset: "18", // 6 + 12
+		},
+		{
+			name:       "log with offset at end",
+			path:       "/deploy/myapp/deploy_20260305120000/logs?offset=18",
+			token:      "tok-1",
+			wantStatus: http.StatusOK,
+			wantBody:   "",
+			wantOffset: "18",
+		},
+		{
+			name:       "deploy not found",
+			path:       "/deploy/myapp/deploy_20260305999999/logs",
+			token:      "tok-1",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "invalid deploy ID",
+			path:       "/deploy/myapp/bad-id/logs",
+			token:      "tok-1",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid offset",
+			path:       "/deploy/myapp/deploy_20260305120000/logs?offset=abc",
+			token:      "tok-1",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "negative offset",
+			path:       "/deploy/myapp/deploy_20260305120000/logs?offset=-1",
+			token:      "tok-1",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "auth required",
+			path:       "/deploy/myapp/deploy_20260305120000/logs",
+			token:      "",
+			wantStatus: http.StatusUnauthorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			if tt.token != "" {
+				req.Header.Set("Authorization", "Bearer "+tt.token)
+			}
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d (body: %s)", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+
+			if tt.wantBody != "" || (tt.wantStatus == http.StatusOK && tt.wantBody == "") {
+				if rec.Body.String() != tt.wantBody {
+					t.Errorf("body = %q, want %q", rec.Body.String(), tt.wantBody)
+				}
+			}
+
+			if tt.wantOffset != "" {
+				if got := rec.Header().Get("X-Offset"); got != tt.wantOffset {
+					t.Errorf("X-Offset = %q, want %q", got, tt.wantOffset)
+				}
+			}
+		})
+	}
+}
+
+// TestLogsEndpoint_NoLogFile verifies behavior when deploy dir exists but log file doesn't yet.
+func TestLogsEndpoint_NoLogFile(t *testing.T) {
+	base := t.TempDir()
+	writeConfig(t, base, "myapp", validAppConfig)
+	// Create deploy dir with status but no log file.
+	setupDeployDir(t, base, "myapp", "deploy_20260305120000", "building", "")
+
+	mux := newMux(base)
+	req := httptest.NewRequest(http.MethodGet, "/deploy/myapp/deploy_20260305120000/logs", nil)
+	req.Header.Set("Authorization", "Bearer tok-1")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 (body: %s)", rec.Code, rec.Body.String())
 	}
 }

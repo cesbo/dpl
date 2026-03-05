@@ -4,19 +4,24 @@ package server
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"dpl/internal/app"
+	"dpl/internal/podman"
 
 	"gopkg.in/yaml.v3"
 )
@@ -50,6 +55,8 @@ func loadEntityMeta(baseDir, name string) (*entityMeta, error) {
 func newMux(baseDir string) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("POST /deploy/{name}", authMiddleware(baseDir, http.HandlerFunc(makeDeployHandler(baseDir))))
+	mux.Handle("GET /deploy/{name}/{deployID}/status", authMiddleware(baseDir, http.HandlerFunc(makeStatusHandler(baseDir))))
+	mux.Handle("GET /deploy/{name}/{deployID}/logs", authMiddleware(baseDir, http.HandlerFunc(makeLogsHandler(baseDir))))
 	return mux
 }
 
@@ -106,6 +113,21 @@ func matchToken(tok string, valid []string) bool {
 	return false
 }
 
+// deployIDPattern validates deploy IDs: deploy_ followed by 14 digits.
+var deployIDPattern = regexp.MustCompile(`^deploy_\d{14}$`)
+
+// deployResponse is the JSON body returned by POST /deploy/{name}.
+type deployResponse struct {
+	DeployID string `json:"deploy_id"`
+}
+
+// statusResponse is the JSON body returned by GET /deploy/{name}/{deployID}/status.
+type statusResponse struct {
+	DeployID string `json:"deploy_id"`
+	Status   string `json:"status"`
+	Error    string `json:"error,omitempty"`
+}
+
 // makeDeployHandler returns the handler for POST /deploy/{name}.
 // It dispatches based on entity type and runs the deploy pipeline.
 func makeDeployHandler(baseDir string) func(http.ResponseWriter, *http.Request) {
@@ -122,7 +144,10 @@ func makeDeployHandler(baseDir string) func(http.ResponseWriter, *http.Request) 
 	}
 }
 
-// deployApp handles the full deploy pipeline for an app entity.
+// deployApp handles the deploy pipeline for an app entity.
+// It extracts the archive and generates build artifacts synchronously,
+// then kicks off `podman build` in a background goroutine.
+// Returns 202 Accepted with a JSON deploy_id.
 func deployApp(w http.ResponseWriter, r *http.Request, baseDir, name string) {
 	cfg, err := app.LoadConfig(filepath.Join(baseDir, name))
 	if err != nil {
@@ -135,15 +160,136 @@ func deployApp(w http.ResponseWriter, r *http.Request, baseDir, name string) {
 		return
 	}
 
-	deployDir, err := app.Deploy(cfg, name, baseDir, r.Body)
+	result, err := app.Deploy(cfg, name, baseDir, r.Body)
 	if err != nil {
 		slog.Error("deploy app", "name", name, "error", err)
 		http.Error(w, fmt.Sprintf("deploy failed: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	slog.Info("deploy completed", "name", name, "dir", deployDir)
-	fmt.Fprintf(w, "deployed %s to %s\n", name, deployDir)
+	// Write initial status.
+	if err := app.WriteStatus(result.Dir, app.StatusBuilding, ""); err != nil {
+		slog.Error("write initial status", "name", name, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Kick off podman build in background.
+	tag := podman.ImageTag(name, result.Timestamp)
+	secrets := podman.SecretPaths(result.Dir, len(cfg.Build))
+	logFile := filepath.Join(result.Dir, "logs", "build.log")
+
+	go func() {
+		opts := podman.BuildOpts{
+			ContextDir: result.Dir,
+			Secrets:    secrets,
+			Tag:        tag,
+			LogFile:    logFile,
+		}
+		if err := podman.Build(context.Background(), opts); err != nil {
+			slog.Error("podman build failed", "name", name, "error", err)
+			app.WriteStatus(result.Dir, app.StatusFailed, err.Error())
+			return
+		}
+		slog.Info("podman build completed", "name", name, "tag", tag)
+		app.WriteStatus(result.Dir, app.StatusDone, "")
+	}()
+
+	// Return 202 with deploy ID.
+	deployID := filepath.Base(result.Dir)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(deployResponse{DeployID: deployID})
+}
+
+// makeStatusHandler returns the handler for GET /deploy/{name}/{deployID}/status.
+func makeStatusHandler(baseDir string) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		deployID := r.PathValue("deployID")
+
+		if !deployIDPattern.MatchString(deployID) {
+			http.Error(w, "invalid deploy ID", http.StatusBadRequest)
+			return
+		}
+
+		deployDir := filepath.Join(baseDir, name, deployID)
+		status, errMsg, err := app.ReadStatus(deployDir)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				http.Error(w, "deploy not found", http.StatusNotFound)
+				return
+			}
+			slog.Error("read deploy status", "name", name, "deployID", deployID, "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(statusResponse{
+			DeployID: deployID,
+			Status:   status,
+			Error:    errMsg,
+		})
+	}
+}
+
+// makeLogsHandler returns the handler for GET /deploy/{name}/{deployID}/logs.
+// Supports ?offset=N query parameter to read from a byte offset.
+// Returns the log content and an X-Offset header with the new offset.
+func makeLogsHandler(baseDir string) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		deployID := r.PathValue("deployID")
+
+		if !deployIDPattern.MatchString(deployID) {
+			http.Error(w, "invalid deploy ID", http.StatusBadRequest)
+			return
+		}
+
+		logPath := filepath.Join(baseDir, name, deployID, "logs", "build.log")
+		f, err := os.Open(logPath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				http.Error(w, "log not found", http.StatusNotFound)
+				return
+			}
+			slog.Error("open build log", "name", name, "deployID", deployID, "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		defer f.Close()
+
+		var offset int64
+		if s := r.URL.Query().Get("offset"); s != "" {
+			o, err := strconv.ParseInt(s, 10, 64)
+			if err != nil || o < 0 {
+				http.Error(w, "invalid offset", http.StatusBadRequest)
+				return
+			}
+			offset = o
+		}
+
+		if offset > 0 {
+			if _, err := f.Seek(offset, io.SeekStart); err != nil {
+				slog.Error("seek log file", "name", name, "deployID", deployID, "error", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+		}
+
+		w.Header().Set("Content-Type", "text/plain")
+
+		data, err := io.ReadAll(f)
+		if err != nil {
+			slog.Error("read log", "name", name, "deployID", deployID, "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("X-Offset", strconv.FormatInt(offset+int64(len(data)), 10))
+		w.Write(data)
+	}
 }
 
 // Run starts the HTTP server and blocks until it receives SIGINT/SIGTERM.

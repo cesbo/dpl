@@ -16,19 +16,26 @@ import (
 // maxArchiveSize is the maximum total size of extracted archive content (512 MB).
 const maxArchiveSize = 512 << 20
 
+// DeployResult holds the output of a successful Deploy call.
+type DeployResult struct {
+	Dir       string // Full path to the deploy directory.
+	Timestamp string // Compact timestamp used in dir name and image tag.
+}
+
 // Deploy orchestrates the app deploy pipeline:
 //  1. Creates a deploy directory: baseDir/<name>/deploy_<timestamp>/
 //  2. Unpacks the tar.gz archive into deploy dir's app/ subdirectory
 //  3. Generates build artifacts (Containerfile, run.sh, build scripts)
+//  4. Creates logs/ subdirectory for build output
 //
-// On success it returns the deploy directory path.
+// On success it returns a DeployResult with the directory path and timestamp.
 // On failure any partially created deploy directory is removed.
-func Deploy(cfg *Config, name, baseDir string, archive io.Reader) (string, error) {
-	ts := time.Now().Format("20060102-150405")
+func Deploy(cfg *Config, name, baseDir string, archive io.Reader) (DeployResult, error) {
+	ts := time.Now().Format("20060102150405")
 	deployDir := filepath.Join(baseDir, name, "deploy_"+ts)
 
 	if err := os.MkdirAll(deployDir, 0o755); err != nil {
-		return "", fmt.Errorf("deploy: create dir: %w", err)
+		return DeployResult{}, fmt.Errorf("deploy: create dir: %w", err)
 	}
 
 	// Cleanup on any error.
@@ -42,40 +49,45 @@ func Deploy(cfg *Config, name, baseDir string, archive io.Reader) (string, error
 	// 1. Unpack archive into app/ subdirectory.
 	appDir := filepath.Join(deployDir, "app")
 	if err := extractArchive(archive, appDir); err != nil {
-		return "", fmt.Errorf("deploy: extract archive: %w", err)
+		return DeployResult{}, fmt.Errorf("deploy: extract archive: %w", err)
 	}
 
 	// 2. Generate Containerfile.
 	containerfile, err := GenerateContainerfile(cfg)
 	if err != nil {
-		return "", fmt.Errorf("deploy: %w", err)
+		return DeployResult{}, fmt.Errorf("deploy: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(deployDir, "Containerfile"), []byte(containerfile), 0o644); err != nil {
-		return "", fmt.Errorf("deploy: write containerfile: %w", err)
+		return DeployResult{}, fmt.Errorf("deploy: write containerfile: %w", err)
 	}
 
 	// 3. Generate run.sh.
 	runSh, err := GenerateRunSh(cfg, uuid.NewString)
 	if err != nil {
-		return "", fmt.Errorf("deploy: %w", err)
+		return DeployResult{}, fmt.Errorf("deploy: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(deployDir, "run.sh"), []byte(runSh), 0o644); err != nil {
-		return "", fmt.Errorf("deploy: write run.sh: %w", err)
+		return DeployResult{}, fmt.Errorf("deploy: write run.sh: %w", err)
 	}
 
 	// 4. Generate per-layer build scripts.
 	scripts, err := GenerateBuildScripts(cfg, uuid.NewString)
 	if err != nil {
-		return "", fmt.Errorf("deploy: %w", err)
+		return DeployResult{}, fmt.Errorf("deploy: %w", err)
 	}
 	for _, s := range scripts {
 		if err := os.WriteFile(filepath.Join(deployDir, s.Filename), []byte(s.Content), 0o644); err != nil {
-			return "", fmt.Errorf("deploy: write %s: %w", s.Filename, err)
+			return DeployResult{}, fmt.Errorf("deploy: write %s: %w", s.Filename, err)
 		}
 	}
 
+	// 5. Create logs directory for build output.
+	if err := os.MkdirAll(filepath.Join(deployDir, "logs"), 0o755); err != nil {
+		return DeployResult{}, fmt.Errorf("deploy: create logs dir: %w", err)
+	}
+
 	ok = true
-	return deployDir, nil
+	return DeployResult{Dir: deployDir, Timestamp: ts}, nil
 }
 
 // extractArchive unpacks a tar.gz stream into destDir.
