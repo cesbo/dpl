@@ -80,7 +80,7 @@ func TestWriteStatus_FileContent(t *testing.T) {
 		t.Fatalf("WriteStatus: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, "status"))
+	data, err := os.ReadFile(filepath.Join(dir, "status.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}

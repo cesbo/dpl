@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+const statusFile = "status.txt"
+
 // Deploy status constants.
 const (
 	StatusBuilding = "building"
@@ -21,7 +23,7 @@ func WriteStatus(deployDir, status, errMsg string) error {
 	if errMsg != "" {
 		content += "\n" + errMsg
 	}
-	p := filepath.Join(deployDir, "status")
+	p := filepath.Join(deployDir, statusFile)
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("write status: %w", err)
 	}
@@ -31,7 +33,7 @@ func WriteStatus(deployDir, status, errMsg string) error {
 // ReadStatus reads the deploy status file from deployDir/status.
 // Returns the status string and an optional error message.
 func ReadStatus(deployDir string) (status, errMsg string, err error) {
-	p := filepath.Join(deployDir, "status")
+	p := filepath.Join(deployDir, statusFile)
 	data, err := os.ReadFile(p)
 	if err != nil {
 		return "", "", fmt.Errorf("read status: %w", err)

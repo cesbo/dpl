@@ -210,7 +210,7 @@ func TestDeploy_CreatesFiles(t *testing.T) {
 	}
 
 	// Verify status file was created with "building" status.
-	data, err := os.ReadFile(filepath.Join(deployDir, "status"))
+	data, err := os.ReadFile(filepath.Join(deployDir, "status.txt"))
 	if err != nil {
 		t.Fatalf("read status file: %v", err)
 	}
@@ -314,7 +314,7 @@ func setupDeployDir(t *testing.T, base, name, deployID, status, logContent strin
 	if err := os.MkdirAll(filepath.Join(dir, "logs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "status"), []byte(status), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "status.txt"), []byte(status), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if logContent != "" {
@@ -606,7 +606,7 @@ func TestDeploy_SequentialVersions(t *testing.T) {
 
 	// Mark first deploy as done so second can proceed.
 	deployDir1 := filepath.Join(base, "myapp", "deploy_1")
-	if err := os.WriteFile(filepath.Join(deployDir1, "status"), []byte("done"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(deployDir1, "status.txt"), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
