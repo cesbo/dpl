@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"dpl/internal/server"
-	"dpl/internal/wizard"
 )
 
 func main() {
@@ -25,14 +24,6 @@ func main() {
 		return
 	}
 
-	switch args[0] {
-	case "init":
-		if err := wizard.Run(); err != nil {
-			slog.Error("init failed", "error", err)
-			os.Exit(1)
-		}
-	default:
-		slog.Error("unknown command", "command", args[0])
-		os.Exit(1)
-	}
+	slog.Error("unknown command", "command", args[0])
+	os.Exit(1)
 }

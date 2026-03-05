@@ -28,11 +28,7 @@ Each entity type is a separate Go package with its own config struct, templates,
 - [x] Implement `app.LoadConfig(dir)` — read and validate `config.yaml` (type=app)
 - [x] Write unit tests with sample config files in `testdata/`
 
-## Phase 3: `dpl init` — CLI Wizard ✅
-
-- [x] Create `internal/wizard` — interactive prompts (port)
-- [x] Generate dpl's own systemd service file with env vars (`DPL_PORT`)
-- [x] Write the service file to `/etc/systemd/system/dpl.service` (or user-specified path)
+## Phase 3: CLI Installation Wizard (removed)
 
 ## Phase 4: HTTP Server & Auth ✅
 

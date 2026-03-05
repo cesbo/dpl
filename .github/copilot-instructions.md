@@ -55,12 +55,11 @@ cmd/
 internal/
   server/           # HTTP server, deploy handler, auth middleware
   app/              # app entity: config, templates, generation, deploy pipeline
-  wizard/           # `dpl init` CLI wizard
   podman/           # podman build & run commands
   systemd/          # systemd unit management (enable, start, stop, restart)
 ```
 
-- `cmd/dpl/main.go` — entry point parsing CLI args (`init` subcommand or HTTP server mode).
+- `cmd/dpl/main.go` — entry point starting the HTTP server.
 - `internal/` — all internal packages, not importable from outside.
 - Packages are organized by domain entity, not by technical layer. Each entity (`app`, `domain`, `static`, `database`) owns its own config struct, templates, and deploy logic.
 - Shared infrastructure (`podman`, `systemd`) lives in separate packages and is used by entity packages.
@@ -118,12 +117,6 @@ internal/
 - Use `t.TempDir()` for file system tests.
 - Integration tests that call Podman should be guarded with a build tag `//go:build integration`.
 - Test file generation by comparing output against golden files in `testdata/`.
-
-## CLI
-
-- `dpl init` — interactive wizard that generates a systemd service file for dpl itself (prompts for HTTP port only).
-- `dpl` (no args) — starts the HTTP server (normal operation mode).
-- Use the standard `flag` package or bare `os.Args` parsing. No CLI framework needed for two modes.
 
 ## File Naming Conventions
 
