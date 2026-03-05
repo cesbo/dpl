@@ -178,16 +178,16 @@ func TestDeploy_HappyPath(t *testing.T) {
 		"src/main.js":    "// main",
 	})
 
-	result, err := Deploy(cfg, name, base, archive)
+	result, err := Deploy(cfg, name, base, archive, 1)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 
 	deployDir := result.Dir
 
-	// Verify timestamp is compact format.
-	if len(result.Timestamp) != 14 {
-		t.Errorf("timestamp = %q, want 14-char compact format", result.Timestamp)
+	// Verify version.
+	if result.Version != 1 {
+		t.Errorf("version = %d, want 1", result.Version)
 	}
 
 	// Verify deploy dir exists and is under baseDir/name/.
@@ -281,7 +281,7 @@ func TestDeploy_MultipleLayersBuildScripts(t *testing.T) {
 		"server.js":    "// server",
 	})
 
-	result, err := Deploy(cfg, name, base, archive)
+	result, err := Deploy(cfg, name, base, archive, 1)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestDeploy_DirectoryStructureInArchive(t *testing.T) {
 		"src/lib/utils.js": "// utils",
 	})
 
-	result, err := Deploy(cfg, name, base, archive)
+	result, err := Deploy(cfg, name, base, archive, 1)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
@@ -384,7 +384,7 @@ func TestDeploy_CleanupOnFailure(t *testing.T) {
 	}
 
 	// Pass invalid data (not gzip) to trigger an error during extraction.
-	_, err := Deploy(cfg, name, base, strings.NewReader("invalid archive"))
+	_, err := Deploy(cfg, name, base, strings.NewReader("invalid archive"), 1)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -417,7 +417,7 @@ func TestDeploy_ArchiveContents(t *testing.T) {
 	}
 	archive := createTestArchive(t, files)
 
-	result, err := Deploy(cfg, name, base, archive)
+	result, err := Deploy(cfg, name, base, archive, 1)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}

@@ -146,7 +146,7 @@ func TestGenerateContainerfileMinimal(t *testing.T) {
 }
 
 func TestGenerateService(t *testing.T) {
-	got, err := GenerateService(fullTestConfig(), 49152, "localhost/myapp:20260304120000")
+	got, err := GenerateService(fullTestConfig(), 49152, "localhost/myapp:1")
 	if err != nil {
 		t.Fatalf("GenerateService: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestGenerateService(t *testing.T) {
 }
 
 func TestGenerateServiceNoVolumes(t *testing.T) {
-	got, err := GenerateService(minimalTestConfig(), 49152, "localhost/myapp:20260304120000")
+	got, err := GenerateService(minimalTestConfig(), 49152, "localhost/myapp:1")
 	if err != nil {
 		t.Fatalf("GenerateService: %v", err)
 	}

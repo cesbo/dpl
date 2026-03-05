@@ -66,6 +66,7 @@ func testArchiveBody(t *testing.T) *bytes.Reader {
 func TestDeploy(t *testing.T) {
 	base := t.TempDir()
 	writeConfig(t, base, "myapp", validAppConfig)
+	writeConfig(t, base, "myapp2", validAppConfig)
 
 	writeConfig(t, base, "unsupported", `type: domain
 tokens: ["tok"]
@@ -94,7 +95,7 @@ tokens: ["tok"]
 		{
 			name:       "success with second token",
 			method:     http.MethodPost,
-			path:       "/deploy/myapp",
+			path:       "/deploy/myapp2",
 			token:      "tok-2",
 			body:       func() *bytes.Reader { return testArchiveBody(t) },
 			wantStatus: http.StatusAccepted,
@@ -326,9 +327,9 @@ func setupDeployDir(t *testing.T, base, name, deployID, status, logContent strin
 func TestStatusEndpoint(t *testing.T) {
 	base := t.TempDir()
 	writeConfig(t, base, "myapp", validAppConfig)
-	setupDeployDir(t, base, "myapp", "deploy_20260305120000", "building", "")
-	setupDeployDir(t, base, "myapp", "deploy_20260305130000", "done", "")
-	setupDeployDir(t, base, "myapp", "deploy_20260305140000", "failed\nexit code 1", "")
+	setupDeployDir(t, base, "myapp", "deploy_1", "building", "")
+	setupDeployDir(t, base, "myapp", "deploy_2", "done", "")
+	setupDeployDir(t, base, "myapp", "deploy_3", "failed\nexit code 1", "")
 
 	mux := newMux(base)
 
@@ -342,28 +343,28 @@ func TestStatusEndpoint(t *testing.T) {
 	}{
 		{
 			name:       "building status",
-			path:       "/deploy/myapp/deploy_20260305120000/status",
+			path:       "/deploy/myapp/deploy_1/status",
 			token:      "tok-1",
 			wantStatus: http.StatusOK,
-			wantJSON:   &statusResponse{DeployID: "deploy_20260305120000", Status: "building"},
+			wantJSON:   &statusResponse{DeployID: "deploy_1", Status: "building"},
 		},
 		{
 			name:       "done status",
-			path:       "/deploy/myapp/deploy_20260305130000/status",
+			path:       "/deploy/myapp/deploy_2/status",
 			token:      "tok-1",
 			wantStatus: http.StatusOK,
-			wantJSON:   &statusResponse{DeployID: "deploy_20260305130000", Status: "done"},
+			wantJSON:   &statusResponse{DeployID: "deploy_2", Status: "done"},
 		},
 		{
 			name:       "failed status with error",
-			path:       "/deploy/myapp/deploy_20260305140000/status",
+			path:       "/deploy/myapp/deploy_3/status",
 			token:      "tok-1",
 			wantStatus: http.StatusOK,
-			wantJSON:   &statusResponse{DeployID: "deploy_20260305140000", Status: "failed", Error: "exit code 1"},
+			wantJSON:   &statusResponse{DeployID: "deploy_3", Status: "failed", Error: "exit code 1"},
 		},
 		{
 			name:       "deploy not found",
-			path:       "/deploy/myapp/deploy_20260305999999/status",
+			path:       "/deploy/myapp/deploy_999/status",
 			token:      "tok-1",
 			wantStatus: http.StatusNotFound,
 			wantBody:   "deploy not found",
@@ -377,14 +378,14 @@ func TestStatusEndpoint(t *testing.T) {
 		},
 		{
 			name:       "deploy ID too short",
-			path:       "/deploy/myapp/deploy_123/status",
+			path:       "/deploy/myapp/deploy_/status",
 			token:      "tok-1",
 			wantStatus: http.StatusBadRequest,
 			wantBody:   "invalid deploy ID",
 		},
 		{
 			name:       "auth required",
-			path:       "/deploy/myapp/deploy_20260305120000/status",
+			path:       "/deploy/myapp/deploy_1/status",
 			token:      "",
 			wantStatus: http.StatusUnauthorized,
 		},
@@ -433,7 +434,7 @@ func TestStatusEndpoint(t *testing.T) {
 func TestLogsEndpoint(t *testing.T) {
 	base := t.TempDir()
 	writeConfig(t, base, "myapp", validAppConfig)
-	setupDeployDir(t, base, "myapp", "deploy_20260305120000", "building", "line1\nline2\nline3\n")
+	setupDeployDir(t, base, "myapp", "deploy_1", "building", "line1\nline2\nline3\n")
 
 	mux := newMux(base)
 
@@ -448,7 +449,7 @@ func TestLogsEndpoint(t *testing.T) {
 	}{
 		{
 			name:       "full log",
-			path:       "/deploy/myapp/deploy_20260305120000/logs",
+			path:       "/deploy/myapp/deploy_1/logs",
 			token:      "tok-1",
 			wantStatus: http.StatusOK,
 			wantBody:   "line1\nline2\nline3\n",
@@ -456,7 +457,7 @@ func TestLogsEndpoint(t *testing.T) {
 		},
 		{
 			name:       "log with offset",
-			path:       "/deploy/myapp/deploy_20260305120000/logs?offset=6",
+			path:       "/deploy/myapp/deploy_1/logs?offset=6",
 			token:      "tok-1",
 			wantStatus: http.StatusOK,
 			wantBody:   "line2\nline3\n",
@@ -464,7 +465,7 @@ func TestLogsEndpoint(t *testing.T) {
 		},
 		{
 			name:       "log with offset at end",
-			path:       "/deploy/myapp/deploy_20260305120000/logs?offset=18",
+			path:       "/deploy/myapp/deploy_1/logs?offset=18",
 			token:      "tok-1",
 			wantStatus: http.StatusOK,
 			wantBody:   "",
@@ -472,7 +473,7 @@ func TestLogsEndpoint(t *testing.T) {
 		},
 		{
 			name:       "deploy not found",
-			path:       "/deploy/myapp/deploy_20260305999999/logs",
+			path:       "/deploy/myapp/deploy_999/logs",
 			token:      "tok-1",
 			wantStatus: http.StatusNotFound,
 		},
@@ -484,19 +485,19 @@ func TestLogsEndpoint(t *testing.T) {
 		},
 		{
 			name:       "invalid offset",
-			path:       "/deploy/myapp/deploy_20260305120000/logs?offset=abc",
+			path:       "/deploy/myapp/deploy_1/logs?offset=abc",
 			token:      "tok-1",
 			wantStatus: http.StatusBadRequest,
 		},
 		{
 			name:       "negative offset",
-			path:       "/deploy/myapp/deploy_20260305120000/logs?offset=-1",
+			path:       "/deploy/myapp/deploy_1/logs?offset=-1",
 			token:      "tok-1",
 			wantStatus: http.StatusBadRequest,
 		},
 		{
 			name:       "auth required",
-			path:       "/deploy/myapp/deploy_20260305120000/logs",
+			path:       "/deploy/myapp/deploy_1/logs",
 			token:      "",
 			wantStatus: http.StatusUnauthorized,
 		},
@@ -535,15 +536,104 @@ func TestLogsEndpoint_NoLogFile(t *testing.T) {
 	base := t.TempDir()
 	writeConfig(t, base, "myapp", validAppConfig)
 	// Create deploy dir with status but no log file.
-	setupDeployDir(t, base, "myapp", "deploy_20260305120000", "building", "")
+	setupDeployDir(t, base, "myapp", "deploy_1", "building", "")
 
 	mux := newMux(base)
-	req := httptest.NewRequest(http.MethodGet, "/deploy/myapp/deploy_20260305120000/logs", nil)
+	req := httptest.NewRequest(http.MethodGet, "/deploy/myapp/deploy_1/logs", nil)
 	req.Header.Set("Authorization", "Bearer tok-1")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestDeploy_Conflict409 verifies that a second deploy returns 409
+// when the previous deploy is still in "building" status.
+func TestDeploy_Conflict409(t *testing.T) {
+	base := t.TempDir()
+	writeConfig(t, base, "myapp", validAppConfig)
+
+	// Simulate a previous deploy that is still building:
+	// write version.txt=1 and create deploy_1/status=building.
+	entityDir := filepath.Join(base, "myapp")
+	if err := os.WriteFile(filepath.Join(entityDir, "version.txt"), []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	setupDeployDir(t, base, "myapp", "deploy_1", "building", "")
+
+	mux := newMux(base)
+
+	req := httptest.NewRequest(http.MethodPost, "/deploy/myapp", testArchiveBody(t))
+	req.Header.Set("Authorization", "Bearer tok-1")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Errorf("status = %d, want 409 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "deploy already in progress") {
+		t.Errorf("body = %q, want substring %q", rec.Body.String(), "deploy already in progress")
+	}
+}
+
+// TestDeploy_SequentialVersions verifies that sequential deploys get
+// incrementing version numbers and version.txt is updated.
+func TestDeploy_SequentialVersions(t *testing.T) {
+	base := t.TempDir()
+	writeConfig(t, base, "myapp", validAppConfig)
+
+	mux := newMux(base)
+
+	// First deploy.
+	req1 := httptest.NewRequest(http.MethodPost, "/deploy/myapp", testArchiveBody(t))
+	req1.Header.Set("Authorization", "Bearer tok-1")
+	rec1 := httptest.NewRecorder()
+	mux.ServeHTTP(rec1, req1)
+
+	if rec1.Code != http.StatusAccepted {
+		t.Fatalf("deploy 1: status = %d, want 202", rec1.Code)
+	}
+
+	var resp1 deployResponse
+	if err := json.NewDecoder(rec1.Body).Decode(&resp1); err != nil {
+		t.Fatal(err)
+	}
+	if resp1.DeployID != "deploy_1" {
+		t.Errorf("deploy 1: id = %q, want %q", resp1.DeployID, "deploy_1")
+	}
+
+	// Mark first deploy as done so second can proceed.
+	deployDir1 := filepath.Join(base, "myapp", "deploy_1")
+	if err := os.WriteFile(filepath.Join(deployDir1, "status"), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second deploy.
+	req2 := httptest.NewRequest(http.MethodPost, "/deploy/myapp", testArchiveBody(t))
+	req2.Header.Set("Authorization", "Bearer tok-1")
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusAccepted {
+		t.Fatalf("deploy 2: status = %d, want 202", rec2.Code)
+	}
+
+	var resp2 deployResponse
+	if err := json.NewDecoder(rec2.Body).Decode(&resp2); err != nil {
+		t.Fatal(err)
+	}
+	if resp2.DeployID != "deploy_2" {
+		t.Errorf("deploy 2: id = %q, want %q", resp2.DeployID, "deploy_2")
+	}
+
+	// Verify version.txt.
+	data, err := os.ReadFile(filepath.Join(base, "myapp", "version.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "2" {
+		t.Errorf("version.txt = %q, want %q", string(data), "2")
 	}
 }

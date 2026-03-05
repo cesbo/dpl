@@ -19,7 +19,7 @@ ExecStart=/usr/bin/podman run \
   --publish 127.0.0.1:49152:3000 \
   --log-driver=k8s-file \
   --log-opt=path=/var/log/podman/%N.log \
-  localhost/myapp:20260304120000
+  localhost/myapp:1
 ExecStop=/usr/bin/podman stop --cidfile=%t/%N.cid
 ExecStopPost=-/usr/bin/podman rm -v -f -i --cidfile=%t/%N.cid
 ExecStopPost=-/usr/bin/rm -f %t/%N.cid

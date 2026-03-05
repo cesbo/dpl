@@ -90,6 +90,19 @@ Each entity type is a separate Go package with its own config struct, templates,
 - [x] All GET endpoints share the same Bearer token auth
 - [x] Server tests updated for 202 + JSON + new endpoints
 
+## Phase 7.1: Sequential Versioning & Deploy Lock ✅
+
+- [x] Replace timestamp-based deploy IDs with sequential version numbers
+- [x] `internal/app/version.go` — `ReadVersion()` / `WriteVersion()` helpers + tests
+- [x] Version stored in `<entityDir>/version.txt`, starts at 1 for first deploy
+- [x] `Deploy()` accepts `version int` parameter; dir is `deploy_<N>`, image tag `localhost/<name>:<N>`
+- [x] `DeployResult.Timestamp` → `DeployResult.Version int`
+- [x] Per-entity `sync.Mutex` in server (`entityLocker`) protects version read + check + increment
+- [x] `POST /deploy/{name}` returns `409 Conflict` if previous deploy is still `building`
+- [x] `deployIDPattern` relaxed to `^deploy_\d+$`
+- [x] All tests updated: deploy_test, server_test (409 + sequential versions), podman/build_test, generate_test
+- [x] Golden files updated for version-based image tags
+
 ## Phase 8: systemd Service Management
 
 - [ ] Create `internal/systemd` — wrapper for `systemctl` commands
@@ -108,7 +121,6 @@ Each entity type is a separate Go package with its own config struct, templates,
 
 - [ ] Structured logging throughout all packages
 - [ ] Timeouts for podman build & HTTP requests
-- [ ] Concurrent deploy safety (lock per entity)
 - [ ] README with usage instructions and config.yaml example
 
 ---

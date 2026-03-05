@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -53,8 +54,9 @@ func loadEntityMeta(baseDir, name string) (*entityMeta, error) {
 
 // newMux builds the HTTP routes for the given base directory.
 func newMux(baseDir string) *http.ServeMux {
+	locker := newEntityLocker()
 	mux := http.NewServeMux()
-	mux.Handle("POST /deploy/{name}", authMiddleware(baseDir, http.HandlerFunc(makeDeployHandler(baseDir))))
+	mux.Handle("POST /deploy/{name}", authMiddleware(baseDir, http.HandlerFunc(makeDeployHandler(baseDir, locker))))
 	mux.Handle("GET /deploy/{name}/{deployID}/status", authMiddleware(baseDir, http.HandlerFunc(makeStatusHandler(baseDir))))
 	mux.Handle("GET /deploy/{name}/{deployID}/logs", authMiddleware(baseDir, http.HandlerFunc(makeLogsHandler(baseDir))))
 	return mux
@@ -113,8 +115,31 @@ func matchToken(tok string, valid []string) bool {
 	return false
 }
 
-// deployIDPattern validates deploy IDs: deploy_ followed by 14 digits.
-var deployIDPattern = regexp.MustCompile(`^deploy_\d{14}$`)
+// deployIDPattern validates deploy IDs: deploy_ followed by one or more digits.
+var deployIDPattern = regexp.MustCompile(`^deploy_\d+$`)
+
+// entityLocker provides per-entity mutual exclusion for deploy operations.
+// It protects version read + check + increment to prevent concurrent deploys.
+type entityLocker struct {
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
+}
+
+func newEntityLocker() *entityLocker {
+	return &entityLocker{locks: make(map[string]*sync.Mutex)}
+}
+
+// lock returns the mutex for the given entity name, creating it if needed.
+func (l *entityLocker) lock(name string) *sync.Mutex {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	m, ok := l.locks[name]
+	if !ok {
+		m = &sync.Mutex{}
+		l.locks[name] = m
+	}
+	return m
+}
 
 // deployResponse is the JSON body returned by POST /deploy/{name}.
 type deployResponse struct {
@@ -130,14 +155,14 @@ type statusResponse struct {
 
 // makeDeployHandler returns the handler for POST /deploy/{name}.
 // It dispatches based on entity type and runs the deploy pipeline.
-func makeDeployHandler(baseDir string) func(http.ResponseWriter, *http.Request) {
+func makeDeployHandler(baseDir string, locker *entityLocker) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		meta := r.Context().Value(metaKey).(*entityMeta)
 
 		switch meta.Type {
 		case "app":
-			deployApp(w, r, baseDir, name)
+			deployApp(w, r, baseDir, name, locker)
 		default:
 			http.Error(w, fmt.Sprintf("unsupported entity type: %s", meta.Type), http.StatusBadRequest)
 		}
@@ -145,11 +170,14 @@ func makeDeployHandler(baseDir string) func(http.ResponseWriter, *http.Request) 
 }
 
 // deployApp handles the deploy pipeline for an app entity.
-// It extracts the archive and generates build artifacts synchronously,
-// then kicks off `podman build` in a background goroutine.
+// It acquires a per-entity lock, checks for in-progress deploys (409),
+// increments the version, extracts the archive and generates build
+// artifacts synchronously, then kicks off `podman build` in a background goroutine.
 // Returns 202 Accepted with a JSON deploy_id.
-func deployApp(w http.ResponseWriter, r *http.Request, baseDir, name string) {
-	cfg, err := app.LoadConfig(filepath.Join(baseDir, name))
+func deployApp(w http.ResponseWriter, r *http.Request, baseDir, name string, locker *entityLocker) {
+	entityDir := filepath.Join(baseDir, name)
+
+	cfg, err := app.LoadConfig(entityDir)
 	if err != nil {
 		if errors.Is(err, app.ErrUnsupportedType) {
 			http.Error(w, "unsupported entity type", http.StatusBadRequest)
@@ -160,7 +188,39 @@ func deployApp(w http.ResponseWriter, r *http.Request, baseDir, name string) {
 		return
 	}
 
-	result, err := app.Deploy(cfg, name, baseDir, r.Body)
+	// Acquire per-entity lock for version read + check + increment.
+	mu := locker.lock(name)
+	mu.Lock()
+
+	currentVersion, err := app.ReadVersion(entityDir)
+	if err != nil {
+		mu.Unlock()
+		slog.Error("read version", "name", name, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Check if previous deploy is still building.
+	if currentVersion > 0 {
+		prevDir := filepath.Join(entityDir, "deploy_"+strconv.Itoa(currentVersion))
+		status, _, readErr := app.ReadStatus(prevDir)
+		if readErr == nil && status == app.StatusBuilding {
+			mu.Unlock()
+			http.Error(w, "deploy already in progress", http.StatusConflict)
+			return
+		}
+	}
+
+	newVersion := currentVersion + 1
+	if err := app.WriteVersion(entityDir, newVersion); err != nil {
+		mu.Unlock()
+		slog.Error("write version", "name", name, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	mu.Unlock()
+
+	result, err := app.Deploy(cfg, name, baseDir, r.Body, newVersion)
 	if err != nil {
 		slog.Error("deploy app", "name", name, "error", err)
 		http.Error(w, fmt.Sprintf("deploy failed: %v", err), http.StatusInternalServerError)
@@ -175,7 +235,7 @@ func deployApp(w http.ResponseWriter, r *http.Request, baseDir, name string) {
 	}
 
 	// Kick off podman build in background.
-	tag := podman.ImageTag(name, result.Timestamp)
+	tag := podman.ImageTag(name, strconv.Itoa(result.Version))
 	secrets := podman.SecretPaths(result.Dir, len(cfg.Build))
 	logFile := filepath.Join(result.Dir, "logs", "build.log")
 

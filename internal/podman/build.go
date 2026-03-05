@@ -72,9 +72,9 @@ func SecretPaths(deployDir string, layerCount int) []string {
 }
 
 // ImageTag returns the full image reference for an app.
-// Format: localhost/<name>:<timestamp>.
-func ImageTag(name, timestamp string) string {
-	return fmt.Sprintf("localhost/%s:%s", name, timestamp)
+// Format: localhost/<name>:<version>.
+func ImageTag(name, version string) string {
+	return fmt.Sprintf("localhost/%s:%s", name, version)
 }
 
 // commandFn allows overriding exec.CommandContext for testing.

@@ -18,22 +18,22 @@ func TestSecretPaths(t *testing.T) {
 	}{
 		{
 			name:       "single layer",
-			deployDir:  "/opt/dpl/myapp/deploy_20260305120000",
+			deployDir:  "/opt/dpl/myapp/deploy_1",
 			layerCount: 1,
-			want:       []string{"/opt/dpl/myapp/deploy_20260305120000/build-sh-1"},
+			want:       []string{"/opt/dpl/myapp/deploy_1/build-sh-1"},
 		},
 		{
 			name:       "two layers",
-			deployDir:  "/opt/dpl/myapp/deploy_20260305120000",
+			deployDir:  "/opt/dpl/myapp/deploy_1",
 			layerCount: 2,
 			want: []string{
-				"/opt/dpl/myapp/deploy_20260305120000/build-sh-1",
-				"/opt/dpl/myapp/deploy_20260305120000/build-sh-2",
+				"/opt/dpl/myapp/deploy_1/build-sh-1",
+				"/opt/dpl/myapp/deploy_1/build-sh-2",
 			},
 		},
 		{
 			name:       "zero layers",
-			deployDir:  "/opt/dpl/myapp/deploy_20260305120000",
+			deployDir:  "/opt/dpl/myapp/deploy_1",
 			layerCount: 0,
 			want:       []string{},
 		},
@@ -56,14 +56,14 @@ func TestSecretPaths(t *testing.T) {
 
 func TestImageTag(t *testing.T) {
 	tests := []struct {
-		name, ts, want string
+		name, version, want string
 	}{
-		{"myapp", "20260305120000", "localhost/myapp:20260305120000"},
-		{"web-api", "20260101000000", "localhost/web-api:20260101000000"},
+		{"myapp", "1", "localhost/myapp:1"},
+		{"web-api", "42", "localhost/web-api:42"},
 	}
 	for _, tt := range tests {
-		if got := ImageTag(tt.name, tt.ts); got != tt.want {
-			t.Errorf("ImageTag(%q, %q) = %q, want %q", tt.name, tt.ts, got, tt.want)
+		if got := ImageTag(tt.name, tt.version); got != tt.want {
+			t.Errorf("ImageTag(%q, %q) = %q, want %q", tt.name, tt.version, got, tt.want)
 		}
 	}
 }
@@ -72,7 +72,7 @@ func TestBuildArgs(t *testing.T) {
 	opts := BuildOpts{
 		ContextDir: "/tmp/deploy",
 		Secrets:    []string{"/tmp/deploy/build-sh-1", "/tmp/deploy/build-sh-2"},
-		Tag:        "localhost/myapp:20260305120000",
+		Tag:        "localhost/myapp:1",
 		LogFile:    "/tmp/deploy/logs/build.log",
 	}
 
@@ -80,7 +80,7 @@ func TestBuildArgs(t *testing.T) {
 	want := []string{
 		"build",
 		"--file", "/tmp/deploy/Containerfile",
-		"--tag", "localhost/myapp:20260305120000",
+		"--tag", "localhost/myapp:1",
 		"--secret", "id=build-sh-1,src=/tmp/deploy/build-sh-1",
 		"--secret", "id=build-sh-2,src=/tmp/deploy/build-sh-2",
 		"/tmp/deploy",
