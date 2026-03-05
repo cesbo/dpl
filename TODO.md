@@ -99,13 +99,13 @@ Each entity type is a separate Go package with its own config struct, templates,
 - [x] All tests updated: deploy_test, server_test (409 + sequential versions), podman/build_test, generate_test
 - [x] Golden files updated for version-based image tags
 
-## Phase 8: systemd Service Management
+## Phase 8: systemd Service Management ✅
 
-- [ ] Create `internal/systemd` — wrapper for `systemctl` commands
-- [ ] Write generated `.service` file to systemd directory
-- [ ] `systemctl daemon-reload`, `enable`, `restart` the service
-- [ ] Random free port allocation for host-side mapping, persisted in service file
-- [ ] Integration tests
+- [x] Create `internal/systemd` — wrapper for `systemctl` commands
+- [x] Write generated `.service` file to systemd directory
+- [x] `systemctl daemon-reload`, `enable`, `restart` the service
+- [x] Random free port allocation for host-side mapping, persisted in service file
+- [x] Integration tests
 
 ## Phase 9: End-to-End Flow
 

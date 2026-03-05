@@ -23,6 +23,7 @@ import (
 
 	"dpl/internal/app"
 	"dpl/internal/podman"
+	"dpl/internal/systemd"
 
 	"gopkg.in/yaml.v3"
 )
@@ -252,6 +253,49 @@ func deployApp(w http.ResponseWriter, r *http.Request, baseDir, name string, loc
 			return
 		}
 		slog.Info("podman build completed", "name", name, "tag", tag)
+
+		// Allocate host port and deploy as a systemd service.
+		hostPort, err := systemd.AllocatePort(entityDir)
+		if err != nil {
+			slog.Error("allocate port", "name", name, "error", err)
+			app.WriteStatus(result.Dir, app.StatusFailed, err.Error())
+			return
+		}
+
+		serviceContent, err := app.GenerateService(cfg, hostPort, tag)
+		if err != nil {
+			slog.Error("generate service", "name", name, "error", err)
+			app.WriteStatus(result.Dir, app.StatusFailed, err.Error())
+			return
+		}
+
+		unit := systemd.ServiceName(name)
+		if err := systemd.WriteServiceFile(name, serviceContent); err != nil {
+			slog.Error("write service file", "name", name, "error", err)
+			app.WriteStatus(result.Dir, app.StatusFailed, err.Error())
+			return
+		}
+
+		ctx := context.Background()
+		if err := systemd.DaemonReload(ctx); err != nil {
+			slog.Error("systemd daemon-reload", "name", name, "error", err)
+			app.WriteStatus(result.Dir, app.StatusFailed, err.Error())
+			return
+		}
+
+		if err := systemd.Enable(ctx, unit); err != nil {
+			slog.Error("systemd enable", "name", name, "error", err)
+			app.WriteStatus(result.Dir, app.StatusFailed, err.Error())
+			return
+		}
+
+		if err := systemd.Restart(ctx, unit); err != nil {
+			slog.Error("systemd restart", "name", name, "error", err)
+			app.WriteStatus(result.Dir, app.StatusFailed, err.Error())
+			return
+		}
+
+		slog.Info("deploy completed", "name", name, "unit", unit, "port", hostPort)
 		app.WriteStatus(result.Dir, app.StatusDone, "")
 	}()
 
