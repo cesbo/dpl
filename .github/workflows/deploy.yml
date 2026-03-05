@@ -1,0 +1,51 @@
+name: deploy-action
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - v[0-9]+
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Install dependencies
+        run: |
+          sudo apt update &&
+          sudo apt install -y \
+            build-essential \
+            musl-tools \
+            pkg-config \
+            libssl-dev
+
+      - name: Build project
+        env:
+          GOARCH: amd64
+          GOOS: linux
+          CGO_ENABLED: 1
+          CC: /usr/bin/musl-gcc
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          go build \
+            -ldflags "-s -w -linkmode external -extldflags -static -X 'dpl/internal/base.versionDate=${VERSION}'" \
+            -trimpath \
+            -v \
+            -o dpl-linux-x86_64 \
+            ./cmd/dpl
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            dpl-linux-x86_64

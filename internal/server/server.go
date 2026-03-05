@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+
+	"dpl/internal/base"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -397,17 +399,11 @@ func makeLogsHandler(baseDir string) func(http.ResponseWriter, *http.Request) {
 }
 
 // Run starts the HTTP server and blocks until it receives SIGINT/SIGTERM.
-// baseDir is the root directory containing entity subdirectories (e.g. /opt/dpl).
-func Run(baseDir string) error {
-	port := os.Getenv("DPL_PORT")
-	if port == "" {
-		port = "6060"
-	}
-
-	addr := net.JoinHostPort("", port)
+func Run() error {
+	addr := net.JoinHostPort("", base.Port)
 	srv := &http.Server{
 		Addr:    addr,
-		Handler: newMux(baseDir),
+		Handler: newMux(base.BaseDir),
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 
+	"dpl/internal/base"
 	"dpl/internal/server"
 )
 
@@ -12,12 +14,13 @@ func main() {
 
 	args := os.Args[1:]
 
+	if len(args) > 0 && (args[0] == "-v" || args[0] == "--version") {
+		fmt.Println("dpl", base.Version)
+		return
+	}
+
 	if len(args) == 0 {
-		baseDir := os.Getenv("DPL_BASE_DIR")
-		if baseDir == "" {
-			baseDir = "/opt/dpl"
-		}
-		if err := server.Run(baseDir); err != nil {
+		if err := server.Run(); err != nil {
 			slog.Error("server failed", "error", err)
 			os.Exit(1)
 		}
