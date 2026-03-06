@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"dpl/internal/app"
+	"dpl/internal/entities/app"
 	"dpl/internal/podman"
 	"dpl/internal/systemd"
 

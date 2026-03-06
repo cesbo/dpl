@@ -15,7 +15,7 @@ Each config has a `type` field that determines the entity kind:
 - **static** — static file site with its own deploy logic. *Future.*
 - **database** — managed database service. *Future.*
 
-Each entity type is a separate Go package (`internal/app`, `internal/domain`, etc.) with its own config struct, templates, and deploy logic.
+Each entity type is a separate Go package under `internal/entities/` (`internal/entities/app`, `internal/entities/domain`, etc.) with its own config struct, templates, and deploy logic.
 
 Examples:
 ```
@@ -55,16 +55,17 @@ Examples:
 cmd/
   dpl/              # main package — CLI entry point
 internal/
+  entities/         # deploy entity packages (one per entity type)
+    app/            # app entity: config, templates, generation, deploy pipeline
   server/           # HTTP server, deploy handler, auth middleware
-  app/              # app entity: config, templates, generation, deploy pipeline
   podman/           # podman build & run commands
   systemd/          # systemd unit management (enable, start, stop, restart)
 ```
 
 - `cmd/dpl/main.go` — entry point starting the HTTP server.
 - `internal/` — all internal packages, not importable from outside.
-- Packages are organized by domain entity, not by technical layer. Each entity (`app`, `domain`, `static`, `database`) owns its own config struct, templates, and deploy logic.
-- Shared infrastructure (`podman`, `systemd`) lives in separate packages and is used by entity packages.
+- `internal/entities/` — deploy entity packages. Each entity type (`app`, `domain`, `static`, `database`) gets its own package here with its own config struct, templates, and deploy logic.
+- Shared infrastructure (`podman`, `systemd`, `server`, `base`) lives in `internal/` and is used by entity packages.
 
 ## Key Design Decisions
 
@@ -79,7 +80,7 @@ internal/
 
 ### Dispatch by Type
 
-- The HTTP handler reads the `type` field from `config.yaml` and dispatches to the corresponding entity package (`app.Deploy()`, `static.Deploy()`, etc.).
+- The HTTP handler reads the `type` field from `config.yaml` and dispatches to the corresponding entity package (`entities/app.Deploy()`, `entities/static.Deploy()`, etc.).
 - Each entity package implements its own deploy logic independently.
 
 ### Template Rendering
