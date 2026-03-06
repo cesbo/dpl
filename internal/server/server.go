@@ -12,9 +12,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-
-
-	"dpl/internal/base"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -22,9 +19,9 @@ import (
 	"sync"
 	"time"
 
+	"dpl/internal/base"
+	"dpl/internal/entities"
 	"dpl/internal/entities/app"
-	"dpl/internal/podman"
-	"dpl/internal/systemd"
 
 	"gopkg.in/yaml.v3"
 )
@@ -171,136 +168,39 @@ func makeDeployHandler(baseDir string, locker *entityLocker) func(http.ResponseW
 	}
 }
 
+// errorResponse is the JSON body returned on deploy errors.
+type errorResponse struct {
+	Error string `json:"error"`
+}
+
+// writeError maps an error to an HTTP status code and writes a JSON error response.
+func writeError(w http.ResponseWriter, err error) {
+	code := http.StatusUnprocessableEntity // 422 by default
+	switch {
+	case errors.Is(err, entities.ErrConflict):
+		code = http.StatusConflict // 409
+	case errors.Is(err, os.ErrNotExist):
+		code = http.StatusNotFound // 404
+	case errors.Is(err, entities.ErrUnsupportedType):
+		code = http.StatusBadRequest // 400
+	}
+	slog.Error("deploy failed", "error", err)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(errorResponse{Error: err.Error()})
+}
+
 // deployApp handles the deploy pipeline for an app entity.
-// It acquires a per-entity lock, checks for in-progress deploys (409),
-// increments the version, extracts the archive and generates build
-// artifacts synchronously, then kicks off `podman build` in a background goroutine.
-// Returns 202 Accepted with a JSON deploy_id.
+// Returns 202 Accepted with a JSON deploy_id on success,
+// or a JSON error with an appropriate HTTP status code.
 func deployApp(w http.ResponseWriter, r *http.Request, baseDir, name string, locker *entityLocker) {
-	entityDir := filepath.Join(baseDir, name)
-
-	cfg, err := app.LoadConfig(entityDir)
-	if err != nil {
-		if errors.Is(err, app.ErrUnsupportedType) {
-			http.Error(w, "unsupported entity type", http.StatusBadRequest)
-			return
-		}
-		slog.Error("load app config", "name", name, "error", err)
-		http.Error(w, "failed to load app config", http.StatusInternalServerError)
-		return
-	}
-
-	// Acquire per-entity lock for version read + check + increment.
 	mu := locker.lock(name)
-	mu.Lock()
-
-	currentVersion, err := app.ReadVersion(entityDir)
+	result, err := app.StartDeploy(name, baseDir, r.Body, mu)
 	if err != nil {
-		mu.Unlock()
-		slog.Error("read version", "name", name, "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeError(w, err)
 		return
 	}
 
-	// Check if previous deploy is still building.
-	if currentVersion > 0 {
-		prevDir := filepath.Join(entityDir, "deploy_"+strconv.Itoa(currentVersion))
-		status, _, readErr := app.ReadStatus(prevDir)
-		if readErr == nil && status == app.StatusBuilding {
-			mu.Unlock()
-			http.Error(w, "deploy already in progress", http.StatusConflict)
-			return
-		}
-	}
-
-	newVersion := currentVersion + 1
-	if err := app.WriteVersion(entityDir, newVersion); err != nil {
-		mu.Unlock()
-		slog.Error("write version", "name", name, "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	mu.Unlock()
-
-	result, err := app.Deploy(cfg, name, baseDir, r.Body, newVersion)
-	if err != nil {
-		slog.Error("deploy app", "name", name, "error", err)
-		http.Error(w, fmt.Sprintf("deploy failed: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Write initial status.
-	if err := app.WriteStatus(result.Dir, app.StatusBuilding, ""); err != nil {
-		slog.Error("write initial status", "name", name, "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	// Kick off podman build in background.
-	tag := podman.ImageTag(name, strconv.Itoa(result.Version))
-	secrets := podman.SecretPaths(result.Dir, len(cfg.Build))
-	logFile := filepath.Join(result.Dir, "logs", "build.log")
-
-	go func() {
-		opts := podman.BuildOpts{
-			ContextDir: result.Dir,
-			Secrets:    secrets,
-			Tag:        tag,
-			LogFile:    logFile,
-		}
-		if err := podman.Build(context.Background(), opts); err != nil {
-			slog.Error("podman build failed", "name", name, "error", err)
-			app.WriteStatus(result.Dir, app.StatusFailed, err.Error())
-			return
-		}
-		slog.Info("podman build completed", "name", name, "tag", tag)
-
-		// Allocate host port and deploy as a systemd service.
-		hostPort, err := systemd.AllocatePort(entityDir)
-		if err != nil {
-			slog.Error("allocate port", "name", name, "error", err)
-			app.WriteStatus(result.Dir, app.StatusFailed, err.Error())
-			return
-		}
-
-		serviceContent, err := app.GenerateService(cfg, hostPort, tag)
-		if err != nil {
-			slog.Error("generate service", "name", name, "error", err)
-			app.WriteStatus(result.Dir, app.StatusFailed, err.Error())
-			return
-		}
-
-		unit := systemd.ServiceName(name)
-		if err := systemd.WriteServiceFile(name, serviceContent); err != nil {
-			slog.Error("write service file", "name", name, "error", err)
-			app.WriteStatus(result.Dir, app.StatusFailed, err.Error())
-			return
-		}
-
-		ctx := context.Background()
-		if err := systemd.DaemonReload(ctx); err != nil {
-			slog.Error("systemd daemon-reload", "name", name, "error", err)
-			app.WriteStatus(result.Dir, app.StatusFailed, err.Error())
-			return
-		}
-
-		if err := systemd.Enable(ctx, unit); err != nil {
-			slog.Error("systemd enable", "name", name, "error", err)
-			app.WriteStatus(result.Dir, app.StatusFailed, err.Error())
-			return
-		}
-
-		if err := systemd.Restart(ctx, unit); err != nil {
-			slog.Error("systemd restart", "name", name, "error", err)
-			app.WriteStatus(result.Dir, app.StatusFailed, err.Error())
-			return
-		}
-
-		slog.Info("deploy completed", "name", name, "unit", unit, "port", hostPort)
-		app.WriteStatus(result.Dir, app.StatusDone, "")
-	}()
-
-	// Return 202 with deploy ID.
 	deployID := filepath.Base(result.Dir)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)

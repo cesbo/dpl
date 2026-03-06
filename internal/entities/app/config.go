@@ -2,10 +2,11 @@
 package app
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"dpl/internal/entities"
 
 	"gopkg.in/yaml.v3"
 )
@@ -55,9 +56,6 @@ type PublicDir struct {
 	URL  string `yaml:"url"`
 }
 
-// ErrUnsupportedType indicates the config.yaml has a type other than "app".
-var ErrUnsupportedType = errors.New("unsupported type")
-
 // LoadConfig reads and validates an app config from dir/config.yaml.
 func LoadConfig(dir string) (*Config, error) {
 	data, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
@@ -71,7 +69,7 @@ func LoadConfig(dir string) (*Config, error) {
 	}
 
 	if cfg.Type != "app" {
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedType, cfg.Type)
+		return nil, fmt.Errorf("%w: %s", entities.ErrUnsupportedType, cfg.Type)
 	}
 
 	if err := validate(&cfg); err != nil {

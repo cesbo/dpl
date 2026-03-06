@@ -139,8 +139,8 @@ tokens: ["tok"]
 			path:       "/deploy/myapp",
 			token:      "tok-1",
 			body:       func() *bytes.Reader { return bytes.NewReader([]byte("not gzip")) },
-			wantStatus: http.StatusInternalServerError,
-			wantBody:   "deploy failed",
+			wantStatus: http.StatusUnprocessableEntity,
+			wantBody:   "extract archive",
 		},
 	}
 

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"testing"
+
+	"dpl/internal/entities"
 )
 
 func TestLoadConfig(t *testing.T) {
@@ -164,8 +166,8 @@ func TestLoadConfig_UnsupportedType(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unsupported type, got nil")
 	}
-	if !errors.Is(err, ErrUnsupportedType) {
-		t.Errorf("expected ErrUnsupportedType in chain, got: %v", err)
+	if !errors.Is(err, entities.ErrUnsupportedType) {
+		t.Errorf("expected entities.ErrUnsupportedType in chain, got: %v", err)
 	}
 }
 

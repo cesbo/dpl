@@ -3,12 +3,19 @@ package app
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+
+	"dpl/internal/entities"
+	"dpl/internal/podman"
+	"dpl/internal/systemd"
 
 	"github.com/google/uuid"
 )
@@ -20,6 +27,126 @@ const maxArchiveSize = 512 << 20
 type DeployResult struct {
 	Dir     string // Full path to the deploy directory.
 	Version int    // Sequential deploy version used in dir name and image tag.
+}
+
+// StartDeploy runs the full app deploy pipeline: loads config, manages versioning,
+// extracts the archive, generates build artifacts, and kicks off podman build +
+// systemd deploy in a background goroutine.
+// The caller must provide a per-entity mutex obtained from the entity locker.
+// Returns DeployResult for HTTP response or an error mapped to HTTP status codes:
+//   - entities.ErrUnsupportedType → 400
+//   - os.ErrNotExist → 404
+//   - entities.ErrConflict → 409
+//   - other errors → 422
+func StartDeploy(name, baseDir string, archive io.Reader, mu *sync.Mutex) (DeployResult, error) {
+	entityDir := filepath.Join(baseDir, name)
+
+	cfg, err := LoadConfig(entityDir)
+	if err != nil {
+		return DeployResult{}, err
+	}
+
+	// Acquire per-entity lock for version read + check + increment.
+	mu.Lock()
+
+	currentVersion, err := ReadVersion(entityDir)
+	if err != nil {
+		mu.Unlock()
+		return DeployResult{}, fmt.Errorf("start deploy: %w", err)
+	}
+
+	// Check if previous deploy is still building.
+	if currentVersion > 0 {
+		prevDir := filepath.Join(entityDir, "deploy_"+strconv.Itoa(currentVersion))
+		status, _, readErr := ReadStatus(prevDir)
+		if readErr == nil && status == StatusBuilding {
+			mu.Unlock()
+			return DeployResult{}, fmt.Errorf("start deploy: %w", entities.ErrConflict)
+		}
+	}
+
+	newVersion := currentVersion + 1
+	if err := WriteVersion(entityDir, newVersion); err != nil {
+		mu.Unlock()
+		return DeployResult{}, fmt.Errorf("start deploy: %w", err)
+	}
+	mu.Unlock()
+
+	result, err := Deploy(cfg, name, baseDir, archive, newVersion)
+	if err != nil {
+		return DeployResult{}, err
+	}
+
+	// Write initial status.
+	if err := WriteStatus(result.Dir, StatusBuilding, ""); err != nil {
+		return DeployResult{}, fmt.Errorf("start deploy: %w", err)
+	}
+
+	// Kick off podman build + systemd deploy in background.
+	tag := podman.ImageTag(name, strconv.Itoa(result.Version))
+	secrets := podman.SecretPaths(result.Dir, len(cfg.Build))
+	logFile := filepath.Join(result.Dir, "logs", "build.log")
+
+	go func() {
+		opts := podman.BuildOpts{
+			ContextDir: result.Dir,
+			Secrets:    secrets,
+			Tag:        tag,
+			LogFile:    logFile,
+		}
+		if err := podman.Build(context.Background(), opts); err != nil {
+			slog.Error("podman build failed", "name", name, "error", err)
+			WriteStatus(result.Dir, StatusFailed, err.Error())
+			return
+		}
+		slog.Info("podman build completed", "name", name, "tag", tag)
+
+		// Allocate host port and deploy as a systemd service.
+		hostPort, err := systemd.AllocatePort(entityDir)
+		if err != nil {
+			slog.Error("allocate port", "name", name, "error", err)
+			WriteStatus(result.Dir, StatusFailed, err.Error())
+			return
+		}
+
+		serviceContent, err := GenerateService(cfg, hostPort, tag)
+		if err != nil {
+			slog.Error("generate service", "name", name, "error", err)
+			WriteStatus(result.Dir, StatusFailed, err.Error())
+			return
+		}
+
+		unit := systemd.ServiceName(name)
+		if err := systemd.WriteServiceFile(name, serviceContent); err != nil {
+			slog.Error("write service file", "name", name, "error", err)
+			WriteStatus(result.Dir, StatusFailed, err.Error())
+			return
+		}
+
+		ctx := context.Background()
+		if err := systemd.DaemonReload(ctx); err != nil {
+			slog.Error("systemd daemon-reload", "name", name, "error", err)
+			WriteStatus(result.Dir, StatusFailed, err.Error())
+			return
+		}
+
+		if err := systemd.Enable(ctx, unit); err != nil {
+			slog.Error("systemd enable", "name", name, "error", err)
+			WriteStatus(result.Dir, StatusFailed, err.Error())
+			return
+		}
+
+		if err := systemd.Restart(ctx, unit); err != nil {
+			slog.Error("systemd restart", "name", name, "error", err)
+			WriteStatus(result.Dir, StatusFailed, err.Error())
+			return
+		}
+
+		slog.Info("deploy completed", "name", name, "unit", unit, "port", hostPort)
+		WriteStatus(result.Dir, StatusDone, "")
+	}()
+
+	return result, nil
 }
 
 // Deploy orchestrates the app deploy pipeline:
