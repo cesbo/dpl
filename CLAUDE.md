@@ -1,4 +1,4 @@
-# Copilot Instructions for dpl
+# dpl
 
 ## Project Overview
 
@@ -30,8 +30,10 @@ Examples:
 1. GitHub Actions creates a tag → builds a tar.gz archive of the web application.
 2. The archive is POSTed to `http://server:PORT/deploy/app-name` with Bearer token auth.
 3. dpl reads entity config from `/opt/dpl/app-name/config.yaml`, checks `type: app`.
-4. dpl generates build artifacts: `build.sh`, `Containerfile`, `run.sh`, systemd `.service` file.
-5. dpl builds a Podman image and starts a container via systemd.
+4. dpl creates build directory `/opt/dpl/app-name/deploy_{version}/`
+5. dpl generates build artifacts in the build directory: `build.sh`, `Containerfile`, `run.sh`, systemd `.service` file.
+6. dpl extracts received archive into `/opt/dpl/app-name/deploy_{version}/app/`.
+7. dpl builds a Podman image and starts a container via systemd.
 
 ### Target Platform
 
@@ -135,9 +137,7 @@ internal/
 
 ## Workflow
 
-### After completing a phase
-
 When work on a phase from `TODO.md` is finished:
 
-1. Mark all phase items as done (`[x]`) and add ✅ to the phase heading.
+1. Mark all phase items as done (`[x]`).
 2. `git add -A && git commit` with a message like `phase N: short description`.
