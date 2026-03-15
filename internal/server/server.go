@@ -38,8 +38,8 @@ type contextKey string
 const metaKey contextKey = "entityMeta"
 
 // loadEntityMeta reads type and tokens from baseDir/name/config.yaml.
-func loadEntityMeta(baseDir, name string) (*entityMeta, error) {
-	p := filepath.Join(baseDir, name, "config.yaml")
+func loadEntityMeta(name string) (*entityMeta, error) {
+	p := filepath.Join(base.BaseDir, name, "config.yaml")
 	data, err := os.ReadFile(p)
 	if err != nil {
 		return nil, fmt.Errorf("load entity meta: %w", err)
@@ -52,21 +52,21 @@ func loadEntityMeta(baseDir, name string) (*entityMeta, error) {
 }
 
 // newMux builds the HTTP routes for the given base directory.
-func newMux(baseDir string) *http.ServeMux {
+func newMux() *http.ServeMux {
 	locker := newEntityLocker()
 	mux := http.NewServeMux()
-	mux.Handle("POST /deploy/{name}", authMiddleware(baseDir, http.HandlerFunc(makeDeployHandler(baseDir, locker))))
-	mux.Handle("GET /deploy/{name}/{deployID}/status", authMiddleware(baseDir, http.HandlerFunc(makeStatusHandler(baseDir))))
-	mux.Handle("GET /deploy/{name}/{deployID}/logs", authMiddleware(baseDir, http.HandlerFunc(makeLogsHandler(baseDir))))
+	mux.Handle("POST /deploy/{name}", authMiddleware(http.HandlerFunc(makeDeployHandler(locker))))
+	mux.Handle("GET /deploy/{name}/{deployID}/status", authMiddleware(http.HandlerFunc(makeStatusHandler())))
+	mux.Handle("GET /deploy/{name}/{deployID}/logs", authMiddleware(http.HandlerFunc(makeLogsHandler())))
 	return mux
 }
 
 // authMiddleware validates the Bearer token against the entity's config.
-func authMiddleware(baseDir string, next http.Handler) http.Handler {
+func authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 
-		meta, err := loadEntityMeta(baseDir, name)
+		meta, err := loadEntityMeta(name)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				http.Error(w, "entity not found", http.StatusNotFound)
@@ -154,14 +154,14 @@ type statusResponse struct {
 
 // makeDeployHandler returns the handler for POST /deploy/{name}.
 // It dispatches based on entity type and runs the deploy pipeline.
-func makeDeployHandler(baseDir string, locker *entityLocker) func(http.ResponseWriter, *http.Request) {
+func makeDeployHandler(locker *entityLocker) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		meta := r.Context().Value(metaKey).(*entityMeta)
 
 		switch meta.Type {
 		case "app":
-			deployApp(w, r, baseDir, name, locker)
+			deployApp(w, r, name, locker)
 		default:
 			http.Error(w, fmt.Sprintf("unsupported entity type: %s", meta.Type), http.StatusBadRequest)
 		}
@@ -193,9 +193,9 @@ func writeError(w http.ResponseWriter, err error) {
 // deployApp handles the deploy pipeline for an app entity.
 // Returns 202 Accepted with a JSON deploy_id on success,
 // or a JSON error with an appropriate HTTP status code.
-func deployApp(w http.ResponseWriter, r *http.Request, baseDir, name string, locker *entityLocker) {
+func deployApp(w http.ResponseWriter, r *http.Request, name string, locker *entityLocker) {
 	mu := locker.lock(name)
-	result, err := app.StartDeploy(name, baseDir, r.Body, mu)
+	result, err := app.StartDeploy(name, r.Body, mu)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -208,7 +208,7 @@ func deployApp(w http.ResponseWriter, r *http.Request, baseDir, name string, loc
 }
 
 // makeStatusHandler returns the handler for GET /deploy/{name}/{deployID}/status.
-func makeStatusHandler(baseDir string) func(http.ResponseWriter, *http.Request) {
+func makeStatusHandler() func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		deployID := r.PathValue("deployID")
@@ -218,7 +218,7 @@ func makeStatusHandler(baseDir string) func(http.ResponseWriter, *http.Request) 
 			return
 		}
 
-		deployDir := filepath.Join(baseDir, name, deployID)
+		deployDir := filepath.Join(base.BaseDir, name, deployID)
 		status, errMsg, err := app.ReadStatus(deployDir)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
@@ -242,7 +242,7 @@ func makeStatusHandler(baseDir string) func(http.ResponseWriter, *http.Request) 
 // makeLogsHandler returns the handler for GET /deploy/{name}/{deployID}/logs.
 // Supports ?offset=N query parameter to read from a byte offset.
 // Returns the log content and an X-Offset header with the new offset.
-func makeLogsHandler(baseDir string) func(http.ResponseWriter, *http.Request) {
+func makeLogsHandler() func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		deployID := r.PathValue("deployID")
@@ -252,7 +252,7 @@ func makeLogsHandler(baseDir string) func(http.ResponseWriter, *http.Request) {
 			return
 		}
 
-		logPath := filepath.Join(baseDir, name, deployID, "logs", "build.log")
+		logPath := filepath.Join(base.BaseDir, name, deployID, "logs", "build.log")
 		f, err := os.Open(logPath)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
@@ -302,7 +302,7 @@ func Run(ctx context.Context) error {
 	addr := net.JoinHostPort("", base.Port)
 	srv := &http.Server{
 		Addr:    addr,
-		Handler: newMux(base.BaseDir),
+		Handler: newMux(),
 	}
 
 	errCh := make(chan error, 1)

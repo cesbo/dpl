@@ -12,12 +12,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"dpl/internal/base"
 )
 
 // writeConfig creates baseDir/name/config.yaml with the given content.
-func writeConfig(t *testing.T, baseDir, name, content string) {
+func writeConfig(t *testing.T, name, content string) {
 	t.Helper()
-	dir := filepath.Join(baseDir, name)
+	dir := filepath.Join(base.BaseDir, name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -64,15 +66,15 @@ func testArchiveBody(t *testing.T) *bytes.Reader {
 }
 
 func TestDeploy(t *testing.T) {
-	base := t.TempDir()
-	writeConfig(t, base, "myapp", validAppConfig)
-	writeConfig(t, base, "myapp2", validAppConfig)
+	base.BaseDir = t.TempDir()
+	writeConfig(t, "myapp", validAppConfig)
+	writeConfig(t, "myapp2", validAppConfig)
 
-	writeConfig(t, base, "unsupported", `type: domain
+	writeConfig(t, "unsupported", `type: domain
 tokens: ["tok"]
 `)
 
-	mux := newMux(base)
+	mux := newMux()
 
 	tests := []struct {
 		name       string
@@ -177,10 +179,10 @@ tokens: ["tok"]
 // TestDeploy_CreatesFiles verifies that a successful deploy creates the expected
 // files in the deploy directory.
 func TestDeploy_CreatesFiles(t *testing.T) {
-	base := t.TempDir()
-	writeConfig(t, base, "myapp", validAppConfig)
+	base.BaseDir = t.TempDir()
+	writeConfig(t, "myapp", validAppConfig)
 
-	mux := newMux(base)
+	mux := newMux()
 
 	req := httptest.NewRequest(http.MethodPost, "/deploy/myapp", testArchiveBody(t))
 	req.Header.Set("Authorization", "Bearer tok-1")
@@ -200,7 +202,7 @@ func TestDeploy_CreatesFiles(t *testing.T) {
 		t.Fatalf("deploy_id = %q, want prefix 'deploy_'", resp.DeployID)
 	}
 
-	deployDir := filepath.Join(base, "myapp", resp.DeployID)
+	deployDir := filepath.Join(base.BaseDir, "myapp", resp.DeployID)
 
 	// Verify files exist.
 	for _, f := range []string{"Containerfile", "run.sh", "build-sh-1", "app/index.js", "logs"} {
@@ -220,11 +222,11 @@ func TestDeploy_CreatesFiles(t *testing.T) {
 }
 
 func TestDeploy_MethodNotAllowed(t *testing.T) {
-	base := t.TempDir()
-	writeConfig(t, base, "myapp", `type: app
+	base.BaseDir = t.TempDir()
+	writeConfig(t, "myapp", `type: app
 tokens: ["tok"]
 `)
-	mux := newMux(base)
+	mux := newMux()
 
 	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
 		t.Run(method, func(t *testing.T) {
@@ -276,13 +278,13 @@ func TestMatchToken(t *testing.T) {
 }
 
 func TestLoadEntityMeta(t *testing.T) {
-	base := t.TempDir()
-	writeConfig(t, base, "svc", `type: app
+	base.BaseDir = t.TempDir()
+	writeConfig(t, "svc", `type: app
 tokens: ["a", "b"]
 extra: ignored
 `)
 
-	meta, err := loadEntityMeta(base, "svc")
+	meta, err := loadEntityMeta("svc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,8 +297,8 @@ extra: ignored
 }
 
 func TestLoadEntityMeta_NotFound(t *testing.T) {
-	base := t.TempDir()
-	_, err := loadEntityMeta(base, "nope")
+	base.BaseDir = t.TempDir()
+	_, err := loadEntityMeta("nope")
 	if err == nil {
 		t.Fatal("expected error for missing config")
 	}
@@ -308,9 +310,9 @@ func TestLoadEntityMeta_NotFound(t *testing.T) {
 // --- Status endpoint tests ---
 
 // setupDeployDir creates a fake deploy directory with a status file and optionally a build log.
-func setupDeployDir(t *testing.T, base, name, deployID, status, logContent string) {
+func setupDeployDir(t *testing.T, name, deployID, status, logContent string) {
 	t.Helper()
-	dir := filepath.Join(base, name, deployID)
+	dir := filepath.Join(base.BaseDir, name, deployID)
 	if err := os.MkdirAll(filepath.Join(dir, "logs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -325,13 +327,13 @@ func setupDeployDir(t *testing.T, base, name, deployID, status, logContent strin
 }
 
 func TestStatusEndpoint(t *testing.T) {
-	base := t.TempDir()
-	writeConfig(t, base, "myapp", validAppConfig)
-	setupDeployDir(t, base, "myapp", "deploy_1", "building", "")
-	setupDeployDir(t, base, "myapp", "deploy_2", "done", "")
-	setupDeployDir(t, base, "myapp", "deploy_3", "failed\nexit code 1", "")
+	base.BaseDir = t.TempDir()
+	writeConfig(t, "myapp", validAppConfig)
+	setupDeployDir(t, "myapp", "deploy_1", "building", "")
+	setupDeployDir(t, "myapp", "deploy_2", "done", "")
+	setupDeployDir(t, "myapp", "deploy_3", "failed\nexit code 1", "")
 
-	mux := newMux(base)
+	mux := newMux()
 
 	tests := []struct {
 		name       string
@@ -432,11 +434,11 @@ func TestStatusEndpoint(t *testing.T) {
 // --- Logs endpoint tests ---
 
 func TestLogsEndpoint(t *testing.T) {
-	base := t.TempDir()
-	writeConfig(t, base, "myapp", validAppConfig)
-	setupDeployDir(t, base, "myapp", "deploy_1", "building", "line1\nline2\nline3\n")
+	base.BaseDir = t.TempDir()
+	writeConfig(t, "myapp", validAppConfig)
+	setupDeployDir(t, "myapp", "deploy_1", "building", "line1\nline2\nline3\n")
 
-	mux := newMux(base)
+	mux := newMux()
 
 	tests := []struct {
 		name        string
@@ -533,12 +535,12 @@ func TestLogsEndpoint(t *testing.T) {
 
 // TestLogsEndpoint_NoLogFile verifies behavior when deploy dir exists but log file doesn't yet.
 func TestLogsEndpoint_NoLogFile(t *testing.T) {
-	base := t.TempDir()
-	writeConfig(t, base, "myapp", validAppConfig)
+	base.BaseDir = t.TempDir()
+	writeConfig(t, "myapp", validAppConfig)
 	// Create deploy dir with status but no log file.
-	setupDeployDir(t, base, "myapp", "deploy_1", "building", "")
+	setupDeployDir(t, "myapp", "deploy_1", "building", "")
 
-	mux := newMux(base)
+	mux := newMux()
 	req := httptest.NewRequest(http.MethodGet, "/deploy/myapp/deploy_1/logs", nil)
 	req.Header.Set("Authorization", "Bearer tok-1")
 	rec := httptest.NewRecorder()
@@ -552,18 +554,18 @@ func TestLogsEndpoint_NoLogFile(t *testing.T) {
 // TestDeploy_Conflict409 verifies that a second deploy returns 409
 // when the previous deploy is still in "building" status.
 func TestDeploy_Conflict409(t *testing.T) {
-	base := t.TempDir()
-	writeConfig(t, base, "myapp", validAppConfig)
+	base.BaseDir = t.TempDir()
+	writeConfig(t, "myapp", validAppConfig)
 
 	// Simulate a previous deploy that is still building:
 	// write version.txt=1 and create deploy_1/status=building.
-	entityDir := filepath.Join(base, "myapp")
+	entityDir := filepath.Join(base.BaseDir, "myapp")
 	if err := os.WriteFile(filepath.Join(entityDir, "version.txt"), []byte("1"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	setupDeployDir(t, base, "myapp", "deploy_1", "building", "")
+	setupDeployDir(t, "myapp", "deploy_1", "building", "")
 
-	mux := newMux(base)
+	mux := newMux()
 
 	req := httptest.NewRequest(http.MethodPost, "/deploy/myapp", testArchiveBody(t))
 	req.Header.Set("Authorization", "Bearer tok-1")
@@ -581,10 +583,10 @@ func TestDeploy_Conflict409(t *testing.T) {
 // TestDeploy_SequentialVersions verifies that sequential deploys get
 // incrementing version numbers and version.txt is updated.
 func TestDeploy_SequentialVersions(t *testing.T) {
-	base := t.TempDir()
-	writeConfig(t, base, "myapp", validAppConfig)
+	base.BaseDir = t.TempDir()
+	writeConfig(t, "myapp", validAppConfig)
 
-	mux := newMux(base)
+	mux := newMux()
 
 	// First deploy.
 	req1 := httptest.NewRequest(http.MethodPost, "/deploy/myapp", testArchiveBody(t))
@@ -605,7 +607,7 @@ func TestDeploy_SequentialVersions(t *testing.T) {
 	}
 
 	// Mark first deploy as done so second can proceed.
-	deployDir1 := filepath.Join(base, "myapp", "deploy_1")
+	deployDir1 := filepath.Join(base.BaseDir, "myapp", "deploy_1")
 	if err := os.WriteFile(filepath.Join(deployDir1, "status.txt"), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -629,7 +631,7 @@ func TestDeploy_SequentialVersions(t *testing.T) {
 	}
 
 	// Verify version.txt.
-	data, err := os.ReadFile(filepath.Join(base, "myapp", "version.txt"))
+	data, err := os.ReadFile(filepath.Join(base.BaseDir, "myapp", "version.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}

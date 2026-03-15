@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"dpl/internal/base"
 	"io"
 	"os"
 	"path/filepath"
@@ -163,22 +164,22 @@ func minimalConfig() *Config {
 }
 
 func TestDeploy_HappyPath(t *testing.T) {
-	base := t.TempDir()
+	base.BaseDir = t.TempDir()
 	name := "myapp"
 	cfg := minimalConfig()
 
 	// Create the entity directory (required by the path).
-	if err := os.MkdirAll(filepath.Join(base, name), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(base.BaseDir, name), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	archive := createTestArchive(t, map[string]string{
-		"index.js":       "console.log('hello')",
-		"package.json":   `{"name":"myapp"}`,
-		"src/main.js":    "// main",
+		"index.js":     "console.log('hello')",
+		"package.json": `{"name":"myapp"}`,
+		"src/main.js":  "// main",
 	})
 
-	result, err := Deploy(cfg, name, base, archive, 1)
+	result, err := Deploy(cfg, name, archive, 1)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
@@ -191,8 +192,8 @@ func TestDeploy_HappyPath(t *testing.T) {
 	}
 
 	// Verify deploy dir exists and is under baseDir/name/.
-	if !strings.HasPrefix(deployDir, filepath.Join(base, name, "deploy_")) {
-		t.Errorf("deployDir = %q, expected prefix %q", deployDir, filepath.Join(base, name, "deploy_"))
+	if !strings.HasPrefix(deployDir, filepath.Join(base.BaseDir, name, "deploy_")) {
+		t.Errorf("deployDir = %q, expected prefix %q", deployDir, filepath.Join(base.BaseDir, name, "deploy_"))
 	}
 
 	// Verify app/ subdirectory with unpacked files.
@@ -256,7 +257,7 @@ func TestDeploy_HappyPath(t *testing.T) {
 }
 
 func TestDeploy_MultipleLayersBuildScripts(t *testing.T) {
-	base := t.TempDir()
+	base.BaseDir = t.TempDir()
 	name := "multi"
 	cfg := &Config{
 		Type:   "app",
@@ -272,7 +273,7 @@ func TestDeploy_MultipleLayersBuildScripts(t *testing.T) {
 		},
 	}
 
-	if err := os.MkdirAll(filepath.Join(base, name), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(base.BaseDir, name), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -281,7 +282,7 @@ func TestDeploy_MultipleLayersBuildScripts(t *testing.T) {
 		"server.js":    "// server",
 	})
 
-	result, err := Deploy(cfg, name, base, archive, 1)
+	result, err := Deploy(cfg, name, archive, 1)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
@@ -305,11 +306,11 @@ func TestDeploy_MultipleLayersBuildScripts(t *testing.T) {
 }
 
 func TestDeploy_DirectoryStructureInArchive(t *testing.T) {
-	base := t.TempDir()
+	base.BaseDir = t.TempDir()
 	name := "dirapp"
 	cfg := minimalConfig()
 
-	if err := os.MkdirAll(filepath.Join(base, name), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(base.BaseDir, name), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -318,7 +319,7 @@ func TestDeploy_DirectoryStructureInArchive(t *testing.T) {
 		"src/lib/utils.js": "// utils",
 	})
 
-	result, err := Deploy(cfg, name, base, archive, 1)
+	result, err := Deploy(cfg, name, archive, 1)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
@@ -375,22 +376,22 @@ func TestExtractArchive_InvalidGzip(t *testing.T) {
 }
 
 func TestDeploy_CleanupOnFailure(t *testing.T) {
-	base := t.TempDir()
+	base.BaseDir = t.TempDir()
 	name := "failapp"
 	cfg := minimalConfig()
 
-	if err := os.MkdirAll(filepath.Join(base, name), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(base.BaseDir, name), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	// Pass invalid data (not gzip) to trigger an error during extraction.
-	_, err := Deploy(cfg, name, base, strings.NewReader("invalid archive"), 1)
+	_, err := Deploy(cfg, name, strings.NewReader("invalid archive"), 1)
 	if err == nil {
 		t.Fatal("expected error")
 	}
 
 	// Verify no deploy_* directories remain.
-	entries, err := os.ReadDir(filepath.Join(base, name))
+	entries, err := os.ReadDir(filepath.Join(base.BaseDir, name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,11 +403,11 @@ func TestDeploy_CleanupOnFailure(t *testing.T) {
 }
 
 func TestDeploy_ArchiveContents(t *testing.T) {
-	base := t.TempDir()
+	base.BaseDir = t.TempDir()
 	name := "contentapp"
 	cfg := minimalConfig()
 
-	if err := os.MkdirAll(filepath.Join(base, name), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(base.BaseDir, name), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -417,7 +418,7 @@ func TestDeploy_ArchiveContents(t *testing.T) {
 	}
 	archive := createTestArchive(t, files)
 
-	result, err := Deploy(cfg, name, base, archive, 1)
+	result, err := Deploy(cfg, name, archive, 1)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}

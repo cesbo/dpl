@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"dpl/internal/base"
 	"dpl/internal/entities"
 	"dpl/internal/podman"
 	"dpl/internal/systemd"
@@ -38,8 +39,8 @@ type DeployResult struct {
 //   - os.ErrNotExist → 404
 //   - entities.ErrConflict → 409
 //   - other errors → 422
-func StartDeploy(name, baseDir string, archive io.Reader, mu *sync.Mutex) (DeployResult, error) {
-	entityDir := filepath.Join(baseDir, name)
+func StartDeploy(name string, archive io.Reader, mu *sync.Mutex) (DeployResult, error) {
+	entityDir := filepath.Join(base.BaseDir, name)
 
 	cfg, err := LoadConfig(entityDir)
 	if err != nil {
@@ -72,7 +73,7 @@ func StartDeploy(name, baseDir string, archive io.Reader, mu *sync.Mutex) (Deplo
 	}
 	mu.Unlock()
 
-	result, err := Deploy(cfg, name, baseDir, archive, newVersion)
+	result, err := Deploy(cfg, name, archive, newVersion)
 	if err != nil {
 		return DeployResult{}, err
 	}
@@ -157,8 +158,8 @@ func StartDeploy(name, baseDir string, archive io.Reader, mu *sync.Mutex) (Deplo
 //
 // On success it returns a DeployResult with the directory path and version.
 // On failure any partially created deploy directory is removed.
-func Deploy(cfg *Config, name, baseDir string, archive io.Reader, version int) (DeployResult, error) {
-	deployDir := filepath.Join(baseDir, name, "deploy_"+strconv.Itoa(version))
+func Deploy(cfg *Config, name string, archive io.Reader, version int) (DeployResult, error) {
+	deployDir := filepath.Join(base.BaseDir, name, "deploy_"+strconv.Itoa(version))
 
 	if err := os.MkdirAll(deployDir, 0o755); err != nil {
 		return DeployResult{}, fmt.Errorf("deploy: create dir: %w", err)
