@@ -12,6 +12,13 @@ import (
 	"dpl/internal/entities/app"
 )
 
+// statusResponse is the JSON body returned by GET /deploy/{name}/{deployID}/status.
+type statusResponse struct {
+	DeployID string `json:"deploy_id"`
+	Status   string `json:"status"`
+	Error    string `json:"error,omitempty"`
+}
+
 // statusHandler for GET /deploy/{name}/{deployID}/status.
 func (s *httpServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")

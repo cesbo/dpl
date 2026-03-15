@@ -10,18 +10,6 @@ import (
 	"dpl/internal/entities"
 )
 
-// deployResponse is the JSON body returned by POST /deploy/{name}.
-type deployResponse struct {
-	DeployID string `json:"deploy_id"`
-}
-
-// statusResponse is the JSON body returned by GET /deploy/{name}/{deployID}/status.
-type statusResponse struct {
-	DeployID string `json:"deploy_id"`
-	Status   string `json:"status"`
-	Error    string `json:"error,omitempty"`
-}
-
 // errorResponse is the JSON body returned on deploy errors.
 type errorResponse struct {
 	Error string `json:"error"`

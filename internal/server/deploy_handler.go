@@ -9,6 +9,11 @@ import (
 	"dpl/internal/entities/app"
 )
 
+// deployResponse is the JSON body returned by POST /deploy/{name}.
+type deployResponse struct {
+	DeployID string `json:"deploy_id"`
+}
+
 // deployHandler returns the handler for POST /deploy/{name}.
 // It dispatches based on entity type and runs the deploy pipeline.
 func (s *httpServer) deployHandler(w http.ResponseWriter, r *http.Request) {

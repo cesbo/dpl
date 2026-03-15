@@ -38,7 +38,9 @@ type entityLocker struct {
 }
 
 func newEntityLocker() *entityLocker {
-	return &entityLocker{locks: make(map[string]*sync.Mutex)}
+	return &entityLocker{
+		locks: make(map[string]*sync.Mutex),
+	}
 }
 
 // lock returns the mutex for the given entity name, creating it if needed.
