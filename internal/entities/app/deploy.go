@@ -21,9 +21,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// maxArchiveSize is the maximum total size of extracted archive content (512 MB).
-const maxArchiveSize = 512 << 20
-
 // DeployResult holds the output of a successful Deploy call.
 type DeployResult struct {
 	Dir     string // Full path to the deploy directory.
@@ -231,7 +228,6 @@ func extractArchive(r io.Reader, destDir string) error {
 	defer gz.Close()
 
 	tr := tar.NewReader(gz)
-	var totalSize int64
 
 	for {
 		hdr, err := tr.Next()
@@ -263,11 +259,6 @@ func extractArchive(r io.Reader, destDir string) error {
 			}
 
 		case tar.TypeReg:
-			totalSize += hdr.Size
-			if totalSize > maxArchiveSize {
-				return fmt.Errorf("archive exceeds maximum size (%d bytes)", maxArchiveSize)
-			}
-
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return fmt.Errorf("mkdir for %s: %w", clean, err)
 			}

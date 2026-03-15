@@ -115,6 +115,10 @@ Each entity type is a separate Go package with its own config struct, templates,
 
 ## Phase 10: Polish & Hardening
 
+- [ ] Use streaming for deploy logs instead of reading the whole log file into memory
+- [ ] Return JSON error format for auth, status, and logs endpoints
+- [ ] Persist deploy status immediately after reserving the new version
+- [ ] Improve Bearer token parsing (case-insensitive scheme, stricter trimming/validation)
 - [ ] Structured logging throughout all packages
 - [ ] Timeouts for podman build & HTTP requests
 - [ ] README with usage instructions and config.yaml example

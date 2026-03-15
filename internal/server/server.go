@@ -301,8 +301,11 @@ func makeLogsHandler() func(http.ResponseWriter, *http.Request) {
 func Run(ctx context.Context) error {
 	addr := net.JoinHostPort("", base.Port)
 	srv := &http.Server{
-		Addr:    addr,
-		Handler: newMux(),
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    8 * 1024,
+		Addr:              addr,
+		Handler:           newMux(),
 	}
 
 	errCh := make(chan error, 1)
