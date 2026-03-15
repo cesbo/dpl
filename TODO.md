@@ -95,7 +95,6 @@ Each entity type is a separate Go package with its own config struct, templates,
 - [x] `DeployResult.Timestamp` → `DeployResult.Version int`
 - [x] Per-entity `sync.Mutex` in server (`entityLocker`) protects version read + check + increment
 - [x] `POST /deploy/{name}` returns `409 Conflict` if previous deploy is still `building`
-- [x] `deployIDPattern` relaxed to `^deploy_\d+$`
 - [x] All tests updated: deploy_test, server_test (409 + sequential versions), podman/build_test, generate_test
 - [x] Golden files updated for version-based image tags
 
