@@ -286,17 +286,25 @@ func makeLogsHandler() func(http.ResponseWriter, *http.Request) {
 			}
 		}
 
-		w.Header().Set("Content-Type", "text/plain")
-
-		data, err := io.ReadAll(f)
+		info, err := f.Stat()
 		if err != nil {
-			slog.Error("read log", "name", name, "deployID", deployID, "error", err)
+			slog.Error("stat log file", "name", name, "deployID", deployID, "error", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 
-		w.Header().Set("X-Offset", strconv.FormatInt(offset+int64(len(data)), 10))
-		w.Write(data)
+		remaining := info.Size() - offset
+		if remaining < 0 {
+			remaining = 0
+		}
+
+		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("X-Offset", strconv.FormatInt(offset+remaining, 10))
+
+		if _, err := io.Copy(w, io.LimitReader(f, remaining)); err != nil {
+			slog.Error("read log", "name", name, "deployID", deployID, "error", err)
+			return
+		}
 	}
 }
 

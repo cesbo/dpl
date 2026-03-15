@@ -490,8 +490,7 @@ func TestLogsEndpoint(t *testing.T) {
 		token       string
 		wantStatus  int
 		wantBody    string
-		wantOffset  string // expected X-Offset header value
-		wantBodyLen int    // if > 0, check exact length
+		wantOffset string // expected X-Offset header value
 	}{
 		{
 			name:       "full log",
