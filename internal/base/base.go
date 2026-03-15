@@ -12,8 +12,8 @@ var Version string = "dev"
 // BaseDir is the root directory containing entity subdirectories (default "/opt/dpl").
 var BaseDir string
 
-// Port is the HTTP server listen port (default "6060").
-var Port string
+// Addr is the HTTP server listen address (default ":6060").
+var Addr string
 
 func InitEnv() {
 	BaseDir = os.Getenv("DPL_BASE")
@@ -21,8 +21,8 @@ func InitEnv() {
 		BaseDir = "/opt/dpl"
 	}
 
-	Port = os.Getenv("DPL_PORT")
-	if Port == "" {
-		Port = "6060"
+	Addr = os.Getenv("DPL_ADDR")
+	if Addr == "" {
+		Addr = ":6060"
 	}
 }

@@ -1,6 +1,8 @@
 package base
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestVersionDefault(t *testing.T) {
 	if Version != "dev" {
@@ -15,10 +17,10 @@ func TestDefaultBaseDir(t *testing.T) {
 	}
 }
 
-func TestDefaultPort(t *testing.T) {
+func TestDefaultAddr(t *testing.T) {
 	InitEnv()
-	if Port == "" {
-		t.Fatal("Port is empty, expected default 6060")
+	if Addr != ":6060" {
+		t.Fatal("Addr is empty, expected default :6060")
 	}
 }
 
@@ -32,11 +34,11 @@ func TestBaseDirFromEnv(t *testing.T) {
 	}
 }
 
-func TestPortFromEnv(t *testing.T) {
-	t.Setenv("DPL_PORT", "9090")
-	Port = ""
+func TestAddrFromEnv(t *testing.T) {
+	t.Setenv("DPL_ADDR", "127.0.0.1:9090")
+	Addr = ""
 	InitEnv()
-	if Port != "9090" {
-		t.Errorf("Port = %q, want %q", Port, "9090")
+	if Addr != "127.0.0.1:9090" {
+		t.Errorf("Addr = %q, want %q", Addr, "127.0.0.1:9090")
 	}
 }

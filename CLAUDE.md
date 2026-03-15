@@ -75,7 +75,7 @@ internal/
 - Every `config.yaml` has a `type` field (`app`, `domain`, `static`, `database`).
 - Config is parsed with `gopkg.in/yaml.v3`.
 - Config struct fields use `yaml:"..."` tags.
-- Server-level settings (port) are passed as environment variables (`DPL_PORT`) set in the dpl systemd service file.
+- Server-level settings (listening address) are passed as environment variables (`DPL_ADDR`) set in the dpl systemd service file.
 - Auth tokens are per-entity: each entity's `config.yaml` contains a `tokens` array. This allows different tokens for different entities and users.
 
 ### Dispatch by Type
