@@ -95,11 +95,14 @@ func authMiddleware(next http.Handler) http.Handler {
 
 // extractBearer returns the token from "Bearer <token>", or empty string.
 func extractBearer(header string) string {
-	const prefix = "Bearer "
-	if !strings.HasPrefix(header, prefix) {
+	fields := strings.Fields(strings.TrimSpace(header))
+	if len(fields) != 2 {
 		return ""
 	}
-	return header[len(prefix):]
+	if !strings.EqualFold(fields[0], "Bearer") {
+		return ""
+	}
+	return fields[1]
 }
 
 // matchToken checks whether tok matches any of the valid tokens using
