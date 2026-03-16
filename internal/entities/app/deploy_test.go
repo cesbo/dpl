@@ -390,15 +390,10 @@ func TestDeploy_CleanupOnFailure(t *testing.T) {
 		t.Fatal("expected error")
 	}
 
-	// Verify no deploy_* directories remain.
-	entries, err := os.ReadDir(filepath.Join(base.BaseDir, name))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "deploy_") {
-			t.Errorf("deploy dir %s should have been cleaned up", e.Name())
-		}
+	// Deploy dir should still exist (caller manages lifecycle).
+	deployDir := filepath.Join(base.BaseDir, name, "deploy_1")
+	if _, err := os.Stat(deployDir); err != nil {
+		t.Errorf("deploy dir should still exist: %v", err)
 	}
 }
 

@@ -68,16 +68,23 @@ func StartDeploy(name string, archive io.Reader, mu *sync.Mutex) (DeployResult, 
 		mu.Unlock()
 		return DeployResult{}, fmt.Errorf("start deploy: %w", err)
 	}
+
+	// Create deploy dir and persist "building" status while still holding the lock.
+	deployDir := filepath.Join(entityDir, "deploy_"+strconv.Itoa(newVersion))
+	if err := os.MkdirAll(filepath.Join(deployDir, "logs"), 0o755); err != nil {
+		mu.Unlock()
+		return DeployResult{}, fmt.Errorf("start deploy: create dir: %w", err)
+	}
+	if err := WriteStatus(deployDir, StatusBuilding, ""); err != nil {
+		mu.Unlock()
+		return DeployResult{}, fmt.Errorf("start deploy: %w", err)
+	}
 	mu.Unlock()
 
 	result, err := Deploy(cfg, name, archive, newVersion)
 	if err != nil {
+		WriteStatus(deployDir, StatusFailed, err.Error())
 		return DeployResult{}, err
-	}
-
-	// Write initial status.
-	if err := WriteStatus(result.Dir, StatusBuilding, ""); err != nil {
-		return DeployResult{}, fmt.Errorf("start deploy: %w", err)
 	}
 
 	// Kick off podman build + systemd deploy in background.
@@ -154,21 +161,13 @@ func StartDeploy(name string, archive io.Reader, mu *sync.Mutex) (DeployResult, 
 //  4. Creates logs/ subdirectory for build output
 //
 // On success it returns a DeployResult with the directory path and version.
-// On failure any partially created deploy directory is removed.
+// The caller is responsible for managing the deploy directory lifecycle.
 func Deploy(cfg *Config, name string, archive io.Reader, version int) (DeployResult, error) {
 	deployDir := filepath.Join(base.BaseDir, name, "deploy_"+strconv.Itoa(version))
 
 	if err := os.MkdirAll(deployDir, 0o755); err != nil {
 		return DeployResult{}, fmt.Errorf("deploy: create dir: %w", err)
 	}
-
-	// Cleanup on any error.
-	ok := false
-	defer func() {
-		if !ok {
-			os.RemoveAll(deployDir)
-		}
-	}()
 
 	// 1. Unpack archive into app/ subdirectory.
 	appDir := filepath.Join(deployDir, "app")
@@ -210,7 +209,6 @@ func Deploy(cfg *Config, name string, archive io.Reader, version int) (DeployRes
 		return DeployResult{}, fmt.Errorf("deploy: create logs dir: %w", err)
 	}
 
-	ok = true
 	return DeployResult{Dir: deployDir, Version: version}, nil
 }
 

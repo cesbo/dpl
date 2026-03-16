@@ -116,7 +116,7 @@ Each entity type is a separate Go package with its own config struct, templates,
 
 - [x] Use streaming for deploy logs instead of reading the whole log file into memory
 - [x] Return JSON error format for auth, status, and logs endpoints
-- [ ] Persist deploy status immediately after reserving the new version
+- [x] Persist deploy status immediately after reserving the new version
 - [x] Improve Bearer token parsing (case-insensitive scheme, stricter trimming/validation)
 - [ ] Structured logging throughout all packages
 - [ ] Timeouts for podman build & HTTP requests
