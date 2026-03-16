@@ -1,6 +1,8 @@
 package server
 
 import (
+	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -44,5 +46,24 @@ func setupDeployDir(t *testing.T, name, deployID, status, logContent string) {
 		if err := os.WriteFile(filepath.Join(dir, "logs", "build.log"), []byte(logContent), 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func assertJSONError(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int, wantError string) {
+	t.Helper()
+
+	if rec.Code != wantStatus {
+		t.Fatalf("status = %d, want %d (body: %s)", rec.Code, wantStatus, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type = %q, want %q", got, "application/json")
+	}
+
+	var resp errorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error response: %v (body: %s)", err, rec.Body.String())
+	}
+	if resp.Error != wantError {
+		t.Fatalf("error = %q, want %q", resp.Error, wantError)
 	}
 }

@@ -28,11 +28,11 @@ func (s *httpServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 	status, errMsg, err := app.ReadStatus(deployDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			http.Error(w, "deploy not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "deploy not found")
 			return
 		}
 		slog.Error("read deploy status", "name", name, "deployID", deployID, "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 

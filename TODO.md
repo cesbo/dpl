@@ -115,7 +115,7 @@ Each entity type is a separate Go package with its own config struct, templates,
 ## Phase 10: Polish & Hardening
 
 - [x] Use streaming for deploy logs instead of reading the whole log file into memory
-- [ ] Return JSON error format for auth, status, and logs endpoints
+- [x] Return JSON error format for auth, status, and logs endpoints
 - [ ] Persist deploy status immediately after reserving the new version
 - [x] Improve Bearer token parsing (case-insensitive scheme, stricter trimming/validation)
 - [ ] Structured logging throughout all packages

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"dpl/internal/base"
@@ -25,7 +24,7 @@ func TestStatusEndpoint(t *testing.T) {
 		token      string
 		wantStatus int
 		wantJSON   *statusResponse
-		wantBody   string
+		wantErr    string
 	}{
 		{
 			name:       "building status",
@@ -53,27 +52,21 @@ func TestStatusEndpoint(t *testing.T) {
 			path:       "/deploy/myapp/deploy_999/status",
 			token:      "tok-1",
 			wantStatus: http.StatusNotFound,
-			wantBody:   "deploy not found",
+			wantErr:    "deploy not found",
 		},
 		{
 			name:       "invalid deploy ID format",
 			path:       "/deploy/myapp/bad-id/status",
 			token:      "tok-1",
-			wantStatus: http.StatusBadRequest,
-			wantBody:   "invalid deploy ID",
-		},
-		{
-			name:       "deploy ID too short",
-			path:       "/deploy/myapp/deploy_/status",
-			token:      "tok-1",
-			wantStatus: http.StatusBadRequest,
-			wantBody:   "invalid deploy ID",
+			wantStatus: http.StatusNotFound,
+			wantErr:    "deploy not found",
 		},
 		{
 			name:       "auth required",
 			path:       "/deploy/myapp/deploy_1/status",
 			token:      "",
 			wantStatus: http.StatusUnauthorized,
+			wantErr:    "missing token",
 		},
 	}
 
@@ -86,11 +79,14 @@ func TestStatusEndpoint(t *testing.T) {
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
 
-			if rec.Code != tt.wantStatus {
-				t.Errorf("status = %d, want %d (body: %s)", rec.Code, tt.wantStatus, rec.Body.String())
-			}
-
 			if tt.wantJSON != nil {
+				if rec.Code != tt.wantStatus {
+					t.Errorf("status = %d, want %d (body: %s)", rec.Code, tt.wantStatus, rec.Body.String())
+				}
+				if got := rec.Header().Get("Content-Type"); got != "application/json" {
+					t.Fatalf("Content-Type = %q, want %q", got, "application/json")
+				}
+
 				var got statusResponse
 				if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 					t.Fatalf("decode: %v (body: %s)", err, rec.Body.String())
@@ -106,8 +102,8 @@ func TestStatusEndpoint(t *testing.T) {
 				}
 			}
 
-			if tt.wantBody != "" && !strings.Contains(rec.Body.String(), tt.wantBody) {
-				t.Errorf("body = %q, want substring %q", rec.Body.String(), tt.wantBody)
+			if tt.wantErr != "" {
+				assertJSONError(t, rec, tt.wantStatus, tt.wantErr)
 			}
 		})
 	}

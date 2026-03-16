@@ -2,10 +2,13 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 
+	"dpl/internal/entities"
 	"dpl/internal/entities/app"
 )
 
@@ -24,7 +27,8 @@ func (s *httpServer) deployHandler(w http.ResponseWriter, r *http.Request) {
 	case "app":
 		s.deployApp(w, r, name)
 	default:
-		http.Error(w, fmt.Sprintf("unsupported entity type: %s", meta.Type), http.StatusBadRequest)
+		msg := fmt.Sprintf("unsupported entity type: %s", meta.Type)
+		writeError(w, http.StatusBadRequest, msg)
 	}
 }
 
@@ -35,7 +39,16 @@ func (s *httpServer) deployApp(w http.ResponseWriter, r *http.Request, name stri
 	mu := s.locker.lock(name)
 	result, err := app.StartDeploy(name, r.Body, mu)
 	if err != nil {
-		writeError(w, err)
+		code := http.StatusUnprocessableEntity // 422 by default
+		switch {
+		case errors.Is(err, entities.ErrConflict):
+			code = http.StatusConflict
+		case errors.Is(err, os.ErrNotExist):
+			code = http.StatusNotFound
+		case errors.Is(err, entities.ErrUnsupportedType):
+			code = http.StatusBadRequest
+		}
+		writeError(w, code, err.Error())
 		return
 	}
 

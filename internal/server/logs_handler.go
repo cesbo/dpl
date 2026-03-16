@@ -23,11 +23,11 @@ func (s *httpServer) logsHandler(w http.ResponseWriter, r *http.Request) {
 	f, err := os.Open(logPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			http.Error(w, "log not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "log not found")
 			return
 		}
 		slog.Error("open build log", "name", name, "deployID", deployID, "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	defer f.Close()
@@ -36,7 +36,7 @@ func (s *httpServer) logsHandler(w http.ResponseWriter, r *http.Request) {
 	if s := r.URL.Query().Get("offset"); s != "" {
 		o, err := strconv.ParseInt(s, 10, 64)
 		if err != nil || o < 0 {
-			http.Error(w, "invalid offset", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "invalid offset")
 			return
 		}
 		offset = o
@@ -45,7 +45,7 @@ func (s *httpServer) logsHandler(w http.ResponseWriter, r *http.Request) {
 	if offset > 0 {
 		if _, err := f.Seek(offset, io.SeekStart); err != nil {
 			slog.Error("seek log file", "name", name, "deployID", deployID, "error", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
 	}
@@ -53,7 +53,7 @@ func (s *httpServer) logsHandler(w http.ResponseWriter, r *http.Request) {
 	info, err := f.Stat()
 	if err != nil {
 		slog.Error("stat log file", "name", name, "deployID", deployID, "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 

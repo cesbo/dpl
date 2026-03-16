@@ -65,6 +65,7 @@ tokens: ["tok"]
 		body       func() *bytes.Reader
 		wantStatus int
 		wantBody   string
+		wantErr    string
 	}{
 		{
 			name:       "successful deploy",
@@ -90,7 +91,7 @@ tokens: ["tok"]
 			path:       "/deploy/nonexistent",
 			token:      "tok-1",
 			wantStatus: http.StatusNotFound,
-			wantBody:   "entity not found\n",
+			wantErr:    "entity not found",
 		},
 		{
 			name:       "missing auth header",
@@ -98,7 +99,7 @@ tokens: ["tok"]
 			path:       "/deploy/myapp",
 			token:      "",
 			wantStatus: http.StatusUnauthorized,
-			wantBody:   "missing token\n",
+			wantErr:    "missing token",
 		},
 		{
 			name:       "invalid token",
@@ -106,7 +107,7 @@ tokens: ["tok"]
 			path:       "/deploy/myapp",
 			token:      "wrong",
 			wantStatus: http.StatusUnauthorized,
-			wantBody:   "invalid token\n",
+			wantErr:    "invalid token",
 		},
 		{
 			name:       "unsupported entity type",
@@ -114,7 +115,7 @@ tokens: ["tok"]
 			path:       "/deploy/unsupported",
 			token:      "tok",
 			wantStatus: http.StatusBadRequest,
-			wantBody:   "unsupported entity type: domain\n",
+			wantErr:    "unsupported entity type: domain",
 		},
 		{
 			name:       "invalid archive body",
@@ -146,6 +147,11 @@ tokens: ["tok"]
 
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
+
+			if tt.wantErr != "" {
+				assertJSONError(t, rec, tt.wantStatus, tt.wantErr)
+				return
+			}
 
 			if rec.Code != tt.wantStatus {
 				t.Errorf("status = %d, want %d (body: %s)", rec.Code, tt.wantStatus, rec.Body.String())
@@ -244,9 +250,7 @@ func TestDeploy_Conflict409(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Errorf("status = %d, want 409 (body: %s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "deploy already in progress") {
-		t.Errorf("body = %q, want substring %q", rec.Body.String(), "deploy already in progress")
-	}
+	assertJSONError(t, rec, http.StatusConflict, "start deploy: deploy already in progress")
 }
 
 // TestDeploy_SequentialVersions verifies that sequential deploys get

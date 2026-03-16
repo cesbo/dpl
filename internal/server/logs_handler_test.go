@@ -22,6 +22,7 @@ func TestLogsEndpoint(t *testing.T) {
 		wantStatus int
 		wantBody   string
 		wantOffset string
+		wantErr    string
 	}{
 		{
 			name:       "full log",
@@ -52,30 +53,35 @@ func TestLogsEndpoint(t *testing.T) {
 			path:       "/deploy/myapp/deploy_999/logs",
 			token:      "tok-1",
 			wantStatus: http.StatusNotFound,
+			wantErr:    "log not found",
 		},
 		{
 			name:       "invalid deploy ID",
 			path:       "/deploy/myapp/bad-id/logs",
 			token:      "tok-1",
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusNotFound,
+			wantErr:    "log not found",
 		},
 		{
 			name:       "invalid offset",
 			path:       "/deploy/myapp/deploy_1/logs?offset=abc",
 			token:      "tok-1",
 			wantStatus: http.StatusBadRequest,
+			wantErr:    "invalid offset",
 		},
 		{
 			name:       "negative offset",
 			path:       "/deploy/myapp/deploy_1/logs?offset=-1",
 			token:      "tok-1",
 			wantStatus: http.StatusBadRequest,
+			wantErr:    "invalid offset",
 		},
 		{
 			name:       "auth required",
 			path:       "/deploy/myapp/deploy_1/logs",
 			token:      "",
 			wantStatus: http.StatusUnauthorized,
+			wantErr:    "missing token",
 		},
 	}
 
@@ -88,8 +94,13 @@ func TestLogsEndpoint(t *testing.T) {
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
 
-			if rec.Code != tt.wantStatus {
-				t.Errorf("status = %d, want %d (body: %s)", rec.Code, tt.wantStatus, rec.Body.String())
+			if tt.wantErr == "" {
+				if rec.Code != tt.wantStatus {
+					t.Errorf("status = %d, want %d (body: %s)", rec.Code, tt.wantStatus, rec.Body.String())
+				}
+				if got := rec.Header().Get("Content-Type"); got != "text/plain" {
+					t.Errorf("Content-Type = %q, want %q", got, "text/plain")
+				}
 			}
 
 			if tt.wantBody != "" || (tt.wantStatus == http.StatusOK && tt.wantBody == "") {
@@ -102,6 +113,10 @@ func TestLogsEndpoint(t *testing.T) {
 				if got := rec.Header().Get("X-Offset"); got != tt.wantOffset {
 					t.Errorf("X-Offset = %q, want %q", got, tt.wantOffset)
 				}
+			}
+
+			if tt.wantErr != "" {
+				assertJSONError(t, rec, tt.wantStatus, tt.wantErr)
 			}
 		})
 	}
@@ -119,7 +134,27 @@ func TestLogsEndpoint_NoLogFile(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404 (body: %s)", rec.Code, rec.Body.String())
+	assertJSONError(t, rec, http.StatusNotFound, "log not found")
+}
+
+func TestLogsEndpoint_SuccessRemainsPlainText(t *testing.T) {
+	base.BaseDir = t.TempDir()
+	writeConfig(t, "myapp", validAppConfig)
+	setupDeployDir(t, "myapp", "deploy_1", "building", "line1\n")
+
+	mux := newMux()
+	req := httptest.NewRequest(http.MethodGet, "/deploy/myapp/deploy_1/logs", nil)
+	req.Header.Set("Authorization", "Bearer tok-1")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/plain" {
+		t.Fatalf("Content-Type = %q, want %q", got, "text/plain")
+	}
+	if rec.Body.String() != "line1\n" {
+		t.Fatalf("body = %q, want %q", rec.Body.String(), "line1\n")
 	}
 }

@@ -49,22 +49,22 @@ func authMiddleware(next http.Handler) http.Handler {
 		meta, err := loadEntityMeta(name)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
-				http.Error(w, "entity not found", http.StatusNotFound)
+				writeError(w, http.StatusNotFound, "entity not found")
 				return
 			}
 			slog.Error("failed to load entity meta", "name", name, "error", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
 
 		token := extractBearer(r.Header.Get("Authorization"))
 		if token == "" {
-			http.Error(w, "missing token", http.StatusUnauthorized)
+			writeError(w, http.StatusUnauthorized, "missing token")
 			return
 		}
 
 		if !matchToken(token, meta.Tokens) {
-			http.Error(w, "invalid token", http.StatusUnauthorized)
+			writeError(w, http.StatusUnauthorized, "invalid token")
 			return
 		}
 

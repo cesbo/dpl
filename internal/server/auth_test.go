@@ -64,12 +64,7 @@ func TestAuthMiddleware_RejectsMalformedBearerHeader(t *testing.T) {
 
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want %d (body: %s)", rec.Code, http.StatusUnauthorized, rec.Body.String())
-	}
-	if rec.Body.String() != "missing token\n" {
-		t.Fatalf("body = %q, want %q", rec.Body.String(), "missing token\n")
-	}
+	assertJSONError(t, rec, http.StatusUnauthorized, "missing token")
 }
 
 func TestMatchToken(t *testing.T) {
