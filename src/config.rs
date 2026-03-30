@@ -1,7 +1,5 @@
 use std::{
     env,
-    error::Error,
-    fmt,
     fs,
     io,
     path::PathBuf,
@@ -9,6 +7,8 @@ use std::{
 };
 
 use serde::Deserialize;
+
+use crate::error::ConfigError;
 
 pub const DEFAULT_BASE_DIR: &str = "/opt/dpl";
 pub const DEFAULT_SERVER_ADDR: &str = "0.0.0.0";
@@ -55,40 +55,6 @@ impl MainConfig {
                 .map_err(|source| ConfigError::Parse { path, source }),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(MainConfig::default()),
             Err(source) => Err(ConfigError::Read { path, source }),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum ConfigError {
-    Read {
-        path: PathBuf,
-        source: io::Error,
-    },
-    Parse {
-        path: PathBuf,
-        source: serde_yaml::Error,
-    },
-}
-
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Read { path, source } => {
-                write!(f, "failed to read config {}: {}", path.display(), source)
-            }
-            Self::Parse { path, source } => {
-                write!(f, "failed to parse config {}: {}", path.display(), source)
-            }
-        }
-    }
-}
-
-impl Error for ConfigError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Read { source, .. } => Some(source),
-            Self::Parse { source, .. } => Some(source),
         }
     }
 }

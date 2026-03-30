@@ -1,4 +1,6 @@
 mod config;
+mod deploy;
+pub mod error;
 mod log;
 
 use std::error::Error;
