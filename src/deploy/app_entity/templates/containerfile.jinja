@@ -1,0 +1,18 @@
+FROM {{ image }}
+WORKDIR /app
+RUN mkdir -p /opt/dpl
+{% for layer in layers -%}
+{% for file in layer.files -%}
+{% if file == "." %}
+COPY app/ /app/
+{% else %}
+COPY app/{{ file }} /app/{{ file }}
+{% endif %}
+{% endfor -%}
+{% set name = "build-sh-" ~ loop.index %}
+{% set path = "/run/secrets/" ~ name %}
+RUN --mount=type=secret,id={{ name }} /bin/sh {{ path }}
+{% endfor -%}
+COPY run.sh /opt/dpl/run.sh
+EXPOSE {{ port }}
+CMD ["/bin/sh", "/opt/dpl/run.sh"]

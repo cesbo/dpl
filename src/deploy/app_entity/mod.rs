@@ -1,13 +1,9 @@
-#![allow(unused_imports)]
-
 mod model;
+mod templates;
 
 use std::{
     fs,
-    path::{
-        Path,
-        PathBuf,
-    },
+    path::Path,
 };
 
 use model::AppConfig;
@@ -18,6 +14,7 @@ use crate::error::ConfigError;
 pub struct AppEntity {
     pub name: String,
     pub config: AppConfig,
+    pub port: u16,
 }
 
 impl AppEntity {
@@ -41,6 +38,8 @@ impl AppEntity {
 
         let name = name.to_owned();
 
-        Ok(AppEntity { name, config })
+        let port = 0;
+
+        Ok(AppEntity { name, config, port })
     }
 }

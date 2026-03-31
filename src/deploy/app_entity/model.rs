@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 use crate::deploy::EntityType;
 
@@ -20,7 +23,7 @@ pub struct AppConfig {
     pub public: Option<PublicConfig>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct BuildLayerConfig {
     #[serde(default)]
@@ -30,7 +33,7 @@ pub struct BuildLayerConfig {
     pub script: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeConfig {
     #[serde(default)]
@@ -39,7 +42,7 @@ pub struct RuntimeConfig {
     pub cmd: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct VolumeConfig {
     pub id: String,
