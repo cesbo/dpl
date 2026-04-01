@@ -1,12 +1,11 @@
 mod model;
+mod port;
 mod templates;
 
-use std::{
-    fs,
-    path::Path,
-};
+use std::path::Path;
 
 use model::AppConfig;
+use tokio::fs;
 
 use crate::error::ConfigError;
 
@@ -19,10 +18,10 @@ pub struct AppEntity {
 }
 
 impl AppEntity {
-    pub fn load(entity_dir: &Path, name: &str, version: u32) -> Result<Self, ConfigError> {
+    pub async fn load(entity_dir: &Path, name: &str, version: u32) -> Result<Self, ConfigError> {
         let path = entity_dir.join("config.yaml");
 
-        let contents = match fs::read_to_string(&path) {
+        let contents = match fs::read_to_string(&path).await {
             Ok(v) => v,
             Err(source) => {
                 return Err(ConfigError::Read { path, source });
@@ -36,12 +35,10 @@ impl AppEntity {
             }
         };
 
-        let name = name.to_owned();
-
         let port = 0;
 
         Ok(AppEntity {
-            name,
+            name: name.to_owned(),
             version,
             port,
             config,
