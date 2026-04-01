@@ -97,6 +97,7 @@ mod tests {
     #[test]
     fn render_containerfile_prints_rendered_output() {
         let entity = AppEntity {
+            dir: "/tmp/demo-app".into(),
             name: "demo-app".into(),
             version: 1,
             config: AppConfig {

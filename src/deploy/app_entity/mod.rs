@@ -1,16 +1,21 @@
+mod error;
 mod model;
 mod port;
 mod templates;
 
-use std::path::Path;
+use std::path::PathBuf;
 
+pub use error::AppEntityError;
 use model::AppConfig;
-use tokio::fs;
 
-use crate::error::ConfigError;
+use crate::deploy::{
+    get_entity_version,
+    load_entity_config,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppEntity {
+    pub dir: PathBuf,
     pub name: String,
     pub version: u32,
     pub config: AppConfig,
@@ -18,27 +23,22 @@ pub struct AppEntity {
 }
 
 impl AppEntity {
-    pub async fn load(entity_dir: &Path, name: &str, version: u32) -> Result<Self, ConfigError> {
-        let path = entity_dir.join("config.yaml");
+    pub async fn load(name: &str) -> Result<Self, AppEntityError> {
+        let dir = crate::config::ENV.base_dir.join(name);
+        let name = name.to_owned();
+        let config = load_entity_config(&dir).await?;
 
-        let contents = match fs::read_to_string(&path).await {
-            Ok(v) => v,
-            Err(source) => {
-                return Err(ConfigError::Read { path, source });
-            }
-        };
+        let port = port::get_port(&dir)
+            .await
+            .map_err(|err| AppEntityError::PortError(err))?;
 
-        let config: AppConfig = match serde_yaml::from_str(&contents) {
-            Ok(v) => v,
-            Err(source) => {
-                return Err(ConfigError::Parse { path, source });
-            }
-        };
-
-        let port = 0;
+        let version = get_entity_version(&dir)
+            .await
+            .map_err(|err| AppEntityError::VersionError(err))?;
 
         Ok(AppEntity {
-            name: name.to_owned(),
+            dir,
+            name,
             version,
             port,
             config,
