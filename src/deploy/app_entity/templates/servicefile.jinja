@@ -8,7 +8,6 @@ Type=notify
 NotifyAccess=all
 Delegate=yes
 KillMode=mixed
-Restart=no
 TimeoutStopFailureMode=abort
 ExecStart=/usr/bin/podman run --name %N --cidfile=%t/%N.cid --replace --rm --cgroups=split --sdnotify=conmon -p 127.0.0.1:{{ host_port }}:{{ container_port }}{% for volume in volumes %} -v {{ volume.id }}:{{ volume.path }}{% endfor %} --log-driver=k8s-file --log-opt=path=/var/log/podman/%N.log localhost/{{ image_tag }}
 ExecStop=/usr/bin/podman stop --cidfile=%t/%N.cid
