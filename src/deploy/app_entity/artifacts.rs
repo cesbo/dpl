@@ -7,9 +7,9 @@ use tokio::fs;
 
 use super::{
     AppEntity,
-    ArtifactError,
     templates,
 };
+use crate::error::ArtifactError;
 
 pub async fn write_artifacts(entity: &AppEntity, deploy_dir: &Path) -> Result<(), ArtifactError> {
     write_artifact(
