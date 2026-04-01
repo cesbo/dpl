@@ -30,3 +30,14 @@ pub async fn write_entity_version(dir: &Path, version: u32) -> io::Result<()> {
     let path = dir.join(VERSION_FILE_NAME);
     fs::write(path, version.to_string()).await
 }
+
+pub async fn reserve_entity_version(dir: &Path) -> io::Result<u32> {
+    let current_version = get_entity_version(dir).await?;
+    let next_version = current_version
+        .checked_add(1)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "entity version overflow"))?;
+
+    write_entity_version(dir, next_version).await?;
+
+    Ok(next_version)
+}

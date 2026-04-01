@@ -31,8 +31,7 @@ pub struct AppEntity {
 }
 
 impl AppEntity {
-    pub async fn load(name: &str) -> Result<Self, AppEntityError> {
-        let dir = crate::config::ENV.base_dir.join(name);
+    pub async fn load(name: &str, dir: PathBuf) -> Result<Self, AppEntityError> {
         let name = name.to_owned();
         let config: AppConfig = load_entity_config(&dir).await?;
 

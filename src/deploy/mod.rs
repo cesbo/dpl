@@ -3,19 +3,15 @@
 pub mod app_entity;
 mod config;
 mod entity;
+mod error;
 mod status;
 mod version;
 
-use std::path::PathBuf;
-
-pub use entity::EntityType;
-
-pub struct DeployEntity {
-    pub dir: PathBuf,
-}
-
-pub(self) use config::load_entity_config;
+pub(self) use config::*;
+pub use entity::{
+    DeployEntity,
+    EntityType,
+};
+pub use error::DeployError;
 pub(self) use status::*;
 pub(self) use version::*;
-
-impl DeployEntity {}
