@@ -1,14 +1,22 @@
+mod artifacts;
 mod error;
 mod model;
 mod port;
 mod templates;
 
-use std::path::PathBuf;
+use std::path::{
+    Path,
+    PathBuf,
+};
 
-pub use error::AppEntityError;
+pub use error::{
+    AppEntityError,
+    ArtifactError,
+};
 use model::AppConfig;
 
 use crate::deploy::{
+    EntityType,
     get_entity_version,
     load_entity_config,
 };
@@ -17,8 +25,8 @@ use crate::deploy::{
 pub struct AppEntity {
     pub dir: PathBuf,
     pub name: String,
-    pub version: u32,
     pub config: AppConfig,
+    pub version: u32,
     pub port: u16,
 }
 
@@ -26,7 +34,11 @@ impl AppEntity {
     pub async fn load(name: &str) -> Result<Self, AppEntityError> {
         let dir = crate::config::ENV.base_dir.join(name);
         let name = name.to_owned();
-        let config = load_entity_config(&dir).await?;
+        let config: AppConfig = load_entity_config(&dir).await?;
+
+        if config.entity_type != EntityType::App {
+            return Err(AppEntityError::InvalidEntityType(config.entity_type));
+        }
 
         let port = port::get_port(&dir)
             .await
@@ -39,9 +51,13 @@ impl AppEntity {
         Ok(AppEntity {
             dir,
             name,
+            config,
             version,
             port,
-            config,
         })
+    }
+
+    pub async fn write_artifacts(&self, deploy_dir: &Path) -> Result<(), ArtifactError> {
+        artifacts::write_artifacts(self, deploy_dir).await
     }
 }

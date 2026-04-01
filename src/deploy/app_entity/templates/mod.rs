@@ -14,8 +14,8 @@ use super::{
 };
 
 const CONTAINERFILE_TEMPLATE: &str = "containerfile";
-const BUILD_SCRIPT_TEMPLATE: &str = "build.sh";
-const RUN_SCRIPT_TEMPLATE: &str = "run.sh";
+const BUILD_SCRIPT_TEMPLATE: &str = "build-sh";
+const RUN_SCRIPT_TEMPLATE: &str = "run-sh";
 const SERVICE_UNIT_TEMPLATE: &str = "servicefile";
 
 static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
@@ -38,7 +38,7 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
     env
 });
 
-fn render_containerfile(entity: &AppEntity) -> Result<String, minijinja::Error> {
+pub fn render_containerfile(entity: &AppEntity) -> Result<String, minijinja::Error> {
     TEMPLATES
         .get_template(CONTAINERFILE_TEMPLATE)?
         .render(context! {
@@ -48,7 +48,7 @@ fn render_containerfile(entity: &AppEntity) -> Result<String, minijinja::Error> 
         })
 }
 
-fn render_build_script(layer: &BuildLayerConfig) -> Result<String, minijinja::Error> {
+pub fn render_build_script(layer: &BuildLayerConfig) -> Result<String, minijinja::Error> {
     TEMPLATES
         .get_template(BUILD_SCRIPT_TEMPLATE)?
         .render(context! {
@@ -57,7 +57,7 @@ fn render_build_script(layer: &BuildLayerConfig) -> Result<String, minijinja::Er
         })
 }
 
-fn render_run_script(runtime: &RuntimeConfig) -> Result<String, minijinja::Error> {
+pub fn render_run_script(runtime: &RuntimeConfig) -> Result<String, minijinja::Error> {
     TEMPLATES
         .get_template(RUN_SCRIPT_TEMPLATE)?
         .render(context! {
@@ -67,13 +67,13 @@ fn render_run_script(runtime: &RuntimeConfig) -> Result<String, minijinja::Error
         })
 }
 
-fn render_service_unit(entity: &AppEntity) -> Result<String, minijinja::Error> {
+pub fn render_service_unit(entity: &AppEntity) -> Result<String, minijinja::Error> {
     let image_tag = format!("{}:{}", &entity.name, entity.version);
     TEMPLATES
         .get_template(SERVICE_UNIT_TEMPLATE)?
         .render(context! {
             name => &entity.name,
-            host_port => &entity.port,
+            host_port => entity.port,
             container_port => &entity.config.port,
             volumes => &entity.config.volumes,
             image_tag => &image_tag,
@@ -94,12 +94,11 @@ mod tests {
         },
     };
 
-    #[test]
-    fn render_containerfile_prints_rendered_output() {
+    #[tokio::test]
+    async fn render_templates() {
         let entity = AppEntity {
             dir: "/tmp/demo-app".into(),
             name: "demo-app".into(),
-            version: 1,
             config: AppConfig {
                 entity_type: EntityType::App,
                 image: "ghcr.io/example/demo:latest".to_owned(),
@@ -135,17 +134,19 @@ mod tests {
                 volumes: Vec::new(),
                 public: None,
             },
+            version: 1,
             port: 32323,
         };
 
         let rendered = render_containerfile(&entity).expect("containerfile should render");
         println!("{rendered}");
 
-        let rendered =
-            render_build_script(&entity.config.build[1]).expect("build.sh should render");
-        println!("{rendered}");
+        for layer in &entity.config.build {
+            let rendered = render_build_script(layer).expect("build-sh should render");
+            println!("{rendered}");
+        }
 
-        let rendered = render_run_script(&entity.config.runtime).expect("run.sh should render");
+        let rendered = render_run_script(&entity.config.runtime).expect("run-sh should render");
         println!("{rendered}");
 
         let rendered = render_service_unit(&entity).expect("servicefile should render");
