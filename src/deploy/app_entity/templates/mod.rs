@@ -98,7 +98,7 @@ mod tests {
     fn render_containerfile_prints_rendered_output() {
         let entity = AppEntity {
             name: "demo-app".into(),
-            dir: "/tmp/demo-app".into(),
+            version: 1,
             config: AppConfig {
                 entity_type: EntityType::App,
                 image: "ghcr.io/example/demo:latest".to_owned(),
@@ -135,7 +135,6 @@ mod tests {
                 public: None,
             },
             port: 32323,
-            version: 1,
         };
 
         let rendered = render_containerfile(&entity).expect("containerfile should render");
