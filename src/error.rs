@@ -1,40 +1,22 @@
 use std::{
-    error::Error,
-    fmt,
     io,
     path::PathBuf,
 };
 
-#[derive(Debug)]
+use thiserror::Error;
+
+#[derive(Debug, Error)]
 pub enum ConfigError {
+    #[error("failed to read config {path}: {source}")]
     Read {
         path: PathBuf,
+        #[source]
         source: io::Error,
     },
+    #[error("failed to parse config {path}: {source}")]
     Parse {
         path: PathBuf,
+        #[source]
         source: serde_yaml::Error,
     },
-}
-
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Read { path, source } => {
-                write!(f, "failed to read config {}: {}", path.display(), source)
-            }
-            Self::Parse { path, source } => {
-                write!(f, "failed to parse config {}: {}", path.display(), source)
-            }
-        }
-    }
-}
-
-impl Error for ConfigError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Read { source, .. } => Some(source),
-            Self::Parse { source, .. } => Some(source),
-        }
-    }
 }
