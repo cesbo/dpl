@@ -15,8 +15,12 @@ pub enum AppEntityError {
     PortError(io::Error),
     #[error("version error: {0}")]
     VersionError(io::Error),
+    #[error("status error: {0}")]
+    StatusError(io::Error),
     #[error("expected app entity type, got {0}")]
     InvalidEntityType(EntityType),
+    #[error("app build in progress")]
+    BuildInProgress,
 }
 
 #[derive(Debug, Error)]

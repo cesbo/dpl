@@ -4,10 +4,7 @@ mod model;
 mod port;
 mod templates;
 
-use std::path::{
-    Path,
-    PathBuf,
-};
+use std::path::PathBuf;
 
 pub use error::{
     AppEntityError,
@@ -56,7 +53,23 @@ impl AppEntity {
         })
     }
 
-    pub async fn write_artifacts(&self, deploy_dir: &Path) -> Result<(), ArtifactError> {
-        artifacts::write_artifacts(self, deploy_dir).await
+    pub async fn prepare(&self) -> Result<Self, AppEntityError> {
+        let status = crate::deploy::read_deploy_status(&self.dir)
+            .await
+            .map_err(|err| AppEntityError::StatusError(err))?;
+
+        if status == crate::deploy::DeployStatus::Building {
+            return Err(AppEntityError::BuildInProgress);
+        }
+
+        let version = crate::deploy::reserve_entity_version(&self.dir)
+            .await
+            .map_err(|err| AppEntityError::VersionError(err))?;
+
+        // TODO: continue here...
+
+        // artifacts::write_artifacts(self, deploy_dir).await
+
+        unimplemented!()
     }
 }
