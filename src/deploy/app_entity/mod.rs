@@ -3,7 +3,10 @@ mod templates;
 
 use std::{
     fs,
-    path::Path,
+    path::{
+        Path,
+        PathBuf,
+    },
 };
 
 use model::AppConfig;
@@ -13,14 +16,16 @@ use crate::error::ConfigError;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppEntity {
     pub name: String,
+    pub dir: PathBuf,
     pub config: AppConfig,
     pub port: u16,
+    pub version: u32,
 }
 
 impl AppEntity {
     pub fn load(base_dir: &Path, name: &str) -> Result<Self, ConfigError> {
-        let entity_dir = base_dir.join(name);
-        let path = entity_dir.join("config.yaml");
+        let dir = base_dir.join(name);
+        let path = dir.join("config.yaml");
 
         let contents = match fs::read_to_string(&path) {
             Ok(v) => v,
@@ -39,7 +44,14 @@ impl AppEntity {
         let name = name.to_owned();
 
         let port = 0;
+        let version = 0;
 
-        Ok(AppEntity { name, config, port })
+        Ok(AppEntity {
+            name,
+            dir,
+            config,
+            port,
+            version,
+        })
     }
 }

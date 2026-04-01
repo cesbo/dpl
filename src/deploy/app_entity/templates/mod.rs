@@ -68,9 +68,7 @@ fn render_run_script(runtime: &RuntimeConfig) -> Result<String, minijinja::Error
 }
 
 fn render_service_unit(entity: &AppEntity) -> Result<String, minijinja::Error> {
-    let id = "id";
-    let version = 1;
-    let image_tag = format!("{}:{}", id, version);
+    let image_tag = format!("{}:{}", &entity.name, entity.version);
     TEMPLATES
         .get_template(SERVICE_UNIT_TEMPLATE)?
         .render(context! {
@@ -99,7 +97,8 @@ mod tests {
     #[test]
     fn render_containerfile_prints_rendered_output() {
         let entity = AppEntity {
-            name: "demo-app".to_owned(),
+            name: "demo-app".into(),
+            dir: "/tmp/demo-app".into(),
             config: AppConfig {
                 entity_type: EntityType::App,
                 image: "ghcr.io/example/demo:latest".to_owned(),
@@ -136,6 +135,7 @@ mod tests {
                 public: None,
             },
             port: 32323,
+            version: 1,
         };
 
         let rendered = render_containerfile(&entity).expect("containerfile should render");
