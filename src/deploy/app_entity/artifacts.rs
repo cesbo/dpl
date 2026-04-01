@@ -14,7 +14,7 @@ use super::{
 pub async fn write_artifacts(entity: &AppEntity, deploy_dir: &Path) -> Result<(), ArtifactError> {
     write_artifact(
         deploy_dir.join("Containerfile"),
-        templates::render_containerfile(entity)?,
+        templates::render_containerfile(&entity.config)?,
     )
     .await?;
 

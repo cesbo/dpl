@@ -6,6 +6,7 @@ use minijinja::{
 };
 
 use super::{
+    AppConfig,
     AppEntity,
     model::{
         BuildLayerConfig,
@@ -38,13 +39,13 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
     env
 });
 
-pub fn render_containerfile(entity: &AppEntity) -> Result<String, minijinja::Error> {
+pub fn render_containerfile(config: &AppConfig) -> Result<String, minijinja::Error> {
     TEMPLATES
         .get_template(CONTAINERFILE_TEMPLATE)?
         .render(context! {
-            image => entity.config.image,
-            port => entity.config.port,
-            layers => &entity.config.build,
+            image => config.image,
+            port => config.port,
+            layers => &config.build,
         })
 }
 
@@ -138,7 +139,7 @@ mod tests {
             port: 32323,
         };
 
-        let rendered = render_containerfile(&entity).expect("containerfile should render");
+        let rendered = render_containerfile(&entity.config).expect("containerfile should render");
         println!("{rendered}");
 
         for layer in &entity.config.build {
