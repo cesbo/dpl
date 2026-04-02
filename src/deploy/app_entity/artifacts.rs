@@ -16,8 +16,8 @@ use super::AppConfig;
 use crate::error::ArtifactError;
 
 const CONTAINERFILE_TEMPLATE: &str = "containerfile";
-const BUILD_SCRIPT_TEMPLATE: &str = "build-sh";
-const RUN_SCRIPT_TEMPLATE: &str = "run-sh";
+const BUILD_SH_TEMPLATE: &str = "build-sh";
+const RUN_SH_TEMPLATE: &str = "run-sh";
 const SERVICEFILE_TEMPLATE: &str = "servicefile";
 
 static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
@@ -28,14 +28,20 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
 
     env.add_function("cuid", || -> String { cuid::cuid1().unwrap() });
 
-    env.add_template(CONTAINERFILE_TEMPLATE, include_str!("containerfile.jinja"))
+    env.add_template(
+        CONTAINERFILE_TEMPLATE,
+        include_str!("templates/containerfile.jinja"),
+    )
+    .unwrap();
+    env.add_template(BUILD_SH_TEMPLATE, include_str!("templates/build.sh.jinja"))
         .unwrap();
-    env.add_template(BUILD_SCRIPT_TEMPLATE, include_str!("build.sh.jinja"))
+    env.add_template(RUN_SH_TEMPLATE, include_str!("templates/run.sh.jinja"))
         .unwrap();
-    env.add_template(RUN_SCRIPT_TEMPLATE, include_str!("run.sh.jinja"))
-        .unwrap();
-    env.add_template(SERVICEFILE_TEMPLATE, include_str!("servicefile.jinja"))
-        .unwrap();
+    env.add_template(
+        SERVICEFILE_TEMPLATE,
+        include_str!("templates/servicefile.jinja"),
+    )
+    .unwrap();
 
     env
 });
@@ -61,19 +67,17 @@ impl<'a> EntityContext<'a> {
         Self::write_artifact(path, content).await?;
 
         let path = self.dir.join("run.sh");
-        let content = TEMPLATES
-            .get_template(RUN_SCRIPT_TEMPLATE)?
-            .render(context! {
-                env => &self.config.runtime.env,
-                init => &self.config.runtime.init,
-                cmd => &self.config.runtime.cmd,
-            })?;
+        let content = TEMPLATES.get_template(RUN_SH_TEMPLATE)?.render(context! {
+            env => &self.config.runtime.env,
+            init => &self.config.runtime.init,
+            cmd => &self.config.runtime.cmd,
+        })?;
         Self::write_artifact(path, content).await?;
 
         for (index, layer) in self.config.build.iter().enumerate() {
             let path = self.dir.join(format!("build-{}.sh", index + 1));
             let content = TEMPLATES
-                .get_template(BUILD_SCRIPT_TEMPLATE)?
+                .get_template(BUILD_SH_TEMPLATE)?
                 .render(context! {
                     env => &layer.env,
                     script => &layer.script,

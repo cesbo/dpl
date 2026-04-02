@@ -1,7 +1,7 @@
+mod artifacts;
 mod error;
 mod model;
 mod port;
-mod templates;
 
 use std::path::PathBuf;
 
