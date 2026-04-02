@@ -1,4 +1,3 @@
-mod artifacts;
 mod error;
 mod model;
 mod port;
@@ -63,9 +62,9 @@ impl AppEntity {
             .await
             .map_err(|err| DeployError::DeployDirectoryError(err))?;
 
-        // let port = port::get_port(&dir)
-        //     .await
-        //     .map_err(|err| AppEntityError::PortError(err))?;
+        self.port = port::get_port(&self.dir)
+            .await
+            .map_err(|err| AppEntityError::PortError(err))?;
 
         // TODO: continue here...
 
