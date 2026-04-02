@@ -113,6 +113,8 @@ impl<'a> EntityContext<'a> {
 mod tests {
     use std::collections::BTreeMap;
 
+    use tempfile::tempdir;
+
     use super::*;
     use crate::deploy::{
         EntityType,
@@ -127,7 +129,7 @@ mod tests {
     async fn render_templates() {
         let config = AppConfig {
             entity_type: EntityType::App,
-            image: "ghcr.io/example/demo:latest".to_owned(),
+            image: "ghcr.io/example/demo:latest".into(),
             port: 8080,
             build: vec![
                 BuildLayerConfig {
@@ -162,13 +164,24 @@ mod tests {
         };
 
         let name = "demo-app";
-        let dir = PathBuf::from("/tmp").join(name);
-        let entity_content = EntityContext {
+        let temp_dir = tempdir().unwrap();
+        let entity_dir = temp_dir.path().join(name);
+        fs::create_dir_all(&entity_dir).await.unwrap();
+
+        let entity_context = EntityContext {
             name,
             config: &config,
-            dir: &dir,
+            dir: &entity_dir,
             version: 1,
             port: 32323,
         };
+
+        entity_context.write_artifacts().await.unwrap();
+
+        assert!(entity_dir.join("Containerfile").exists());
+        assert!(entity_dir.join("run.sh").exists());
+        assert!(entity_dir.join("build-1.sh").exists());
+        assert!(entity_dir.join("build-2.sh").exists());
+        assert!(entity_dir.join("demo-app.service").exists());
     }
 }
