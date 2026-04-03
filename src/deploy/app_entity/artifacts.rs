@@ -46,17 +46,16 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
     env
 });
 
-pub struct EntityContext<'a> {
+pub struct ArtifactsContext<'a> {
     pub name: &'a str,
     pub config: &'a AppConfig,
-    pub dir: &'a Path,
     pub version: u32,
     pub port: u16,
 }
 
-impl<'a> EntityContext<'a> {
-    pub async fn write_artifacts(&self) -> Result<(), ArtifactError> {
-        let path = self.dir.join("Containerfile");
+impl<'a> ArtifactsContext<'a> {
+    pub async fn save(&self, dir: &Path) -> Result<(), ArtifactError> {
+        let path = dir.join("Containerfile");
         let content = TEMPLATES
             .get_template(CONTAINERFILE_TEMPLATE)?
             .render(context! {
@@ -66,7 +65,7 @@ impl<'a> EntityContext<'a> {
             })?;
         Self::write_artifact(path, content).await?;
 
-        let path = self.dir.join("run.sh");
+        let path = dir.join("run.sh");
         let content = TEMPLATES.get_template(RUN_SH_TEMPLATE)?.render(context! {
             env => &self.config.runtime.env,
             init => &self.config.runtime.init,
@@ -75,7 +74,7 @@ impl<'a> EntityContext<'a> {
         Self::write_artifact(path, content).await?;
 
         for (index, layer) in self.config.build.iter().enumerate() {
-            let path = self.dir.join(format!("build-{}.sh", index + 1));
+            let path = dir.join(format!("build-{}.sh", index + 1));
             let content = TEMPLATES
                 .get_template(BUILD_SH_TEMPLATE)?
                 .render(context! {
@@ -87,7 +86,7 @@ impl<'a> EntityContext<'a> {
 
         let image_tag = format!("{}:{}", &self.name, self.version);
         let service_file_name = format!("{}.service", &self.name);
-        let path = self.dir.join(service_file_name);
+        let path = dir.join(service_file_name);
         let content = TEMPLATES
             .get_template(SERVICEFILE_TEMPLATE)?
             .render(context! {
@@ -168,15 +167,14 @@ mod tests {
         let entity_dir = temp_dir.path().join(name);
         fs::create_dir_all(&entity_dir).await.unwrap();
 
-        let entity_context = EntityContext {
+        let artifacts = ArtifactsContext {
             name,
             config: &config,
-            dir: &entity_dir,
             version: 1,
             port: 32323,
         };
 
-        entity_context.write_artifacts().await.unwrap();
+        artifacts.save(&entity_dir).await.unwrap();
 
         assert!(entity_dir.join("Containerfile").exists());
         assert!(entity_dir.join("run.sh").exists());

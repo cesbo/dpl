@@ -21,6 +21,8 @@ pub enum DeployError {
     EntityBusy,
     #[error("failed to create deploy directory: {0}")]
     DeployDirectoryError(io::Error),
+    #[error("failed to materialize artifacts: {0}")]
+    ArtifactError(#[from] crate::error::ArtifactError),
     #[error("app entity error: {0}")]
     AppEntity(#[from] AppEntityError),
 }

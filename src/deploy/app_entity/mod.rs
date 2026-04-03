@@ -5,6 +5,7 @@ mod port;
 
 use std::path::PathBuf;
 
+use artifacts::ArtifactsContext;
 pub use error::AppEntityError;
 use model::AppConfig;
 use tokio::fs;
@@ -32,7 +33,7 @@ impl AppEntity {
         Ok(AppEntity { dir, name, config })
     }
 
-    pub async fn prepare(&mut self) -> Result<Self, DeployError> {
+    pub async fn prepare(&self) -> Result<Self, DeployError> {
         let status = crate::deploy::read_deploy_status(&self.dir)
             .await
             .map_err(|err| DeployError::StatusError(err))?;
@@ -56,9 +57,15 @@ impl AppEntity {
             .await
             .map_err(|err| AppEntityError::PortError(err))?;
 
-        // TODO: continue here...
+        let artifacts = ArtifactsContext {
+            name: &self.name,
+            config: &self.config,
+            version,
+            port,
+        };
+        artifacts.save(&deploy_dir).await?;
 
-        // artifacts::write_artifacts(self, deploy_dir).await
+        // TODO: continue here...
 
         unimplemented!()
     }
