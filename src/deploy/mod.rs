@@ -4,6 +4,7 @@ pub mod app_entity;
 mod config;
 mod entity;
 mod error;
+mod service;
 mod status;
 mod version;
 
@@ -13,5 +14,6 @@ pub use entity::{
     EntityType,
 };
 pub use error::DeployError;
+pub use service::DeployService;
 pub(self) use status::*;
 pub(self) use version::*;
