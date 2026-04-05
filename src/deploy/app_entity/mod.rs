@@ -1,14 +1,24 @@
 mod artifacts;
-mod error;
 mod model;
 mod port;
 
-use std::path::PathBuf;
+use std::{
+    io,
+    path::{
+        Path,
+        PathBuf,
+    },
+};
 
 use artifacts::ArtifactsContext;
-pub use error::AppEntityError;
 use model::AppConfig;
-use tokio::fs;
+use tokio::{
+    fs,
+    io::{
+        AsyncRead,
+        AsyncWriteExt,
+    },
+};
 
 use crate::{
     deploy::{
@@ -33,7 +43,10 @@ impl AppEntity {
         Ok(AppEntity { dir, name, config })
     }
 
-    pub async fn prepare(&self) -> Result<Self, DeployError> {
+    pub async fn prepare<R>(&self, archive: R) -> Result<u32, DeployError>
+    where
+        R: AsyncRead + Unpin + Send,
+    {
         let status = crate::deploy::read_deploy_status(&self.dir)
             .await
             .map_err(|err| DeployError::StatusError(err))?;
@@ -51,11 +64,25 @@ impl AppEntity {
 
         fs::create_dir(&deploy_dir)
             .await
-            .map_err(|err| DeployError::DeployDirectoryError(err))?;
+            .map_err(|source| DeployError::EntityError {
+                info: "failed to create deploy directory".to_string(),
+                source,
+            })?;
+
+        let archive_path = deploy_dir.join("app.tar.gz");
+        save_archive(archive, &archive_path)
+            .await
+            .map_err(|source| DeployError::EntityError {
+                info: "failed to save archive".to_string(),
+                source,
+            })?;
 
         let port = port::get_port(&self.dir)
             .await
-            .map_err(|err| AppEntityError::PortError(err))?;
+            .map_err(|source| DeployError::EntityError {
+                info: "failed to get port".to_string(),
+                source,
+            })?;
 
         let artifacts = ArtifactsContext {
             name: &self.name,
@@ -65,8 +92,17 @@ impl AppEntity {
         };
         artifacts.save(&deploy_dir).await?;
 
-        // TODO: continue here...
-
-        unimplemented!()
+        Ok(version)
     }
+}
+
+async fn save_archive<R>(archive: R, dst: &Path) -> io::Result<()>
+where
+    R: AsyncRead + Unpin + Send,
+{
+    let mut reader = archive;
+    let mut archive_file = fs::File::create(dst).await?;
+    tokio::io::copy(&mut reader, &mut archive_file).await?;
+    archive_file.flush().await?;
+    Ok(())
 }

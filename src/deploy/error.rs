@@ -2,10 +2,7 @@ use std::io;
 
 use thiserror::Error;
 
-use super::{
-    EntityType,
-    app_entity::AppEntityError,
-};
+use super::EntityType;
 
 #[derive(Debug, Error)]
 pub enum DeployError {
@@ -15,14 +12,16 @@ pub enum DeployError {
     VersionError(io::Error),
     #[error("status error: {0}")]
     StatusError(io::Error),
-    #[error("expected app entity type, got {0}")]
+    #[error("unexpected entity type, got {0}")]
     InvalidEntityType(EntityType),
     #[error("entity busy")]
     EntityBusy,
-    #[error("failed to create deploy directory: {0}")]
-    DeployDirectoryError(io::Error),
-    #[error("failed to materialize artifacts: {0}")]
+    #[error("failed to save artifacts: {0}")]
     ArtifactError(#[from] crate::error::ArtifactError),
-    #[error("app entity error: {0}")]
-    AppEntity(#[from] AppEntityError),
+    #[error("{info}: {source}")]
+    EntityError {
+        info: String,
+        #[source]
+        source: io::Error,
+    },
 }

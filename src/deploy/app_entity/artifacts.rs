@@ -85,8 +85,7 @@ impl<'a> ArtifactsContext<'a> {
         }
 
         let image_tag = format!("{}:{}", &self.name, self.version);
-        let service_file_name = format!("{}.service", &self.name);
-        let path = dir.join(service_file_name);
+        let path = dir.join("app.service");
         let content = TEMPLATES
             .get_template(SERVICEFILE_TEMPLATE)?
             .render(context! {

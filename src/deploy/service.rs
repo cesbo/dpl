@@ -6,7 +6,10 @@ use std::{
     },
 };
 
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::{
+    io::AsyncRead,
+    sync::Mutex as AsyncMutex,
+};
 
 use super::{
     DeployEntity,
@@ -23,18 +26,21 @@ impl DeployService {
         Self::default()
     }
 
-    pub async fn prepare(&self, name: &str) -> Result<(), DeployError> {
+    pub async fn deploy<R>(&self, name: &str, archive: R) -> Result<u32, DeployError>
+    where
+        R: AsyncRead + Unpin + Send,
+    {
         let lock = self.entity_lock(name);
         let _guard = lock.lock().await;
 
         let entity = DeployEntity::load(name).await?;
         match entity {
             DeployEntity::App(app) => {
-                app.prepare().await?;
+                let version = app.prepare(archive).await?;
+                // TODO: call AppEntity::deploy() to run build + restart in background
+                Ok(version)
             }
         }
-
-        Ok(())
     }
 
     fn entity_lock(&self, name: &str) -> Arc<AsyncMutex<()>> {
