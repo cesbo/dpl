@@ -1,3 +1,4 @@
+pub mod archive;
 mod config;
 mod deploy;
 pub mod error;
