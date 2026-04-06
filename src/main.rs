@@ -13,16 +13,15 @@ use axum::{
     Router,
     routing::get,
 };
+use deploy::{
+    DeployService,
+    deploy_router,
+};
 use tokio::{
     net::TcpListener,
     signal,
 };
 use tracing::info;
-
-use deploy::{
-    DeployService,
-    deploy_router,
-};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -31,7 +30,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let config = config::MainConfig::load()?;
     let bind_target = format!("{}:{}", config.server.addr, config.server.port);
 
-    let service = Arc::new(DeployService::new());
+    let service = Arc::new(DeployService::default());
 
     let listener = TcpListener::bind(&bind_target).await?;
     let local_addr = listener.local_addr()?;

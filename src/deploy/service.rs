@@ -27,10 +27,6 @@ pub struct DeployService {
 }
 
 impl DeployService {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub async fn deploy<R>(&self, name: &str, archive: R) -> Result<u32, DeployError>
     where
         R: AsyncRead + Unpin + Send,
@@ -56,10 +52,13 @@ impl DeployService {
             return Err(DeployError::EntityNotFound);
         }
 
-        let status =
-            read_deploy_status(&dir).await.map_err(DeployError::StatusError)?;
+        let status = read_deploy_status(&dir)
+            .await
+            .map_err(DeployError::StatusError)?;
 
-        let version = get_entity_version(&dir).await.map_err(DeployError::VersionError)?;
+        let version = get_entity_version(&dir)
+            .await
+            .map_err(DeployError::VersionError)?;
 
         Ok(EntityStatus { status, version })
     }
