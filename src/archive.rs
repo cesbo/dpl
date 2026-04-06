@@ -80,7 +80,7 @@ pub fn extract_tar_gz(archive_path: &Path, dst: &Path) -> Result<(), ArchiveErro
                 entry
                     .unpack(&output_path)
                     .map_err(|source| ArchiveError::CreateFile {
-                        path: output_path.into(),
+                        path: output_path,
                         source,
                     })?;
             }

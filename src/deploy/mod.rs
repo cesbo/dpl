@@ -9,7 +9,7 @@ mod service;
 mod status;
 mod version;
 
-pub(self) use config::*;
+use config::*;
 pub use entity::{
     DeployEntity,
     EntityType,
@@ -17,5 +17,5 @@ pub use entity::{
 pub use error::DeployError;
 pub use handlers::router as deploy_router;
 pub use service::DeployService;
-pub(self) use status::*;
-pub(self) use version::*;
+use status::*;
+use version::*;

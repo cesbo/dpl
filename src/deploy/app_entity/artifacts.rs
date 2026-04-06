@@ -179,6 +179,6 @@ mod tests {
         assert!(entity_dir.join("run.sh").exists());
         assert!(entity_dir.join("build-1.sh").exists());
         assert!(entity_dir.join("build-2.sh").exists());
-        assert!(entity_dir.join("demo-app.service").exists());
+        assert!(entity_dir.join("app.service").exists());
     }
 }

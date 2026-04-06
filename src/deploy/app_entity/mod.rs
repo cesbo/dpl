@@ -49,7 +49,7 @@ impl AppEntity {
     {
         let status = crate::deploy::read_deploy_status(&self.dir)
             .await
-            .map_err(|err| DeployError::StatusError(err))?;
+            .map_err(DeployError::StatusError)?;
 
         if status == crate::deploy::DeployStatus::Building {
             return Err(DeployError::EntityBusy);
@@ -57,7 +57,7 @@ impl AppEntity {
 
         let version = crate::deploy::reserve_entity_version(&self.dir)
             .await
-            .map_err(|err| DeployError::VersionError(err))?;
+            .map_err(DeployError::VersionError)?;
 
         let deploy_dir_name = format!("deploy_{}", version);
         let deploy_dir = self.dir.join(deploy_dir_name);
