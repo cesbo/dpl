@@ -1,13 +1,24 @@
 use std::io;
 
+use axum::{
+    Json,
+    http::StatusCode,
+    response::{
+        IntoResponse,
+        Response,
+    },
+};
 use thiserror::Error;
 
 use super::EntityType;
+use crate::error::ConfigError;
 
 #[derive(Debug, Error)]
 pub enum DeployError {
     #[error("config error: {0}")]
-    Config(#[from] crate::error::ConfigError),
+    Config(#[from] ConfigError),
+    #[error("entity not found")]
+    EntityNotFound,
     #[error("version error: {0}")]
     VersionError(io::Error),
     #[error("status error: {0}")]
@@ -24,4 +35,17 @@ pub enum DeployError {
         #[source]
         source: io::Error,
     },
+}
+
+impl IntoResponse for DeployError {
+    fn into_response(self) -> Response {
+        let status = match &self {
+            DeployError::EntityNotFound => StatusCode::NOT_FOUND,
+            DeployError::EntityBusy => StatusCode::CONFLICT,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+
+        let body = serde_json::json!({ "error": self.to_string() });
+        (status, Json(body)).into_response()
+    }
 }

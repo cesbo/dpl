@@ -43,7 +43,13 @@ pub enum DeployEntity {
 impl DeployEntity {
     pub async fn load(name: &str) -> Result<Self, DeployError> {
         let dir = crate::config::ENV.base_dir.join(name);
-        let meta: EntityMeta = load_entity_config(&dir).await?;
+        let meta: EntityMeta = load_entity_config(&dir).await.map_err(|err| {
+            if err.is_not_found() {
+                DeployError::EntityNotFound
+            } else {
+                DeployError::Config(err)
+            }
+        })?;
         match meta.entity_type {
             EntityType::App => {
                 let entity = AppEntity::load(name, dir).await?;

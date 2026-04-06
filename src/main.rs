@@ -4,17 +4,28 @@ mod deploy;
 pub mod error;
 mod log;
 
-use std::error::Error;
+use std::{
+    error::Error,
+    sync::Arc,
+};
 
 use axum::{
     Router,
-    routing::get,
+    routing::{
+        get,
+        post,
+    },
 };
 use tokio::{
     net::TcpListener,
     signal,
 };
 use tracing::info;
+
+use deploy::{
+    DeployService,
+    deploy_handler,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -23,9 +34,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let config = config::MainConfig::load()?;
     let bind_target = format!("{}:{}", config.server.addr, config.server.port);
 
+    let service = Arc::new(DeployService::new());
+
     let listener = TcpListener::bind(&bind_target).await?;
     let local_addr = listener.local_addr()?;
-    let app = Router::new().route("/hello", get(hello_world));
+    let app = Router::new()
+        .route("/hello", get(hello_world))
+        .route("/deploy/{name}", post(deploy_handler))
+        .with_state(service);
 
     info!(%local_addr, "server started");
 

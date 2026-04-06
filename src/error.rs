@@ -21,6 +21,12 @@ pub enum ConfigError {
     },
 }
 
+impl ConfigError {
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum ArtifactError {
     #[error("template render error: {0}")]
