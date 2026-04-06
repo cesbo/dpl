@@ -5,6 +5,7 @@ use std::{
 
 use axum::{
     Json,
+    Router,
     body::Body,
     extract::{
         Path,
@@ -12,6 +13,10 @@ use axum::{
     },
     http::StatusCode,
     response::IntoResponse,
+    routing::{
+        get,
+        post,
+    },
 };
 use futures_util::TryStreamExt;
 use tokio_util::io::StreamReader;
@@ -21,7 +26,13 @@ use super::{
     DeployService,
 };
 
-pub async fn status_handler(
+pub fn router() -> Router<Arc<DeployService>> {
+    Router::new()
+        .route("/{name}", post(deploy_handler))
+        .route("/{name}/status", get(status_handler))
+}
+
+async fn status_handler(
     State(service): State<Arc<DeployService>>,
     Path(name): Path<String>,
 ) -> Result<impl IntoResponse, DeployError> {
@@ -29,7 +40,7 @@ pub async fn status_handler(
     Ok(Json(status))
 }
 
-pub async fn deploy_handler(
+async fn deploy_handler(
     State(service): State<Arc<DeployService>>,
     Path(name): Path<String>,
     body: Body,
