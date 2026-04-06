@@ -6,7 +6,9 @@ use std::{
     },
 };
 
+use serde::Serialize;
 use tokio::{
+    fs,
     io::AsyncRead,
     sync::Mutex as AsyncMutex,
 };
@@ -14,6 +16,9 @@ use tokio::{
 use super::{
     DeployEntity,
     DeployError,
+    DeployStatus,
+    get_entity_version,
+    read_deploy_status,
 };
 
 #[derive(Default)]
@@ -43,6 +48,22 @@ impl DeployService {
         }
     }
 
+    pub async fn status(&self, name: &str) -> Result<EntityStatus, DeployError> {
+        let dir = crate::config::ENV.base_dir.join(name);
+
+        let config_path = dir.join("config.yaml");
+        if fs::metadata(&config_path).await.is_err() {
+            return Err(DeployError::EntityNotFound);
+        }
+
+        let status =
+            read_deploy_status(&dir).await.map_err(DeployError::StatusError)?;
+
+        let version = get_entity_version(&dir).await.map_err(DeployError::VersionError)?;
+
+        Ok(EntityStatus { status, version })
+    }
+
     fn entity_lock(&self, name: &str) -> Arc<AsyncMutex<()>> {
         self.locks
             .lock()
@@ -51,4 +72,10 @@ impl DeployService {
             .or_insert_with(|| Arc::new(AsyncMutex::new(())))
             .clone()
     }
+}
+
+#[derive(Debug, Serialize)]
+pub struct EntityStatus {
+    pub status: DeployStatus,
+    pub version: u32,
 }

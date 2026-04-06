@@ -25,6 +25,7 @@ use tracing::info;
 use deploy::{
     DeployService,
     deploy_handler,
+    status_handler,
 };
 
 #[tokio::main]
@@ -41,6 +42,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let app = Router::new()
         .route("/hello", get(hello_world))
         .route("/deploy/{name}", post(deploy_handler))
+        .route("/deploy/{name}/status", get(status_handler))
         .with_state(service);
 
     info!(%local_addr, "server started");

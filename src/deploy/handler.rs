@@ -21,6 +21,14 @@ use super::{
     DeployService,
 };
 
+pub async fn status_handler(
+    State(service): State<Arc<DeployService>>,
+    Path(name): Path<String>,
+) -> Result<impl IntoResponse, DeployError> {
+    let status = service.status(&name).await?;
+    Ok(Json(status))
+}
+
 pub async fn deploy_handler(
     State(service): State<Arc<DeployService>>,
     Path(name): Path<String>,

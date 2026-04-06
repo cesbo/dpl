@@ -8,6 +8,8 @@ use tokio::fs;
 const STATUS_FILE_NAME: &str = "status.txt";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DeployStatus {
     Idle,
     Building,

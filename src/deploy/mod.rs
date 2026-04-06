@@ -15,7 +15,10 @@ pub use entity::{
     EntityType,
 };
 pub use error::DeployError;
-pub use handler::deploy_handler;
+pub use handler::{
+    deploy_handler,
+    status_handler,
+};
 pub use service::DeployService;
 pub(self) use status::*;
 pub(self) use version::*;
