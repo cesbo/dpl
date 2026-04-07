@@ -38,3 +38,33 @@ pub enum ArtifactError {
         source: io::Error,
     },
 }
+
+#[derive(Debug, Error)]
+pub enum ArchiveError {
+    #[error("failed to open archive {path}: {source}")]
+    Open {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to create directory {path}: {source}")]
+    CreateDir {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to create file {path}: {source}")]
+    CreateFile {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to flatten directory {path}: {source}")]
+    Flatten {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to extract archive: {0}")]
+    Extract(#[source] io::Error),
+}

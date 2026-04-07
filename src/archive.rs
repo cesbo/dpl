@@ -13,33 +13,18 @@ use std::{
 
 use flate2::read::GzDecoder;
 use tar::EntryType;
-use thiserror::Error;
 
-#[derive(Debug, Error)]
-pub enum ArchiveError {
-    #[error("failed to open archive {path}: {source}")]
-    Open {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("failed to create directory {path}: {source}")]
-    CreateDir {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("failed to create file {path}: {source}")]
-    CreateFile {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("failed to extract archive: {0}")]
-    Extract(#[source] io::Error),
+use crate::error::ArchiveError;
+
+/// Extracts a `.tar.gz` archive into `dst` and flattens a single top-level directory
+/// if the archive was packed with a wrapping folder (e.g. `myapp/` → contents moved to `dst`).
+pub fn extract(archive_path: &Path, dst: &Path) -> Result<(), ArchiveError> {
+    extract_tar_gz(archive_path, dst)?;
+    flatten_top_level(dst)?;
+    Ok(())
 }
 
-pub fn extract_tar_gz(archive_path: &Path, dst: &Path) -> Result<(), ArchiveError> {
+fn extract_tar_gz(archive_path: &Path, dst: &Path) -> Result<(), ArchiveError> {
     let file = File::open(archive_path).map_err(|source| ArchiveError::Open {
         path: archive_path.into(),
         source,
@@ -92,6 +77,54 @@ pub fn extract_tar_gz(archive_path: &Path, dst: &Path) -> Result<(), ArchiveErro
             }
         }
     }
+
+    Ok(())
+}
+
+/// If `dir` contains exactly one entry and it is a directory, replaces `dir`
+/// with the contents of that subdirectory. Does nothing otherwise.
+fn flatten_top_level(dir: &Path) -> Result<(), ArchiveError> {
+    let mut entries = fs::read_dir(dir).map_err(|source| ArchiveError::CreateDir {
+        path: dir.into(),
+        source,
+    })?;
+
+    let first = match entries.next() {
+        Some(entry) => entry.map_err(|source| ArchiveError::CreateDir {
+            path: dir.into(),
+            source,
+        })?,
+        None => return Ok(()),
+    };
+
+    if entries.next().is_some() {
+        return Ok(());
+    }
+
+    if !first.path().is_dir() {
+        return Ok(());
+    }
+
+    let nested = first.path();
+    let parent = dir.parent().ok_or_else(|| {
+        ArchiveError::Extract(io::Error::new(io::ErrorKind::InvalidInput, "no parent dir"))
+    })?;
+    let tmp = parent.join(format!(".flatten_{}", std::process::id()));
+
+    fs::rename(&nested, &tmp).map_err(|source| ArchiveError::Flatten {
+        path: dir.into(),
+        source,
+    })?;
+
+    fs::remove_dir(dir).map_err(|source| ArchiveError::Flatten {
+        path: dir.into(),
+        source,
+    })?;
+
+    fs::rename(&tmp, dir).map_err(|source| ArchiveError::Flatten {
+        path: dir.into(),
+        source,
+    })?;
 
     Ok(())
 }
@@ -370,5 +403,74 @@ mod tests {
         let err = extract_tar_gz(Path::new("/tmp/nonexistent.tar.gz"), target.path()).unwrap_err();
 
         assert!(matches!(err, ArchiveError::Open { .. }));
+    }
+
+    #[test]
+    fn flatten_nested_single_dir() {
+        let (archive, _dir) = create_tar_gz(&[
+            ("myapp/", None),
+            ("myapp/index.js", Some(b"console.log('hi')")),
+            ("myapp/package.json", Some(b"{}")),
+        ]);
+
+        let target = TempDir::new().unwrap();
+        extract(&archive, target.path()).unwrap();
+
+        assert!(!target.path().join("myapp").exists());
+        assert_eq!(
+            fs::read_to_string(target.path().join("index.js")).unwrap(),
+            "console.log('hi')",
+        );
+        assert_eq!(
+            fs::read_to_string(target.path().join("package.json")).unwrap(),
+            "{}",
+        );
+    }
+
+    #[test]
+    fn no_flatten_multiple_entries() {
+        let (archive, _dir) = create_tar_gz(&[("a.txt", Some(b"a")), ("b.txt", Some(b"b"))]);
+
+        let target = TempDir::new().unwrap();
+        extract(&archive, target.path()).unwrap();
+
+        assert!(target.path().join("a.txt").exists());
+        assert!(target.path().join("b.txt").exists());
+    }
+
+    #[test]
+    fn no_flatten_single_file() {
+        let (archive, _dir) = create_tar_gz(&[("only.txt", Some(b"content"))]);
+
+        let target = TempDir::new().unwrap();
+        extract(&archive, target.path()).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(target.path().join("only.txt")).unwrap(),
+            "content",
+        );
+    }
+
+    #[test]
+    fn flatten_preserves_nested_subdirs() {
+        let (archive, _dir) = create_tar_gz(&[
+            ("project/", None),
+            ("project/Cargo.toml", Some(b"[package]")),
+            ("project/src/", None),
+            ("project/src/main.rs", Some(b"fn main() {}")),
+        ]);
+
+        let target = TempDir::new().unwrap();
+        extract(&archive, target.path()).unwrap();
+
+        assert!(!target.path().join("project").exists());
+        assert_eq!(
+            fs::read_to_string(target.path().join("Cargo.toml")).unwrap(),
+            "[package]",
+        );
+        assert_eq!(
+            fs::read_to_string(target.path().join("src/main.rs")).unwrap(),
+            "fn main() {}",
+        );
     }
 }

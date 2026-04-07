@@ -38,7 +38,7 @@ impl DeployService {
         match entity {
             DeployEntity::App(app) => {
                 let version = app.prepare(archive).await?;
-                // TODO: call AppEntity::deploy() to run build + restart in background
+                app.deploy(version);
                 Ok(version)
             }
         }
