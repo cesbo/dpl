@@ -59,7 +59,10 @@ fn extract_tar_gz(archive_path: &Path, dst: &Path) -> Result<(), ArchiveError> {
         let entry_type = entry.header().entry_type();
 
         match entry_type {
-            EntryType::Regular | EntryType::Directory | EntryType::Symlink => {
+            EntryType::Directory => {
+                fs::create_dir_all(&output_path).map_err(ArchiveError::CreateDir)?;
+            }
+            EntryType::Regular | EntryType::Symlink => {
                 if let Some(parent) = output_path.parent() {
                     fs::create_dir_all(parent).map_err(ArchiveError::CreateDir)?;
                 }
@@ -67,10 +70,11 @@ fn extract_tar_gz(archive_path: &Path, dst: &Path) -> Result<(), ArchiveError> {
                     .unpack(&output_path)
                     .map_err(ArchiveError::CreateFile)?;
             }
+            EntryType::XGlobalHeader | EntryType::XHeader => {}
             _ => {
                 return Err(ArchiveError::ReadEntry(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    "unsupported entry type",
+                    format!("unsupported entry type {:?} {:?}", entry_type, &entry_path),
                 )));
             }
         }
