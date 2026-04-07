@@ -1,144 +1,53 @@
-# dpl
+# CLAUDE.md
 
-## Project Overview
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**dpl** is a lightweight web application deployment system written in Go.
-It receives application archives via HTTP, builds container images using Podman, and runs them as systemd services on a Linux server.
+## Project
 
-### Entity Model
+`dpl` is a Rust rewrite of an existing deploy tool. It accepts deploy archives over HTTP, unpacks them, generates build artifacts (Containerfile, build scripts, run script, systemd service unit) from Jinja templates, and drives `podman` + `systemd` to run the resulting service. The Rust port is in-progress; see `todo-rust.md` for the scope and roadmap, and `techdoc.md` for the full behavioural spec of the legacy system being replicated.
 
-All managed entities live in `/opt/dpl/<name>/config.yaml`.
-Each config has a `type` field that determines the entity kind:
+## Commands
 
-- **app** — web application running in a Podman container (build, run, systemd service).
-- **domain** — domain configuration (nginx, TLS). *Future.*
-- **static** — static file site with its own deploy logic. *Future.*
-- **database** — managed database service. *Future.*
+- Build: `cargo build`
+- Run server: `cargo run` (binds using `config.yaml` or defaults to `0.0.0.0:3000`)
+- Tests: `cargo test`
+- Single test: `cargo test <name>` (e.g. `cargo test prepare_creates_first_deploy_layout_and_artifacts`)
+- Clippy: `cargo clippy`
+- **Do not run `cargo fmt`** (per `.github/copilot-instructions.md`).
 
-Each entity type is a separate Go package under `internal/entities/` (`internal/entities/app`, `internal/entities/domain`, etc.) with its own config struct, templates, and deploy logic.
+Edition is `2024`.
 
-Examples:
-```
-/opt/dpl/example.com/config.yaml   # type: domain
-/opt/dpl/landing/config.yaml        # type: static
-/opt/dpl/profile/config.yaml        # type: app
-/opt/dpl/profile-db/config.yaml     # type: database
-```
+## Runtime layout
 
-### Core Workflow (app)
+All state lives under a base directory, configured by env `DPL_BASE` (default `/opt/dpl`):
 
-1. GitHub Actions creates a tag → builds a tar.gz archive of the web application.
-2. The archive is POSTed to `http://server:PORT/deploy/app-name` with Bearer token auth.
-3. dpl reads entity config from `/opt/dpl/app-name/config.yaml`, checks `type: app`.
-4. dpl creates build directory `/opt/dpl/app-name/deploy_{version}/`
-5. dpl generates build artifacts in the build directory: `build.sh`, `Containerfile`, `run.sh`, systemd `.service` file.
-6. dpl extracts received archive into `/opt/dpl/app-name/deploy_{version}/app/`.
-7. dpl builds a Podman image and starts a container via systemd.
+- `{DPL_BASE}/config.yaml` — server config (`server.addr`, `server.port`). Missing file = defaults.
+- `{DPL_BASE}/{entity_name}/config.yaml` — per-entity config (typed via `type:` discriminator: `app`, `domain`, `static`, `database`).
+- `{DPL_BASE}/{entity_name}/version.txt` — monotonically increasing reserved version.
+- `{DPL_BASE}/{entity_name}/deploy_{N}/` — per-deploy workspace containing `status.txt`, `logs/`, `app/`, and generated artifacts (`Containerfile`, `run.sh`, `build-N.sh`, service file).
 
-### Target Platform
+`crate::config::ENV` is a `LazyLock<EnvConfig>` holding the resolved `base_dir`.
 
-- Linux server with **systemd** and **Podman** (rootful or rootless).
-- No Docker dependency. Use Podman CLI and Podman-specific features (e.g., `--sdnotify=conmon`, `--cgroups=split`).
+## Architecture
 
-## Language & Style
+Entry point `src/main.rs` starts an axum server with graceful shutdown on Ctrl-C and initializes tracing. Business logic lives in `src/deploy/`.
 
-- **Go** (latest stable, currently 1.24+).
-- Use the standard library wherever possible. Minimize external dependencies.
-- Follow idiomatic Go: short variable names in narrow scopes, exported names with doc comments, error wrapping with `fmt.Errorf("context: %w", err)`.
-- Use `slog` for structured logging.
-- Use `errors.Is` / `errors.As` for error inspection.
-- Prefer returning errors over panicking.
+Key modules:
 
-## Project Structure
+- `deploy::entity` — `DeployEntity` enum + `EntityType`. `DeployEntity::load` reads the entity's `config.yaml`, dispatches on `type:`, and constructs the concrete entity. Currently only `App` is implemented.
+- `deploy::app_entity` — `AppEntity` (loaded app config) and the artifact generation pipeline. `AppConfig` (in `model.rs`) uses `serde(deny_unknown_fields)` and mirrors the legacy YAML schema: `image`, `port`, `build: [{files, env, script}]`, `runtime: {env, init, cmd}`, optional `domain`, `route`, `volumes`, `public`.
+- `deploy::app_entity::artifacts` — `ArtifactsContext` renders four MiniJinja templates embedded via `include_str!` from `templates/` (`containerfile.jinja`, `build.sh.jinja`, `run.sh.jinja`, `servicefile.jinja`). Templates register a `cuid()` global function. `Environment` is a `LazyLock` with `keep_trailing_newline`, `trim_blocks`, `lstrip_blocks` enabled.
+- `deploy::version` — `get_entity_version` / `reserve_entity_version` (read-increment-write on `version.txt`; no file = version 0).
+- `deploy::status` — reads/writes `status.txt` as one of `idle | building | ready | failed`.
+- `deploy::service` — `DeployService` is a pure orchestrator. It only decides *which* entity-specific logic to run, serialises per-entity operations via an `EntityLockRegistry` (map of entity name → `Arc<tokio::sync::Mutex>`) to ensure an entity is free, loads the `DeployEntity`, and dispatches to the entity's own `prepare`/deploy methods. The orchestrator does **not** know what each entity needs — it never creates deploy dirs, writes status files, or generates artifacts directly.
+- Entity-level logic lives on each entity type. For apps, `AppEntity::prepare` owns the full preparation of an app deploy: checking status, reserving the next version, creating `deploy_{N}/`, allocating a port, rendering and saving artifacts, etc. Each new entity type (`domain`, `static`, `database`) will implement its own `prepare`/deploy methods.
 
-```
-cmd/
-  dpl/              # main package — CLI entry point
-internal/
-  entities/         # deploy entity packages (one per entity type)
-    app/            # app entity: config, templates, generation, deploy pipeline
-  server/           # HTTP server, deploy handler, auth middleware
-  podman/           # podman build & run commands
-  systemd/          # systemd unit management (enable, start, stop, restart)
-```
+When adding functionality, keep this split: put "is the entity busy / which entity method do I call" concerns in `DeployService`; put "what does a deploy of *this kind* of entity actually do" concerns on the entity itself.
 
-- `cmd/dpl/main.go` — entry point starting the HTTP server.
-- `internal/` — all internal packages, not importable from outside.
-- `internal/entities/` — deploy entity packages. Each entity type (`app`, `domain`, `static`, `database`) gets its own package here with its own config struct, templates, and deploy logic.
-- Shared infrastructure (`podman`, `systemd`, `server`, `base`) lives in `internal/` and is used by entity packages.
+Errors use `thiserror`: top-level `crate::error` (`ConfigError`, `ArtifactError`) and `deploy::error::DeployError` / `deploy::app_entity::error::AppEntityError`. Paths are always captured in error variants alongside the underlying `io`/`serde_yaml`/`minijinja` source.
 
-## Key Design Decisions
+## Conventions
 
-### Configuration
-
-- All entities live in `/opt/dpl/<name>/`.
-- Every `config.yaml` has a `type` field (`app`, `domain`, `static`, `database`).
-- Config is parsed with `gopkg.in/yaml.v3`.
-- Config struct fields use `yaml:"..."` tags.
-- Server-level settings (listening address) are passed as environment variables (`DPL_ADDR`) set in the dpl systemd service file.
-- Auth tokens are per-entity: each entity's `config.yaml` contains a `tokens` array. This allows different tokens for different entities and users.
-
-### Dispatch by Type
-
-- The HTTP handler reads the `type` field from `config.yaml` and dispatches to the corresponding entity package (`entities/app.Deploy()`, `entities/static.Deploy()`, etc.).
-- Each entity package implements its own deploy logic independently.
-
-### Template Rendering
-
-- Each entity package embeds its own templates via `embed.FS`.
-- Use Go `text/template` for generating scripts and config files.
-- Build/runtime env vars use heredoc syntax with a random UUID delimiter per variable to safely handle multiline values.
-
-### HTTP API
-
-- `POST /deploy/<name>` — accepts `multipart/form-data` or raw body with the tar.gz archive.
-- Bearer token authentication via `Authorization` header, validated against the `tokens` array in the entity's `config.yaml`.
-- Return meaningful HTTP status codes: 401 (bad token), 404 (unknown entity), 500 (build/deploy errors).
-- Stream build output back in the response body where practical.
-
-### Container Build (app)
-
-- Build context is assembled in a temp directory.
-- `build.sh` is mounted as a secret during build (`--secret id=build-sh`), not baked into the image.
-- The final image is tagged as `localhost/<name>:<timestamp>`.
-
-### systemd Integration (app)
-
-- Each app container is a systemd service: `dpl-<name>.service`.
-- Service uses `Type=notify` with Podman's conmon sdnotify.
-- Port mapping: `127.0.0.1:<random-host-port>:<container-port>`.
-
-### Networking / Reverse Proxy
-
-- Containers bind to `127.0.0.1` only.
-- nginx config generation is planned (via `domain` entity).
-- TLS is handled externally for now.
-
-## Testing
-
-- Unit tests with `testing` package, table-driven style.
-- Use `t.TempDir()` for file system tests.
-- Integration tests that call Podman should be guarded with a build tag `//go:build integration`.
-- Test file generation by comparing output against golden files in `testdata/`.
-
-## File Naming Conventions
-
-- Go files: `snake_case.go`
-- Templates: `<name>.tmpl` (e.g., `containerfile.tmpl`, `build_sh.tmpl`)
-- Test files: `*_test.go`
-- Golden/test data: `testdata/` directories within each package
-
-## Important Notes
-
-- Never use Docker. All container operations use `podman` CLI.
-- The heredoc delimiter for env vars must be unique per variable (UUID v4).
-- `build.sh` runs inside the container at build time via `--mount=type=secret`.
-- `run.sh` is copied into the image and runs at container start.
-- Port allocation for host-side mapping should pick a random free port and persist it in the service file.
-
-## Workflow
-
-When work on a phase from `TODO.md` is finished:
-
-1. Mark all phase items as done (`[x]`).
-2. `git add -A && git commit` with a message like `phase N: short description`.
+- Async I/O via `tokio::fs`; sync stdlib `fs` only appears in tests.
+- Module layout uses private submodules with `pub use` re-exports through `mod.rs` (see `src/deploy/mod.rs`); keep the same pattern when adding modules.
+- Deploy-related identifiers use the `deploy_{N}` / `deploy_id` convention.

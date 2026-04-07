@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+{% for key, value in env|items -%}
+{% set heredoc = "EOF_" ~ cuid() %}
+export {{key}}=$(cat <<'{{heredoc}}'
+{{value}}
+{{heredoc}}
+)
+{% endfor -%}
+{% if init -%}
+{{ init }}
+{% endif %}
+exec {{ cmd }}

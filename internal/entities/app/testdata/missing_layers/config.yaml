@@ -1,8 +1,0 @@
-type: app
-tokens:
-  - "secret"
-image: node:20-alpine
-port: 3000
-build: []
-runtime:
-  cmd: "node index.js"

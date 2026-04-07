@@ -1,0 +1,42 @@
+use std::{
+    fs,
+    io,
+    path::Path,
+};
+
+const VERSION_FILE_NAME: &str = "version.txt";
+
+pub fn get_entity_version(dir: &Path) -> io::Result<u32> {
+    let path = dir.join(VERSION_FILE_NAME);
+
+    let version = match fs::read_to_string(&path) {
+        Ok(v) => v,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(err) => {
+            return Err(err);
+        }
+    };
+
+    let version = match version.trim().parse::<u32>() {
+        Ok(v) => v,
+        Err(_) => return Err(io::ErrorKind::InvalidData.into()),
+    };
+
+    Ok(version)
+}
+
+pub fn write_entity_version(dir: &Path, version: u32) -> io::Result<()> {
+    let path = dir.join(VERSION_FILE_NAME);
+    fs::write(path, version.to_string())
+}
+
+pub fn reserve_entity_version(dir: &Path) -> io::Result<u32> {
+    let current_version = get_entity_version(dir)?;
+    let next_version = current_version
+        .checked_add(1)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "entity version overflow"))?;
+
+    write_entity_version(dir, next_version)?;
+
+    Ok(next_version)
+}
