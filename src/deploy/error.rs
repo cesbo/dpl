@@ -10,27 +10,34 @@ use axum::{
 };
 use thiserror::Error;
 
-use super::EntityType;
-use crate::error::ConfigError;
+use super::{
+    EntityType,
+    status::StatusError,
+    version::VersionError,
+};
+use crate::{
+    archive::ArchiveError,
+    error::ConfigError,
+};
 
 #[derive(Debug, Error)]
 pub enum DeployError {
-    #[error("config error: {0}")]
-    Config(#[from] ConfigError),
+    #[error("{0}")]
+    EntityConfig(#[from] ConfigError),
     #[error("entity not found")]
     EntityNotFound,
-    #[error("version error: {0}")]
-    VersionError(io::Error),
-    #[error("status error: {0}")]
-    StatusError(io::Error),
+    #[error("{0}")]
+    Version(#[from] VersionError),
+    #[error("{0}")]
+    Status(#[from] StatusError),
     #[error("unexpected entity type, got {0}")]
     InvalidEntityType(EntityType),
     #[error("entity busy")]
     EntityBusy,
-    #[error("failed to save artifacts: {0}")]
+    #[error("save artifacts: {0}")]
     ArtifactError(#[from] crate::error::ArtifactError),
-    #[error("failed to extract archive: {0}")]
-    ArchiveError(#[from] crate::error::ArchiveError),
+    #[error("extract archive: {0}")]
+    ArchiveError(#[from] ArchiveError),
     #[error("{info}: {source}")]
     EntityError {
         info: String,

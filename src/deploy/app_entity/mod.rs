@@ -66,15 +66,13 @@ impl AppEntity {
     where
         R: AsyncRead + Unpin + Send,
     {
-        let status =
-            crate::deploy::read_entity_status(&self.dir).map_err(DeployError::StatusError)?;
+        let status = crate::deploy::read_entity_status(&self.dir)?;
 
         if status == crate::deploy::DeployStatus::Building {
             return Err(DeployError::EntityBusy);
         }
 
-        let version =
-            crate::deploy::reserve_entity_version(&self.dir).map_err(DeployError::VersionError)?;
+        let version = crate::deploy::reserve_entity_version(&self.dir)?;
 
         let deploy_dir = self.get_deploy_dir(version);
 
@@ -85,7 +83,7 @@ impl AppEntity {
                 source,
             })?;
 
-        write_entity_status(&self.dir, DeployStatus::Building).map_err(DeployError::StatusError)?;
+        write_entity_status(&self.dir, DeployStatus::Building)?;
 
         let log_dir = deploy_dir.join("log");
         fs::create_dir(&log_dir)

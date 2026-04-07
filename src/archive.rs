@@ -13,8 +13,23 @@ use std::{
 
 use flate2::read::GzDecoder;
 use tar::EntryType;
+use thiserror::Error;
 
-use crate::error::ArchiveError;
+#[derive(Debug, Error)]
+pub enum ArchiveError {
+    #[error("open archive: {0}")]
+    Open(io::Error),
+    #[error("create directory: {0}")]
+    CreateDir(io::Error),
+    #[error("create file: {0}")]
+    CreateFile(io::Error),
+    #[error("flatten directory: {0}")]
+    Flatten(io::Error),
+    #[error("read entry: {0}")]
+    ReadEntry(io::Error),
+    #[error("empty archive")]
+    EmptyArchive,
+}
 
 /// Extracts a `.tar.gz` archive into `dst` and flattens a single top-level directory
 /// if the archive was packed with a wrapping folder (e.g. `myapp/` → contents moved to `dst`).
@@ -25,31 +40,20 @@ pub fn extract(archive_path: &Path, dst: &Path) -> Result<(), ArchiveError> {
 }
 
 fn extract_tar_gz(archive_path: &Path, dst: &Path) -> Result<(), ArchiveError> {
-    let file = File::open(archive_path).map_err(|source| ArchiveError::Open {
-        path: archive_path.into(),
-        source,
-    })?;
+    let file = File::open(archive_path).map_err(ArchiveError::Open)?;
 
     let decoder = GzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
 
-    fs::create_dir_all(dst).map_err(|source| ArchiveError::CreateDir {
-        path: dst.into(),
-        source,
-    })?;
+    fs::create_dir_all(dst).map_err(ArchiveError::CreateDir)?;
+    let dst = dst.canonicalize().map_err(ArchiveError::CreateDir)?;
 
-    let dst = dst
-        .canonicalize()
-        .map_err(|source| ArchiveError::CreateDir {
-            path: dst.into(),
-            source,
-        })?;
+    let entries = archive.entries().map_err(ArchiveError::ReadEntry)?;
+    for entry in entries {
+        let mut entry = entry.map_err(ArchiveError::ReadEntry)?;
 
-    for entry in archive.entries().map_err(ArchiveError::Extract)? {
-        let mut entry = entry.map_err(ArchiveError::Extract)?;
-
-        let entry_path = entry.path().map_err(ArchiveError::Extract)?.into_owned();
-        let entry_path = sanitize_path(&entry_path)?;
+        let entry_path = entry.path().map_err(ArchiveError::ReadEntry)?.into_owned();
+        let entry_path = sanitize_path(&entry_path).map_err(ArchiveError::ReadEntry)?;
         let output_path = dst.join(&entry_path);
 
         let entry_type = entry.header().entry_type();
@@ -57,20 +61,14 @@ fn extract_tar_gz(archive_path: &Path, dst: &Path) -> Result<(), ArchiveError> {
         match entry_type {
             EntryType::Regular | EntryType::Directory | EntryType::Symlink => {
                 if let Some(parent) = output_path.parent() {
-                    fs::create_dir_all(parent).map_err(|source| ArchiveError::CreateDir {
-                        path: parent.into(),
-                        source,
-                    })?;
+                    fs::create_dir_all(parent).map_err(ArchiveError::CreateDir)?;
                 }
                 entry
                     .unpack(&output_path)
-                    .map_err(|source| ArchiveError::CreateFile {
-                        path: output_path,
-                        source,
-                    })?;
+                    .map_err(ArchiveError::CreateFile)?;
             }
             _ => {
-                return Err(ArchiveError::Extract(io::Error::new(
+                return Err(ArchiveError::ReadEntry(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "unsupported entry type",
                 )));
@@ -84,16 +82,10 @@ fn extract_tar_gz(archive_path: &Path, dst: &Path) -> Result<(), ArchiveError> {
 /// If `dir` contains exactly one entry and it is a directory, replaces `dir`
 /// with the contents of that subdirectory. Does nothing otherwise.
 fn flatten_top_level(dir: &Path) -> Result<(), ArchiveError> {
-    let mut entries = fs::read_dir(dir).map_err(|source| ArchiveError::CreateDir {
-        path: dir.into(),
-        source,
-    })?;
+    let mut entries = fs::read_dir(dir).map_err(ArchiveError::CreateDir)?;
 
     let first = match entries.next() {
-        Some(entry) => entry.map_err(|source| ArchiveError::CreateDir {
-            path: dir.into(),
-            source,
-        })?,
+        Some(entry) => entry.map_err(|_| ArchiveError::EmptyArchive)?,
         None => return Ok(()),
     };
 
@@ -107,34 +99,23 @@ fn flatten_top_level(dir: &Path) -> Result<(), ArchiveError> {
 
     let nested = first.path();
     let parent = dir.parent().ok_or_else(|| {
-        ArchiveError::Extract(io::Error::new(io::ErrorKind::InvalidInput, "no parent dir"))
+        ArchiveError::Flatten(io::Error::new(io::ErrorKind::InvalidInput, "no parent dir"))
     })?;
     let tmp = parent.join(format!(".flatten_{}", std::process::id()));
 
-    fs::rename(&nested, &tmp).map_err(|source| ArchiveError::Flatten {
-        path: dir.into(),
-        source,
-    })?;
-
-    fs::remove_dir(dir).map_err(|source| ArchiveError::Flatten {
-        path: dir.into(),
-        source,
-    })?;
-
-    fs::rename(&tmp, dir).map_err(|source| ArchiveError::Flatten {
-        path: dir.into(),
-        source,
-    })?;
+    fs::rename(&nested, &tmp).map_err(ArchiveError::Flatten)?;
+    fs::remove_dir(dir).map_err(ArchiveError::Flatten)?;
+    fs::rename(&tmp, dir).map_err(ArchiveError::Flatten)?;
 
     Ok(())
 }
 
-fn sanitize_path(path: &Path) -> Result<PathBuf, ArchiveError> {
+fn sanitize_path(path: &Path) -> io::Result<PathBuf> {
     if path.is_absolute() {
-        return Err(ArchiveError::Extract(io::Error::new(
+        return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "absolute path",
-        )));
+            "absolute path not allowed",
+        ));
     }
 
     let mut sanitized = PathBuf::new();
@@ -144,10 +125,10 @@ fn sanitize_path(path: &Path) -> Result<PathBuf, ArchiveError> {
             Component::Normal(part) => sanitized.push(part),
             Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(ArchiveError::Extract(io::Error::new(
+                return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "invalid path component",
-                )));
+                ));
             }
         }
     }
@@ -327,7 +308,7 @@ mod tests {
         let target = TempDir::new().unwrap();
         let err = extract_tar_gz(&archive_path, target.path()).unwrap_err();
 
-        assert!(matches!(err, ArchiveError::Extract { .. }));
+        assert!(matches!(err, ArchiveError::ReadEntry { .. }));
     }
 
     #[test]
@@ -350,7 +331,7 @@ mod tests {
         let target = TempDir::new().unwrap();
         let err = extract_tar_gz(&archive_path, target.path()).unwrap_err();
 
-        assert!(matches!(err, ArchiveError::Extract { .. }));
+        assert!(matches!(err, ArchiveError::ReadEntry { .. }));
     }
 
     #[test]
@@ -360,7 +341,7 @@ mod tests {
         let target = TempDir::new().unwrap();
         let err = extract_tar_gz(&archive, target.path()).unwrap_err();
 
-        assert!(matches!(err, ArchiveError::Extract { .. }));
+        assert!(matches!(err, ArchiveError::ReadEntry { .. }));
     }
 
     #[test]
@@ -394,7 +375,7 @@ mod tests {
         let target = TempDir::new().unwrap();
         let err = extract_tar_gz(&archive_path, target.path()).unwrap_err();
 
-        assert!(matches!(err, ArchiveError::Extract { .. }));
+        assert!(matches!(err, ArchiveError::ReadEntry { .. }));
     }
 
     #[test]

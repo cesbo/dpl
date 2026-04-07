@@ -10,6 +10,7 @@ use minijinja::{
     Environment,
     context,
 };
+use serde::Serialize;
 use tokio::fs;
 
 use super::AppConfig;
@@ -56,21 +57,25 @@ pub struct ArtifactsContext<'a> {
 impl<'a> ArtifactsContext<'a> {
     pub async fn save(&self, dir: &Path) -> Result<(), ArtifactError> {
         let path = dir.join("Containerfile");
-        let content = TEMPLATES
-            .get_template(CONTAINERFILE_TEMPLATE)?
-            .render(context! {
+        let content = render(
+            CONTAINERFILE_TEMPLATE,
+            context! {
                 image => self.config.image,
                 port => self.config.port,
                 layers => &self.config.build,
-            })?;
+            },
+        )?;
         Self::write_artifact(path, content).await?;
 
         let path = dir.join("run.sh");
-        let content = TEMPLATES.get_template(RUN_SH_TEMPLATE)?.render(context! {
-            env => &self.config.runtime.env,
-            init => &self.config.runtime.init,
-            cmd => &self.config.runtime.cmd,
-        })?;
+        let content = render(
+            RUN_SH_TEMPLATE,
+            context! {
+                env => &self.config.runtime.env,
+                init => &self.config.runtime.init,
+                cmd => &self.config.runtime.cmd,
+            },
+        )?;
         Self::write_artifact(path, content).await?;
 
         for (index, layer) in self.config.build.iter().enumerate() {
@@ -79,26 +84,28 @@ impl<'a> ArtifactsContext<'a> {
             };
 
             let path = dir.join(format!("build-{}.sh", index + 1));
-            let content = TEMPLATES
-                .get_template(BUILD_SH_TEMPLATE)?
-                .render(context! {
+            let content = render(
+                BUILD_SH_TEMPLATE,
+                context! {
                     env => &layer.env,
                     script => script,
-                })?;
+                },
+            )?;
             Self::write_artifact(path, content).await?;
         }
 
         let image_tag = format!("{}:{}", &self.name, self.version);
         let path = dir.join("app.service");
-        let content = TEMPLATES
-            .get_template(SERVICEFILE_TEMPLATE)?
-            .render(context! {
+        let content = render(
+            SERVICEFILE_TEMPLATE,
+            context! {
                 name => &self.name,
                 host_port => self.port,
                 container_port => &self.config.port,
                 volumes => &self.config.volumes,
                 image_tag => &image_tag,
-            })?;
+            },
+        )?;
         Self::write_artifact(path, content).await?;
 
         Ok(())
@@ -109,6 +116,25 @@ impl<'a> ArtifactsContext<'a> {
             .await
             .map_err(|source| ArtifactError::Write { path, source })
     }
+}
+
+fn render<S>(name: &str, ctx: S) -> Result<String, ArtifactError>
+where
+    S: Serialize,
+{
+    let template = TEMPLATES
+        .get_template(name)
+        .map_err(|source| ArtifactError::Render {
+            name: name.into(),
+            source,
+        })?;
+
+    template
+        .render(ctx)
+        .map_err(|source| ArtifactError::Render {
+            name: name.into(),
+            source,
+        })
 }
 
 #[cfg(test)]

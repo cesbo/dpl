@@ -7,13 +7,13 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    #[error("failed to read config {path}: {source}")]
+    #[error("read config {path}: {source}")]
     Read {
         path: PathBuf,
         #[source]
         source: io::Error,
     },
-    #[error("failed to parse config {path}: {source}")]
+    #[error("parse config {path}: {source}")]
     Parse {
         path: PathBuf,
         #[source]
@@ -29,42 +29,16 @@ impl ConfigError {
 
 #[derive(Debug, Error)]
 pub enum ArtifactError {
-    #[error("template render error: {0}")]
-    Render(#[from] minijinja::Error),
-    #[error("failed to write artifact {path}: {source}")]
+    #[error("render template {name}: {source}")]
+    Render {
+        name: String,
+        #[source]
+        source: minijinja::Error,
+    },
+    #[error("write artifact {path}: {source}")]
     Write {
         path: PathBuf,
         #[source]
         source: io::Error,
     },
-}
-
-#[derive(Debug, Error)]
-pub enum ArchiveError {
-    #[error("failed to open archive {path}: {source}")]
-    Open {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("failed to create directory {path}: {source}")]
-    CreateDir {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("failed to create file {path}: {source}")]
-    CreateFile {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("failed to flatten directory {path}: {source}")]
-    Flatten {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("failed to extract archive: {0}")]
-    Extract(#[source] io::Error),
 }

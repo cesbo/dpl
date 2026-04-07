@@ -47,7 +47,7 @@ impl DeployEntity {
             if err.is_not_found() {
                 DeployError::EntityNotFound
             } else {
-                DeployError::Config(err)
+                DeployError::EntityConfig(err)
             }
         })?;
         match meta.entity_type {
