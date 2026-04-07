@@ -74,12 +74,16 @@ impl<'a> ArtifactsContext<'a> {
         Self::write_artifact(path, content).await?;
 
         for (index, layer) in self.config.build.iter().enumerate() {
+            let Some(script) = &layer.script else {
+                continue;
+            };
+
             let path = dir.join(format!("build-{}.sh", index + 1));
             let content = TEMPLATES
                 .get_template(BUILD_SH_TEMPLATE)?
                 .render(context! {
                     env => &layer.env,
-                    script => &layer.script,
+                    script => script,
                 })?;
             Self::write_artifact(path, content).await?;
         }
@@ -133,7 +137,12 @@ mod tests {
                 BuildLayerConfig {
                     files: vec!["package.json".to_owned(), "package-lock.json".to_owned()],
                     env: BTreeMap::new(),
-                    script: "npm ci".to_owned(),
+                    script: Some("npm ci".to_owned()),
+                },
+                BuildLayerConfig {
+                    files: vec!["test.txt".to_owned()],
+                    env: BTreeMap::new(),
+                    script: None,
                 },
                 BuildLayerConfig {
                     files: vec![".".to_owned()],
@@ -142,7 +151,7 @@ mod tests {
                         map.insert("SITE_ID".to_owned(), "hello-world".to_owned());
                         map
                     },
-                    script: "npm run build".to_owned(),
+                    script: Some("npm run build".to_owned()),
                 },
             ],
             runtime: RuntimeConfig {
@@ -178,7 +187,8 @@ mod tests {
         assert!(entity_dir.join("Containerfile").exists());
         assert!(entity_dir.join("run.sh").exists());
         assert!(entity_dir.join("build-1.sh").exists());
-        assert!(entity_dir.join("build-2.sh").exists());
+        assert!(!entity_dir.join("build-2.sh").exists());
+        assert!(entity_dir.join("build-3.sh").exists());
         assert!(entity_dir.join("app.service").exists());
     }
 }

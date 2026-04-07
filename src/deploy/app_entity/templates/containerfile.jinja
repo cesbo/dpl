@@ -9,9 +9,11 @@ COPY app/ /app/
 COPY app/{{ file }} /app/{{ file }}
 {% endif %}
 {% endfor -%}
+{% if layer.script %}
 {% set name = "build-" ~ loop.index %}
 {% set path = "/run/secrets/" ~ name %}
 RUN --mount=type=secret,id={{ name }} /bin/sh {{ path }}
+{% endif %}
 {% endfor -%}
 COPY run.sh /opt/dpl/run.sh
 EXPOSE {{ port }}

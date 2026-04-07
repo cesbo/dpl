@@ -30,7 +30,7 @@ pub struct BuildLayerConfig {
     pub files: Vec<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
-    pub script: String,
+    pub script: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, Eq, PartialEq)]
