@@ -9,7 +9,7 @@ COPY app/ /app/
 COPY app/{{ file }} /app/{{ file }}
 {% endif %}
 {% endfor -%}
-{% set name = "build-sh-" ~ loop.index %}
+{% set name = "build-" ~ loop.index %}
 {% set path = "/run/secrets/" ~ name %}
 RUN --mount=type=secret,id={{ name }} /bin/sh {{ path }}
 {% endfor -%}

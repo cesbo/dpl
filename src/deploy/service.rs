@@ -18,7 +18,7 @@ use super::{
     DeployError,
     DeployStatus,
     get_entity_version,
-    read_deploy_status,
+    read_entity_status,
 };
 
 #[derive(Default)]
@@ -51,14 +51,8 @@ impl DeployService {
         if fs::metadata(&config_path).await.is_err() {
             return Err(DeployError::EntityNotFound);
         }
-
-        let status = read_deploy_status(&dir)
-            .await
-            .map_err(DeployError::StatusError)?;
-
-        let version = get_entity_version(&dir)
-            .await
-            .map_err(DeployError::VersionError)?;
+        let status = read_entity_status(&dir).map_err(DeployError::StatusError)?;
+        let version = get_entity_version(&dir).map_err(DeployError::VersionError)?;
 
         Ok(EntityStatus { status, version })
     }

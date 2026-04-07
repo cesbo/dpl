@@ -29,6 +29,8 @@ pub enum DeployError {
     EntityBusy,
     #[error("failed to save artifacts: {0}")]
     ArtifactError(#[from] crate::error::ArtifactError),
+    #[error("failed to extract archive: {0}")]
+    ArchiveError(#[from] crate::error::ArchiveError),
     #[error("{info}: {source}")]
     EntityError {
         info: String,

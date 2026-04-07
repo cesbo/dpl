@@ -1,10 +1,10 @@
 use std::{
+    fs,
     io,
     path::Path,
 };
 
 use serde::Serialize;
-use tokio::fs;
 
 const STATUS_FILE_NAME: &str = "status.txt";
 
@@ -17,10 +17,10 @@ pub enum DeployStatus {
     Failed,
 }
 
-pub async fn read_deploy_status(dir: &Path) -> io::Result<DeployStatus> {
+pub fn read_entity_status(dir: &Path) -> io::Result<DeployStatus> {
     let path = dir.join(STATUS_FILE_NAME);
 
-    let line = match fs::read_to_string(path).await {
+    let line = match fs::read_to_string(path) {
         Ok(line) => line,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(DeployStatus::Idle),
         Err(err) => return Err(err),
@@ -37,7 +37,7 @@ pub async fn read_deploy_status(dir: &Path) -> io::Result<DeployStatus> {
     Ok(status)
 }
 
-pub async fn write_deploy_status(dir: &Path, status: DeployStatus) -> io::Result<()> {
+pub fn write_entity_status(dir: &Path, status: DeployStatus) -> io::Result<()> {
     let status = match status {
         DeployStatus::Idle => "idle",
         DeployStatus::Building => "building",
@@ -47,5 +47,5 @@ pub async fn write_deploy_status(dir: &Path, status: DeployStatus) -> io::Result
 
     let path = dir.join(STATUS_FILE_NAME);
 
-    fs::write(path, status).await
+    fs::write(path, status)
 }
