@@ -89,6 +89,10 @@ impl AppEntity {
 
             // TODO: run
 
+            state.status = DeployStatus::Ready;
+            state.last_error = None;
+            let _ = state.save(&self.entity_dir);
+
             info!(entity = %self.name, version = %version, "deploy completed");
         });
 
