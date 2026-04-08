@@ -20,10 +20,12 @@ pub struct AppConfig {
     pub volumes: Vec<VolumeConfig>,
     #[serde(default)]
     pub exports: Vec<ExportConfig>,
+    #[serde(default)]
+    pub timers: Vec<TimerConfig>,
 }
 
 /// Configuration for a build layer of the application
-#[derive(Clone, Debug, Default, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct BuildLayerConfig {
     /// Files to include in the build layer
@@ -37,7 +39,7 @@ pub struct BuildLayerConfig {
 }
 
 /// Configuration for the runtime environment of the application
-#[derive(Clone, Debug, Default, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeConfig {
     /// Environment variables
@@ -60,11 +62,23 @@ pub struct VolumeConfig {
 }
 
 /// Exports static files from the container to the host
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ExportConfig {
     /// Path inside the container where static files located
     pub source: String,
     /// URL where the exported files will be accessible
     pub url: String,
+}
+
+/// Timers to start scripts periodically in the container
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TimerConfig {
+    /// Name of the timer
+    pub name: String,
+    /// Schedule for the timer in cron format
+    pub schedule: String,
+    /// Script to run
+    pub script: String,
 }

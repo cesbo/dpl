@@ -210,6 +210,7 @@ mod tests {
             },
             volumes: Vec::new(),
             exports: Vec::new(),
+            timers: Vec::new(),
         };
 
         let name = "demo-app";
