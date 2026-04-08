@@ -2,6 +2,7 @@ FROM {{ image }}
 WORKDIR /app
 RUN mkdir -p /opt/dpl
 {% for layer in layers -%}
+# Build Layer {{ loop.index }}
 {% for file in layer.files -%}
 {% if file == "*" %}
 COPY app/ /app/
@@ -15,6 +16,7 @@ COPY app/{{ file }} /app/{{ file }}
 RUN --mount=type=secret,id={{ name }} /bin/sh {{ path }}
 {% endif %}
 {% endfor -%}
+# Runtime
 COPY run.sh /opt/dpl/run.sh
 EXPOSE {{ port }}
 CMD ["/bin/sh", "/opt/dpl/run.sh"]

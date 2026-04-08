@@ -160,16 +160,25 @@ mod tests {
             image: "ghcr.io/example/demo:latest".into(),
             port: 8080,
             build: vec![
+                // without files
+                BuildLayerConfig {
+                    files: Vec::new(),
+                    env: BTreeMap::new(),
+                    script: Some("date".to_owned()),
+                },
+                // with some files
                 BuildLayerConfig {
                     files: vec!["package.json".to_owned(), "package-lock.json".to_owned()],
                     env: BTreeMap::new(),
                     script: Some("npm ci".to_owned()),
                 },
+                // without script
                 BuildLayerConfig {
                     files: vec!["test.txt".to_owned()],
                     env: BTreeMap::new(),
                     script: None,
                 },
+                // copy all
                 BuildLayerConfig {
                     files: vec!["*".to_owned()],
                     env: {
@@ -213,8 +222,9 @@ mod tests {
         assert!(entity_dir.join("Containerfile").exists());
         assert!(entity_dir.join("run.sh").exists());
         assert!(entity_dir.join("build-1.sh").exists());
-        assert!(!entity_dir.join("build-2.sh").exists());
-        assert!(entity_dir.join("build-3.sh").exists());
+        assert!(entity_dir.join("build-2.sh").exists());
+        assert!(!entity_dir.join("build-3.sh").exists());
+        assert!(entity_dir.join("build-4.sh").exists());
         assert!(entity_dir.join("app.service").exists());
     }
 }
