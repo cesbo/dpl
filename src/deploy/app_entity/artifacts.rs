@@ -56,7 +56,7 @@ pub struct ArtifactsContext<'a> {
 
 impl<'a> ArtifactsContext<'a> {
     pub async fn save(&self, dir: &Path) -> Result<(), ArtifactError> {
-        let path = dir.join("Containerfile");
+        let path = dir.join("containerfile");
         let content = render(
             CONTAINERFILE_TEMPLATE,
             context! {
@@ -219,7 +219,7 @@ mod tests {
 
         artifacts.save(&entity_dir).await.unwrap();
 
-        assert!(entity_dir.join("Containerfile").exists());
+        assert!(entity_dir.join("containerfile").exists());
         assert!(entity_dir.join("run.sh").exists());
         assert!(entity_dir.join("build-1.sh").exists());
         assert!(entity_dir.join("build-2.sh").exists());

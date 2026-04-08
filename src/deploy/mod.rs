@@ -6,8 +6,7 @@ mod entity;
 mod error;
 mod handlers;
 mod service;
-mod status;
-mod version;
+mod state;
 
 use config::*;
 pub use entity::{
@@ -17,5 +16,4 @@ pub use entity::{
 pub use error::DeployError;
 pub use handlers::router as deploy_router;
 pub use service::DeployService;
-use status::*;
-use version::*;
+use state::*;

@@ -35,9 +35,9 @@ use tracing::{
 use crate::{
     deploy::{
         DeployError,
+        DeployState,
         DeployStatus,
         load_entity_config,
-        write_entity_status,
     },
     error::ConfigError,
 };
@@ -66,13 +66,13 @@ impl AppEntity {
     where
         R: AsyncRead + Unpin + Send,
     {
-        let status = crate::deploy::read_entity_status(&self.dir)?;
+        let mut state = DeployState::load(&self.dir)?;
 
-        if status == crate::deploy::DeployStatus::Building {
+        if state.status == DeployStatus::Building {
             return Err(DeployError::EntityBusy);
         }
 
-        let version = crate::deploy::reserve_entity_version(&self.dir)?;
+        let version = state.bump_version()?;
 
         let deploy_dir = self.get_deploy_dir(version);
 
@@ -83,7 +83,9 @@ impl AppEntity {
                 source,
             })?;
 
-        write_entity_status(&self.dir, DeployStatus::Building)?;
+        state.status = DeployStatus::Building;
+        state.last_error = None;
+        state.save(&self.dir)?;
 
         let log_dir = deploy_dir.join("log");
         fs::create_dir(&log_dir)
@@ -144,11 +146,19 @@ impl AppEntity {
                 match do_deploy(&self.name, &deploy_dir, version) {
                     Ok(_) => {
                         info!("image built successfully");
-                        let _ = write_entity_status(&self.dir, DeployStatus::Ready);
+                        if let Ok(mut state) = DeployState::load(&self.dir) {
+                            state.status = DeployStatus::Ready;
+                            state.last_error = None;
+                            let _ = state.save(&self.dir);
+                        }
                     }
                     Err(err) => {
                         error!("deploy failed: {}", err);
-                        let _ = write_entity_status(&self.dir, DeployStatus::Failed);
+                        if let Ok(mut state) = DeployState::load(&self.dir) {
+                            state.status = DeployStatus::Failed;
+                            state.last_error = Some(err.to_string());
+                            let _ = state.save(&self.dir);
+                        }
                     }
                 }
             });
@@ -186,7 +196,7 @@ fn do_deploy(name: &str, deploy_dir: &Path, version: u32) -> Result<(), DeployEr
 
 fn podman_build(name: &str, deploy_dir: &Path, version: u32) -> io::Result<()> {
     let image_tag = format!("localhost/{name}:{version}");
-    let containerfile = deploy_dir.join("Containerfile");
+    let containerfile = deploy_dir.join("containerfile");
 
     let mut cmd = Command::new("podman");
     cmd.arg("build")

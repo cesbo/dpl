@@ -12,8 +12,7 @@ use thiserror::Error;
 
 use super::{
     EntityType,
-    status::StatusError,
-    version::VersionError,
+    state::DeployStateError,
 };
 use crate::{
     archive::ArchiveError,
@@ -27,9 +26,7 @@ pub enum DeployError {
     #[error("entity not found")]
     EntityNotFound,
     #[error("{0}")]
-    Version(#[from] VersionError),
-    #[error("{0}")]
-    Status(#[from] StatusError),
+    Status(#[from] DeployStateError),
     #[error("unexpected entity type, got {0}")]
     InvalidEntityType(EntityType),
     #[error("entity busy")]

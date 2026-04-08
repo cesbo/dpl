@@ -29,15 +29,15 @@ use super::{
 pub fn router() -> Router<Arc<DeployService>> {
     Router::new()
         .route("/{name}", post(deploy_handler))
-        .route("/{name}/status", get(status_handler))
+        .route("/{name}/state", get(state_handler))
 }
 
-async fn status_handler(
+async fn state_handler(
     State(service): State<Arc<DeployService>>,
     Path(name): Path<String>,
 ) -> Result<impl IntoResponse, DeployError> {
-    let status = service.status(&name).await?;
-    Ok(Json(status))
+    let state = service.state(&name).await?;
+    Ok(Json(state))
 }
 
 async fn deploy_handler(
