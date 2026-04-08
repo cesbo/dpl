@@ -66,6 +66,9 @@ impl AppEntity {
         }
 
         let version = state.bump_version()?;
+
+        info!(entity = %self.name, version = %version, "deploy started");
+
         state.status = DeployStatus::Building;
         state.last_error = None;
         state.save(&self.entity_dir)?;
