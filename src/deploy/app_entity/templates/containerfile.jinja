@@ -3,7 +3,7 @@ WORKDIR /app
 RUN mkdir -p /opt/dpl
 {% for layer in layers -%}
 {% for file in layer.files -%}
-{% if file == "." %}
+{% if file == "*" %}
 COPY app/ /app/
 {% else %}
 COPY app/{{ file }} /app/{{ file }}

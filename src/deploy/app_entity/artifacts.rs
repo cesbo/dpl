@@ -171,7 +171,7 @@ mod tests {
                     script: None,
                 },
                 BuildLayerConfig {
-                    files: vec![".".to_owned()],
+                    files: vec!["*".to_owned()],
                     env: {
                         let mut map = BTreeMap::new();
                         map.insert("SITE_ID".to_owned(), "hello-world".to_owned());
