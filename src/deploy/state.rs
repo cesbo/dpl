@@ -40,8 +40,8 @@ pub enum DeployStateError {
 }
 
 impl DeployState {
-    pub fn load(dir: &Path) -> Result<Self, DeployStateError> {
-        let path = dir.join(STATE_FILE_NAME);
+    pub fn load(entity_dir: &Path) -> Result<Self, DeployStateError> {
+        let path = entity_dir.join(STATE_FILE_NAME);
 
         let content = match fs::read_to_string(&path) {
             Ok(content) => content,
@@ -59,8 +59,8 @@ impl DeployState {
             .map_err(|err| DeployStateError::Read(io::Error::new(io::ErrorKind::InvalidData, err)))
     }
 
-    pub fn save(&self, dir: &Path) -> Result<(), DeployStateError> {
-        let path = dir.join(STATE_FILE_NAME);
+    pub fn save(&self, entity_dir: &Path) -> Result<(), DeployStateError> {
+        let path = entity_dir.join(STATE_FILE_NAME);
         let content = serde_yaml::to_string(self).map_err(|err| {
             DeployStateError::Write(io::Error::new(io::ErrorKind::InvalidData, err))
         })?;

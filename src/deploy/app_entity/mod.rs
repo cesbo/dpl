@@ -35,8 +35,6 @@ use tracing::{
 use crate::{
     deploy::{
         DeployError,
-        DeployState,
-        DeployStatus,
         load_entity_config,
     },
     error::ConfigError,
@@ -44,37 +42,27 @@ use crate::{
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppEntity {
-    pub dir: PathBuf,
     pub name: String,
+    pub entity_dir: PathBuf,
     pub config: AppConfig,
 }
 
 impl AppEntity {
-    fn get_deploy_dir(&self, version: u32) -> PathBuf {
-        let deploy_dir_name = format!("deploy_{version}");
-        self.dir.join(deploy_dir_name)
+    pub async fn load(name: &str, entity_dir: &Path) -> Result<Self, ConfigError> {
+        let config: AppConfig = load_entity_config(entity_dir).await?;
+
+        Ok(AppEntity {
+            name: name.into(),
+            entity_dir: entity_dir.into(),
+            config,
+        })
     }
 
-    pub async fn load(name: &str, dir: PathBuf) -> Result<Self, ConfigError> {
-        let name = name.to_owned();
-        let config: AppConfig = load_entity_config(&dir).await?;
-
-        Ok(AppEntity { dir, name, config })
-    }
-
-    pub async fn prepare<R>(&self, archive: R) -> Result<u32, DeployError>
+    pub async fn prepare<R>(&self, version: u32, archive: R) -> Result<(), DeployError>
     where
         R: AsyncRead + Unpin + Send,
     {
-        let mut state = DeployState::load(&self.dir)?;
-
-        if state.status == DeployStatus::Building {
-            return Err(DeployError::EntityBusy);
-        }
-
-        let version = state.bump_version()?;
-
-        let deploy_dir = self.get_deploy_dir(version);
+        let deploy_dir = self.entity_dir.join(format!("deploy_{version}"));
 
         fs::create_dir(&deploy_dir)
             .await
@@ -82,10 +70,6 @@ impl AppEntity {
                 info: "failed to create deploy directory".to_string(),
                 source,
             })?;
-
-        state.status = DeployStatus::Building;
-        state.last_error = None;
-        state.save(&self.dir)?;
 
         let log_dir = deploy_dir.join("log");
         fs::create_dir(&log_dir)
@@ -111,12 +95,13 @@ impl AppEntity {
                 source,
             })?;
 
-        let port = port::get_port(&self.dir)
-            .await
-            .map_err(|source| DeployError::EntityError {
-                info: "failed to get port".to_string(),
-                source,
-            })?;
+        let port =
+            port::get_port(&self.entity_dir)
+                .await
+                .map_err(|source| DeployError::EntityError {
+                    info: "failed to get port".to_string(),
+                    source,
+                })?;
 
         let artifacts = ArtifactsContext {
             name: &self.name,
@@ -126,43 +111,31 @@ impl AppEntity {
         };
         artifacts.save(&deploy_dir).await?;
 
-        Ok(version)
+        Ok(())
     }
 
-    pub fn deploy(self, version: u32) {
-        info!(entity = %self.name, version, "starting background deploy");
+    pub fn build(self, version: u32) -> Result<(), DeployError> {
+        let deploy_dir = self.entity_dir.join(format!("deploy_{version}"));
+        let log_path = deploy_dir.join("log").join("build.log");
 
-        tokio::task::spawn_blocking(move || {
-            let deploy_dir = self.get_deploy_dir(version);
-            let log_path = deploy_dir.join("log").join("build.log");
+        let log_file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&log_path)
+            .unwrap();
 
-            let log_file = std::fs::OpenOptions::new()
-                .append(true)
-                .open(&log_path)
-                .unwrap();
-
-            let subscriber = build_log_subscriber(log_file);
-            tracing::subscriber::with_default(subscriber, || {
-                match do_deploy(&self.name, &deploy_dir, version) {
-                    Ok(_) => {
-                        info!("image built successfully");
-                        if let Ok(mut state) = DeployState::load(&self.dir) {
-                            state.status = DeployStatus::Ready;
-                            state.last_error = None;
-                            let _ = state.save(&self.dir);
-                        }
-                    }
-                    Err(err) => {
-                        error!("deploy failed: {}", err);
-                        if let Ok(mut state) = DeployState::load(&self.dir) {
-                            state.status = DeployStatus::Failed;
-                            state.last_error = Some(err.to_string());
-                            let _ = state.save(&self.dir);
-                        }
-                    }
+        let subscriber = build_log_subscriber(log_file);
+        tracing::subscriber::with_default(subscriber, || {
+            match do_build(&self.name, &deploy_dir, version) {
+                Ok(_) => {
+                    info!("app image built successfully");
+                    Ok(())
                 }
-            });
-        });
+                Err(err) => {
+                    error!(error = %err, "app image build failed");
+                    Err(err)
+                }
+            }
+        })
     }
 }
 
@@ -176,7 +149,7 @@ fn build_log_subscriber(file: std::fs::File) -> impl tracing::Subscriber {
         .finish()
 }
 
-fn do_deploy(name: &str, deploy_dir: &Path, version: u32) -> Result<(), DeployError> {
+fn do_build(name: &str, deploy_dir: &Path, version: u32) -> Result<(), DeployError> {
     info!("build started for {}", name);
 
     let archive_path = deploy_dir.join("app.tar.gz");
@@ -186,7 +159,7 @@ fn do_deploy(name: &str, deploy_dir: &Path, version: u32) -> Result<(), DeployEr
 
     info!("archive extracted");
 
-    podman_build(name, &deploy_dir, version).map_err(|source| DeployError::EntityError {
+    podman_build(name, deploy_dir, version).map_err(|source| DeployError::EntityError {
         info: "failed to build image".to_string(),
         source,
     })?;

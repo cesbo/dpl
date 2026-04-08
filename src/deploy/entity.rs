@@ -1,4 +1,7 @@
-use std::fmt;
+use std::{
+    fmt,
+    path::Path,
+};
 
 use serde::Deserialize;
 
@@ -41,9 +44,8 @@ pub enum DeployEntity {
 }
 
 impl DeployEntity {
-    pub async fn load(name: &str) -> Result<Self, DeployError> {
-        let dir = crate::config::ENV.base_dir.join(name);
-        let meta: EntityMeta = load_entity_config(&dir).await.map_err(|err| {
+    pub async fn load(name: &str, entity_dir: &Path) -> Result<Self, DeployError> {
+        let meta: EntityMeta = load_entity_config(entity_dir).await.map_err(|err| {
             if err.is_not_found() {
                 DeployError::EntityNotFound
             } else {
@@ -52,7 +54,7 @@ impl DeployEntity {
         })?;
         match meta.entity_type {
             EntityType::App => {
-                let entity = AppEntity::load(name, dir).await?;
+                let entity = AppEntity::load(name, entity_dir).await?;
                 Ok(Self::App(entity))
             }
             _ => unimplemented!(),
