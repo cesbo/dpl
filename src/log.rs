@@ -17,7 +17,7 @@ pub fn init_tracing() {
 }
 
 pub fn init_tracing_log(path: &Path) -> io::Result<impl tracing::Subscriber> {
-    let file = std::fs::OpenOptions::new().append(true).open(&path)?;
+    let file = std::fs::OpenOptions::new().append(true).open(path)?;
 
     let subscriber = tracing_subscriber::fmt::Subscriber::builder()
         .with_writer(Mutex::new(file))
