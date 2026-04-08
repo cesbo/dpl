@@ -1,24 +1,19 @@
 mod artifacts;
 mod model;
+mod podman;
 mod port;
 
 use std::{
-    io::{
-        self,
-        BufRead,
-    },
+    io,
     path::{
         Path,
         PathBuf,
-    },
-    process::{
-        Command,
-        Stdio,
     },
 };
 
 use artifacts::ArtifactsContext;
 use model::AppConfig;
+use podman::PodmanContext;
 use tokio::{
     fs,
     io::{
@@ -182,105 +177,23 @@ impl AppEntity {
         let app_dir = deploy_dir.join("app");
 
         crate::archive::extract(&archive_path, &app_dir)?;
-
         info!("archive extracted");
 
-        podman_build(&self.name, deploy_dir, version).map_err(|source| {
-            DeployError::EntityError {
-                info: "failed to build image".to_string(),
-                source,
-            }
+        let ctx = PodmanContext::new(&self.name, deploy_dir, version);
+
+        ctx.build().map_err(|source| DeployError::EntityError {
+            info: "failed to build image".to_string(),
+            source,
         })?;
+
+        ctx.export(&self.config.exports)
+            .map_err(|source| DeployError::EntityError {
+                info: "failed to export static files".to_string(),
+                source,
+            })?;
 
         Ok(())
     }
-}
-
-fn log_podman_output<R>(reader: R, stream: &'static str)
-where
-    R: io::Read,
-{
-    let reader = io::BufReader::new(reader);
-
-    for line in reader.lines() {
-        let Ok(line) = line else {
-            break;
-        };
-        info!(target: "podman_build", stream, line);
-    }
-}
-
-fn podman_build(name: &str, deploy_dir: &Path, version: u32) -> io::Result<()> {
-    let image_tag = format!("localhost/{name}:{version}");
-    let containerfile = deploy_dir.join("containerfile");
-    let dispatch = tracing::dispatcher::get_default(|dispatch| dispatch.clone());
-
-    let mut cmd = Command::new("podman");
-    cmd.arg("build")
-        .arg("--rm")
-        .arg("--force-rm")
-        .arg("--no-cache");
-
-    let mut secrets: Vec<_> = std::fs::read_dir(deploy_dir)?
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let path = entry.path();
-            let name = path.file_name()?.to_str()?;
-            if name.starts_with("build-") && name.ends_with(".sh") {
-                let id = name.strip_suffix(".sh")?.to_owned();
-                Some((id, path))
-            } else {
-                None
-            }
-        })
-        .collect();
-    secrets.sort();
-
-    for (id, path) in &secrets {
-        cmd.arg("--secret")
-            .arg(format!("id={id},src={}", path.display()));
-    }
-
-    cmd.arg("--file")
-        .arg(&containerfile)
-        .arg("--tag")
-        .arg(&image_tag)
-        .arg(deploy_dir);
-
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-
-    info!("running: podman build --tag {image_tag}");
-
-    let mut child = cmd.spawn()?;
-
-    let stdout = child.stdout.take().unwrap();
-    let stdout_dispatch = dispatch.clone();
-    let stdout_handle = std::thread::spawn(move || {
-        tracing::dispatcher::with_default(&stdout_dispatch, || {
-            log_podman_output(stdout, "stdout");
-        });
-    });
-
-    let stderr = child.stderr.take().unwrap();
-    let stderr_dispatch = dispatch.clone();
-    let stderr_handle = std::thread::spawn(move || {
-        tracing::dispatcher::with_default(&stderr_dispatch, || {
-            log_podman_output(stderr, "stderr");
-        });
-    });
-
-    let _ = stdout_handle.join();
-    let _ = stderr_handle.join();
-
-    let status = child.wait()?;
-    if !status.success() {
-        return Err(io::Error::other(format!(
-            "podman build exited with {status}"
-        )));
-    }
-
-    Ok(())
 }
 
 async fn save_archive<R>(archive: R, dst: &Path) -> io::Result<()>
