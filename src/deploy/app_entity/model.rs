@@ -45,7 +45,7 @@ pub struct RuntimeConfig {
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct VolumeConfig {
-    pub id: String,
+    pub name: String,
     pub path: String,
 }
 

@@ -11,6 +11,7 @@ use std::{
     },
 };
 
+use cuid::cuid2;
 use flate2::read::GzDecoder;
 use tar::EntryType;
 use thiserror::Error;
@@ -105,7 +106,8 @@ fn flatten_top_level(dir: &Path) -> Result<(), ArchiveError> {
     let parent = dir.parent().ok_or_else(|| {
         ArchiveError::Flatten(io::Error::new(io::ErrorKind::InvalidInput, "no parent dir"))
     })?;
-    let tmp = parent.join(format!(".flatten_{}", std::process::id()));
+
+    let tmp = parent.join(format!(".flatten_{}", cuid2()));
 
     fs::rename(&nested, &tmp).map_err(ArchiveError::Flatten)?;
     fs::remove_dir(dir).map_err(ArchiveError::Flatten)?;
