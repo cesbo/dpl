@@ -146,7 +146,8 @@ impl<'a> PodmanContext<'a> {
                 std::fs::create_dir(&dst)?;
             }
 
-            let src = format!("{}:{}", container, export.source);
+            let source = export.source.trim_end_matches('/');
+            let src = format!("{container}:{source}/.");
 
             let output = Command::new("podman")
                 .args(["cp", "-a", "--overwrite", &src, &dst.to_string_lossy()])
