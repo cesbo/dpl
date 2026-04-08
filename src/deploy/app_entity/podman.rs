@@ -37,7 +37,8 @@ impl<'a> PodmanContext<'a> {
 
     /// Build podman image
     pub fn build(&self) -> io::Result<()> {
-        let containerfile = self.deploy_dir.join("containerfile");
+        let artifacts_dir = self.deploy_dir.join("artifacts");
+        let containerfile = artifacts_dir.join("containerfile");
         let dispatch = tracing::dispatcher::get_default(|dispatch| dispatch.clone());
 
         let mut cmd = Command::new("podman");
@@ -46,7 +47,7 @@ impl<'a> PodmanContext<'a> {
             .arg("--force-rm")
             .arg("--no-cache");
 
-        let mut secrets: Vec<_> = std::fs::read_dir(self.deploy_dir)?
+        let mut secrets: Vec<_> = std::fs::read_dir(&artifacts_dir)?
             .filter_map(|entry| {
                 let entry = entry.ok()?;
                 let path = entry.path();

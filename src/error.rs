@@ -29,6 +29,12 @@ impl ConfigError {
 
 #[derive(Debug, Error)]
 pub enum ArtifactError {
+    #[error("create artifacts directory {path}: {source}")]
+    CreateDir {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
     #[error("render template {name}: {source}")]
     Render {
         name: String,

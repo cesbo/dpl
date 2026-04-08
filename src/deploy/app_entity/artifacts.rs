@@ -55,8 +55,17 @@ pub struct ArtifactsContext<'a> {
 }
 
 impl<'a> ArtifactsContext<'a> {
-    pub async fn save(&self, dir: &Path) -> Result<(), ArtifactError> {
-        let path = dir.join("containerfile");
+    pub async fn save(&self, deploy_dir: &Path) -> Result<(), ArtifactError> {
+        let artifacts_dir = deploy_dir.join("artifacts");
+
+        if let Err(source) = fs::create_dir_all(&artifacts_dir).await {
+            return Err(ArtifactError::CreateDir {
+                path: artifacts_dir,
+                source,
+            });
+        }
+
+        let path = artifacts_dir.join("containerfile");
         let content = render(
             CONTAINERFILE_TEMPLATE,
             context! {
@@ -67,7 +76,7 @@ impl<'a> ArtifactsContext<'a> {
         )?;
         Self::write_artifact(path, content).await?;
 
-        let path = dir.join("run.sh");
+        let path = artifacts_dir.join("run.sh");
         let content = render(
             RUN_SH_TEMPLATE,
             context! {
@@ -83,7 +92,7 @@ impl<'a> ArtifactsContext<'a> {
                 continue;
             };
 
-            let path = dir.join(format!("build-{}.sh", index + 1));
+            let path = artifacts_dir.join(format!("build-{}.sh", index + 1));
             let content = render(
                 BUILD_SH_TEMPLATE,
                 context! {
@@ -95,7 +104,7 @@ impl<'a> ArtifactsContext<'a> {
         }
 
         let image_tag = format!("{}:{}", &self.name, self.version);
-        let path = dir.join("app.service");
+        let path = artifacts_dir.join("app.service");
         let content = render(
             SERVICEFILE_TEMPLATE,
             context! {
@@ -205,8 +214,8 @@ mod tests {
 
         let name = "demo-app";
         let temp_dir = tempdir().unwrap();
-        let entity_dir = temp_dir.path().join(name);
-        fs::create_dir_all(&entity_dir).await.unwrap();
+        let deploy_dir = temp_dir.path().join(name);
+        fs::create_dir_all(&deploy_dir).await.unwrap();
 
         let artifacts = ArtifactsContext {
             name,
@@ -215,14 +224,15 @@ mod tests {
             port: 32323,
         };
 
-        artifacts.save(&entity_dir).await.unwrap();
+        artifacts.save(&deploy_dir).await.unwrap();
 
-        assert!(entity_dir.join("containerfile").exists());
-        assert!(entity_dir.join("run.sh").exists());
-        assert!(entity_dir.join("build-1.sh").exists());
-        assert!(entity_dir.join("build-2.sh").exists());
-        assert!(!entity_dir.join("build-3.sh").exists());
-        assert!(entity_dir.join("build-4.sh").exists());
-        assert!(entity_dir.join("app.service").exists());
+        let artifacts_dir = deploy_dir.join("artifacts");
+        assert!(artifacts_dir.join("containerfile").exists());
+        assert!(artifacts_dir.join("run.sh").exists());
+        assert!(artifacts_dir.join("build-1.sh").exists());
+        assert!(artifacts_dir.join("build-2.sh").exists());
+        assert!(!artifacts_dir.join("build-3.sh").exists());
+        assert!(artifacts_dir.join("build-4.sh").exists());
+        assert!(artifacts_dir.join("app.service").exists());
     }
 }
