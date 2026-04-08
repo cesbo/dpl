@@ -199,8 +199,6 @@ mod tests {
                 init: Some("npm run static-generate\nnpm run migrate".to_owned()),
                 cmd: "demo-server".to_owned(),
             },
-            domain: None,
-            route: None,
             volumes: Vec::new(),
             exports: Vec::new(),
         };
