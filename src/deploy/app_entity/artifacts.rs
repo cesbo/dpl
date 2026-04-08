@@ -202,7 +202,7 @@ mod tests {
             domain: None,
             route: None,
             volumes: Vec::new(),
-            public: None,
+            exports: Vec::new(),
         };
 
         let name = "demo-app";

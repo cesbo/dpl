@@ -20,7 +20,8 @@ pub struct AppConfig {
     pub route: Option<String>,
     #[serde(default)]
     pub volumes: Vec<VolumeConfig>,
-    pub public: Option<PublicConfig>,
+    #[serde(default)]
+    pub exports: Vec<ExportConfig>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, Eq, PartialEq)]
@@ -49,16 +50,9 @@ pub struct VolumeConfig {
     pub path: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct PublicConfig {
-    #[serde(default)]
-    pub dirs: Vec<PublicDirConfig>,
-}
-
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct PublicDirConfig {
+pub struct ExportConfig {
     pub path: String,
     pub url: String,
 }
