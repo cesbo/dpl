@@ -167,6 +167,20 @@ fn do_build(name: &str, deploy_dir: &Path, version: u32) -> Result<(), DeployErr
     Ok(())
 }
 
+fn log_podman_output<R>(reader: R, stream: &'static str)
+where
+    R: io::Read,
+{
+    let reader = io::BufReader::new(reader);
+
+    for line in reader.lines() {
+        let Ok(line) = line else {
+            break;
+        };
+        info!(target: "podman_build", stream, line);
+    }
+}
+
 fn podman_build(name: &str, deploy_dir: &Path, version: u32) -> io::Result<()> {
     let image_tag = format!("localhost/{name}:{version}");
     let containerfile = deploy_dir.join("containerfile");
@@ -214,17 +228,11 @@ fn podman_build(name: &str, deploy_dir: &Path, version: u32) -> io::Result<()> {
     let stderr = child.stderr.take().unwrap();
 
     let stdout_handle = std::thread::spawn(move || {
-        let reader = io::BufReader::new(stdout);
-        for line in reader.lines().flatten() {
-            info!(target: "podman_build", "{line}");
-        }
+        log_podman_output(stdout, "stdout");
     });
 
     let stderr_handle = std::thread::spawn(move || {
-        let reader = io::BufReader::new(stderr);
-        for line in reader.lines().flatten() {
-            info!(target: "podman_build", "{line}");
-        }
+        log_podman_output(stderr, "stderr");
     });
 
     let _ = stdout_handle.join();
