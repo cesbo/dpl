@@ -15,7 +15,6 @@ use std::{
         Command,
         Stdio,
     },
-    sync::Mutex,
 };
 
 use artifacts::ArtifactsContext;
@@ -36,6 +35,10 @@ use crate::{
     deploy::{
         DeployError,
         load_entity_config,
+        state::{
+            DeployState,
+            DeployStatus,
+        },
     },
     error::ConfigError,
 };
@@ -58,7 +61,46 @@ impl AppEntity {
         })
     }
 
-    pub async fn prepare<R>(&self, version: u32, archive: R) -> Result<(), DeployError>
+    pub async fn deploy<R>(self, archive: R) -> Result<u32, DeployError>
+    where
+        R: AsyncRead + Unpin + Send,
+    {
+        let mut state = DeployState::load(&self.entity_dir)?;
+        if state.status == DeployStatus::Building {
+            return Err(DeployError::EntityBusy);
+        }
+
+        let version = state.bump_version()?;
+        state.status = DeployStatus::Building;
+        state.last_error = None;
+        state.save(&self.entity_dir)?;
+
+        if let Err(err) = self.prepare(version, archive).await {
+            error!(entity = %self.name, error = %err, "prepare app deploy");
+            state.status = DeployStatus::Failed;
+            state.last_error = Some(err.to_string());
+            let _ = state.save(&self.entity_dir);
+            return Err(err);
+        }
+
+        tokio::task::spawn_blocking(move || {
+            if let Err(err) = self.build_worker(version) {
+                error!(entity = %self.name, error = %err, "build app image");
+                state.status = DeployStatus::Failed;
+                state.last_error = Some(err.to_string());
+                let _ = state.save(&self.entity_dir);
+                return;
+            }
+
+            // TODO: run
+
+            info!(entity = %self.name, version = %version, "deploy completed");
+        });
+
+        Ok(version)
+    }
+
+    async fn prepare<R>(&self, version: u32, archive: R) -> Result<(), DeployError>
     where
         R: AsyncRead + Unpin + Send,
     {
@@ -114,18 +156,13 @@ impl AppEntity {
         Ok(())
     }
 
-    pub fn build(self, version: u32) -> Result<(), DeployError> {
+    fn build_worker(&self, version: u32) -> Result<(), DeployError> {
         let deploy_dir = self.entity_dir.join(format!("deploy_{version}"));
         let log_path = deploy_dir.join("log").join("build.log");
 
-        let log_file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&log_path)
-            .unwrap();
-
-        let subscriber = build_log_subscriber(log_file);
+        let subscriber = crate::log::init_tracing_log(&log_path).unwrap();
         tracing::subscriber::with_default(subscriber, || {
-            match do_build(&self.name, &deploy_dir, version) {
+            match self.build_inner(&deploy_dir, version) {
                 Ok(_) => {
                     info!("app image built successfully");
                     Ok(())
@@ -137,34 +174,26 @@ impl AppEntity {
             }
         })
     }
-}
 
-fn build_log_subscriber(file: std::fs::File) -> impl tracing::Subscriber {
-    tracing_subscriber::fmt::Subscriber::builder()
-        .with_writer(Mutex::new(file))
-        .with_ansi(false)
-        .with_target(false)
-        .with_file(false)
-        .with_line_number(false)
-        .finish()
-}
+    fn build_inner(&self, deploy_dir: &Path, version: u32) -> Result<(), DeployError> {
+        info!("build started for {}", self.name);
 
-fn do_build(name: &str, deploy_dir: &Path, version: u32) -> Result<(), DeployError> {
-    info!("build started for {}", name);
+        let archive_path = deploy_dir.join("app.tar.gz");
+        let app_dir = deploy_dir.join("app");
 
-    let archive_path = deploy_dir.join("app.tar.gz");
-    let app_dir = deploy_dir.join("app");
+        crate::archive::extract(&archive_path, &app_dir)?;
 
-    crate::archive::extract(&archive_path, &app_dir)?;
+        info!("archive extracted");
 
-    info!("archive extracted");
+        podman_build(&self.name, deploy_dir, version).map_err(|source| {
+            DeployError::EntityError {
+                info: "failed to build image".to_string(),
+                source,
+            }
+        })?;
 
-    podman_build(name, deploy_dir, version).map_err(|source| DeployError::EntityError {
-        info: "failed to build image".to_string(),
-        source,
-    })?;
-
-    Ok(())
+        Ok(())
+    }
 }
 
 fn log_podman_output<R>(reader: R, stream: &'static str)
@@ -184,6 +213,7 @@ where
 fn podman_build(name: &str, deploy_dir: &Path, version: u32) -> io::Result<()> {
     let image_tag = format!("localhost/{name}:{version}");
     let containerfile = deploy_dir.join("containerfile");
+    let dispatch = tracing::dispatcher::get_default(|dispatch| dispatch.clone());
 
     let mut cmd = Command::new("podman");
     cmd.arg("build")
@@ -225,14 +255,19 @@ fn podman_build(name: &str, deploy_dir: &Path, version: u32) -> io::Result<()> {
     let mut child = cmd.spawn()?;
 
     let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-
+    let stdout_dispatch = dispatch.clone();
     let stdout_handle = std::thread::spawn(move || {
-        log_podman_output(stdout, "stdout");
+        tracing::dispatcher::with_default(&stdout_dispatch, || {
+            log_podman_output(stdout, "stdout");
+        });
     });
 
+    let stderr = child.stderr.take().unwrap();
+    let stderr_dispatch = dispatch.clone();
     let stderr_handle = std::thread::spawn(move || {
-        log_podman_output(stderr, "stderr");
+        tracing::dispatcher::with_default(&stderr_dispatch, || {
+            log_podman_output(stderr, "stderr");
+        });
     });
 
     let _ = stdout_handle.join();

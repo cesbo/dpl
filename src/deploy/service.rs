@@ -11,16 +11,11 @@ use tokio::{
     io::AsyncRead,
     sync::Mutex as AsyncMutex,
 };
-use tracing::{
-    error,
-    info,
-};
 
 use super::{
     DeployEntity,
     DeployError,
     DeployState,
-    DeployStatus,
 };
 
 #[derive(Default)]
@@ -39,44 +34,9 @@ impl DeployService {
         let entity_dir = crate::config::ENV.base_dir.join(name);
         let entity = DeployEntity::load(name, &entity_dir).await?;
 
-        let name = name.to_owned();
-
-        let mut state = DeployState::load(&entity_dir)?;
-        if state.status == DeployStatus::Building {
-            return Err(DeployError::EntityBusy);
-        }
-        let version = state.bump_version()?;
-        state.status = DeployStatus::Building;
-        state.last_error = None;
-        state.save(&entity_dir)?;
-
-        info!(entity = %name, version = %version, "deploy started");
-
-        match entity {
-            DeployEntity::App(app) => {
-                if let Err(err) = app.prepare(version, archive).await {
-                    error!(entity = %name, error = %err, "prepare app deploy");
-                    state.status = DeployStatus::Failed;
-                    state.last_error = Some(err.to_string());
-                    let _ = state.save(&entity_dir);
-                    return Err(err);
-                }
-
-                tokio::task::spawn_blocking(move || {
-                    if let Err(err) = app.build(version) {
-                        error!(entity = %name, error = %err, "build app image");
-                        state.status = DeployStatus::Failed;
-                        state.last_error = Some(err.to_string());
-                        let _ = state.save(&entity_dir);
-                        return;
-                    }
-
-                    // TODO: run
-
-                    info!(entity = %name, version = %version, "deploy completed");
-                });
-            }
-        }
+        let version = match entity {
+            DeployEntity::App(app) => app.deploy(archive).await?,
+        };
 
         Ok(version)
     }
