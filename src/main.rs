@@ -14,6 +14,7 @@ use axum::{
     Router,
     middleware,
 };
+use clap::Parser;
 use deploy::{
     DeployService,
     deploy_router,
@@ -24,8 +25,21 @@ use tokio::{
 };
 use tracing::info;
 
+#[derive(Parser)]
+struct Cli {
+    #[arg(long = "version", short = None)]
+    version: bool,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let cli = Cli::parse();
+
+    if cli.version {
+        println!("dpl {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     log::init_tracing();
 
     let config = config::MainConfig::load()?;
