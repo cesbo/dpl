@@ -19,6 +19,8 @@ pub enum ConfigError {
         #[source]
         source: serde_yaml::Error,
     },
+    #[error("invalid configuration {path}: {info}")]
+    Invalid { path: PathBuf, info: String },
 }
 
 impl ConfigError {
