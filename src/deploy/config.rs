@@ -5,8 +5,8 @@ use tokio::fs;
 
 use crate::error::ConfigError;
 
-pub async fn load_entity_config<T: DeserializeOwned>(dir: &Path) -> Result<T, ConfigError> {
-    let path = dir.join("config.yaml");
+pub async fn load_entity_config<T: DeserializeOwned>(entity_dir: &Path) -> Result<T, ConfigError> {
+    let path = entity_dir.join("config.yaml");
 
     let content = match fs::read_to_string(&path).await {
         Ok(v) => v,

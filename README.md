@@ -1,6 +1,6 @@
 # dpl
 
-`dpl` is a deploy server.
+`dpl` is a deploy server written in Rust.
 
 ## Current Status
 
@@ -9,7 +9,7 @@ What works now:
 - `app` entities
 - Bearer auth from `auth.yaml`
 - `POST /deploy/{name}` to start a deploy
-- `GET /deploy/{name}/state` to read deploy state
+- `GET /deploy/{name}/state` to check deploy state
 - generated build artifacts in `deploy_N/artifacts/`
 - build logs in `deploy_N/log/build.log`
 - static file export from the built image into `deploy_N/exports/`
@@ -22,20 +22,19 @@ What is not done yet:
 - hashed auth keys
 - timers to execute scripts in app containers
 
-This means the project is already useful for preparing a deploy and building an image.
+The project is already useful for preparing a deploy and building an image.
 It is not yet a full end-to-end replacement for the old tool.
 
 ## What You Need
 
 - Linux with podman and systemd
 
-Set `DPL_BASE` to choose the base directory.
-If you do not set it, `dpl` uses `/opt/dpl`.
+Default base directory is `/opt/dpl`. You can change it with the `DPL_BASE` environment variable.
 
 The server reads its own config from:
 
 ```text
-{DPL_BASE}/config.yaml
+/opt/dpl/config.yaml
 ```
 
 If this file does not exist, `dpl` uses these defaults:
@@ -46,42 +45,15 @@ server:
   port: 3000
 ```
 
-## Quick Start
+## Auth Config
 
-### 1. Create the base folders
-
-```bash
-mkdir -p /opt/dpl/myapp
-```
-
-### 2. Create the server config
-
-File:
-
-```text
-/opt/dpl/config.yaml
-```
-
-Content:
-
-```yaml
-server:
-  addr: 0.0.0.0
-  port: 3000
-```
-
-### 3. Create the auth config
-
-All `/deploy` routes need a Bearer token.
-Today, tokens are stored in plain text.
-
-File:
+All `/deploy` routes need a Bearer token. Tokens are stored in a config file:
 
 ```text
 /opt/dpl/auth.yaml
 ```
 
-Content:
+Example:
 
 ```yaml
 keys:
@@ -91,13 +63,33 @@ keys:
     disabled: false
 ```
 
-Notes:
+Fields:
 
-- `name` must be unique inside `auth.yaml`
-- `apps` can contain app names or `"*"`
-- if `disabled` is `true`, the key is rejected
+- `name` - must be unique inside `auth.yaml`
+- `token` - plain-text Bearer token
+- `apps` - list of allowed app names. Use `"*"` to allow all apps
+- `disabled` - if `true`, the key is rejected
 
-### 4. Create the app config
+## Entity Config
+
+Each entity has its own directory under the base directory:
+
+```text
+/opt/dpl/{name}/
+```
+
+For example, an entity named `myapp` lives in `/opt/dpl/myapp/`. This path is referred to as `entity_dir` below.
+
+Common files in every entity directory:
+
+- `config.yaml` - entity config. The `type` field selects the entity kind (`app`, `domain`, `static`, `database`)
+- `state.yaml` - stores `version`, `status`, and optional `last_error`
+
+## App Entity
+
+An app entity represents a containerized application. When you deploy an app, `dpl` receives a `.tar.gz` archive with your source code, generates a `containerfile` from your config, builds a podman image, and optionally exports static files from the built image.
+
+### Configuration file
 
 File:
 
@@ -105,7 +97,7 @@ File:
 /opt/dpl/myapp/config.yaml
 ```
 
-Content:
+Example:
 
 ```yaml
 type: app
@@ -137,38 +129,58 @@ volumes:
 exports:
   - source: /app/public
     url: /static
+
+timers:
+  - name: cleanup
+    schedule: "0 3 * * *"
+    script: node cleanup.js
 ```
 
-How this config works:
+Fields:
 
-- `type` must be `app`
-- `image` is the base image in the generated `containerfile`
-- `port` is the app port your application listens on
-- `build` is a list of build layers
-- `runtime.cmd` is the main start command
-- `runtime.init` is an optional shell script that runs before `cmd`
-- `runtime.env` sets runtime environment variables
-- `volumes` are written into the generated service file
-- `exports` copies files from the built image into `deploy_N/exports/`
+- `type` - must be `app`
+- `image` - base image for the generated `containerfile`
+- `port` - port your application listens on
+- `build` - list of build layers (see below)
+- `runtime` - runtime configuration (see below)
+- `volumes` - persistent storage mounted into the container. Data in volumes survives redeploys
+- `exports` - copies files from the built image into `{deploy_dir}/exports/`
+- `timers` - periodic scripts to run in the container (not implemented yet)
 
-About build layers:
+Runtime fields:
 
-- `files` lists paths copied from the extracted archive into `/app`
-- use `"*"` to copy the whole extracted archive
-- `env` sets build-time environment variables for that layer script
-- `script` is a shell script for that layer
-- if `script` is missing, that layer only copies files
+- `env` - environment variables
+- `init` - optional shell script that runs before `cmd`
+- `cmd` - main start command
 
-Unknown YAML fields are rejected.
-This helps catch typos early.
+Build layer fields:
 
-### 5. Start the server
+- `files` - paths copied from the extracted archive into `/app`. Use `"*"` to copy all files
+- `env` - build-time environment variables for the layer script
+- `script` - shell script for the layer. If missing, the layer only copies files
+
+### Files
+
+- `{entity_dir}/port.txt` - persisted host port for the entity
+- `{entity_dir}/deploy_{version}/` - versioned deploy directory (referred to as `deploy_dir` below)
+
+deploy_dir layout:
+
+- `{deploy_dir}/app.tar.gz` - uploaded archive
+- `{deploy_dir}/app/` - extracted archive
+- `{deploy_dir}/artifacts/` - holds generated deploy files
+- `{deploy_dir}/exports/` - static files exported from the built image
+- `{deploy_dir}/log/build.log` - build log with podman build output
+
+## Start DPL
 
 ```bash
 dpl
 ```
 
-### 6. Pack your app and upload it
+## Deploy
+
+### Start deploy
 
 ```bash
 git archive --format=tar.gz HEAD | curl \
@@ -182,15 +194,15 @@ Example response:
 
 ```json
 {
-  "version": 1,
-  "status": "building"
+  "name": "myapp",
+  "version": 1
 }
 ```
 
-The request returns when the deploy is accepted.
+The request returns as soon as the deploy is accepted.
 The image build continues in the background.
 
-### 7. Check deploy state
+### Check deploy state
 
 ```bash
 curl \
@@ -198,7 +210,7 @@ curl \
   http://127.0.0.1:3000/deploy/myapp/state
 ```
 
-Example response while the build is running:
+Example response during the build:
 
 ```json
 {
@@ -238,12 +250,12 @@ Response:
 
 - `202 Accepted` with `{ "name": "...", "version": N }`
 
-Common errors:
+Errors:
 
-- `401` if the `Authorization` header is missing or broken
-- `403` if the token is valid but not allowed for this app
-- `404` if the app config does not exist
-- `409` if another deploy for the same app is already building
+- `401` - missing or invalid `Authorization` header
+- `403` - token is valid but not allowed for this app
+- `404` - app config does not exist
+- `409` - another deploy for the same app is already building
 
 ### `GET /deploy/{name}/state`
 
@@ -258,51 +270,14 @@ Response body:
 }
 ```
 
-## Files Written By dpl
-
-Current on-disk layout for one app looks like this:
-
-```text
-/opt/dpl/
-  config.yaml
-  auth.yaml
-  myapp/
-    config.yaml
-    port.txt
-    state.yaml
-    deploy_1/
-      app.tar.gz
-      app/
-      artifacts/
-        containerfile
-        build-1.sh
-        build-2.sh
-        run.sh
-        app.service
-      exports/
-      log/
-        build.log
-```
-
-Important files:
-
-- `state.yaml` stores `version`, `status`, and optional `last_error`
-- `port.txt` stores the chosen host port for this app
-- `deploy_N/app.tar.gz` is the uploaded archive
-- `deploy_N/app/` is the extracted archive
-- `deploy_N/artifacts/` holds generated deploy files
-- `deploy_N/log/build.log` stores Podman build output
-
-`app.service` is generated, but the current code does not install or start it yet.
-
 ## Notes
 
-- The app config is read fresh for each deploy request.
+- The app config is read fresh on each deploy request.
 - The auth config is loaded once on the first protected request. Restart `dpl` after changing `auth.yaml`.
 - Deploy state is stored on disk, not in memory.
-- If the archive has one top-level folder, `dpl` flattens it after extraction.
+- If the archive has a single top-level folder, `dpl` flattens it after extraction.
 - Exported files are copied from the built image after a successful build.
-- `timers` exist in the Rust config model, but the current deploy pipeline does not use them yet.
+- `timers` field is accepted in the config, but the deploy pipeline does not use it yet.
 
 ## Development
 

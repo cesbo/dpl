@@ -35,7 +35,7 @@ impl<'a> PodmanContext<'a> {
         }
     }
 
-    /// Build podman image
+    /// Build podman image, streams output into the build log.
     pub fn build(&self) -> io::Result<()> {
         let artifacts_dir = self.deploy_dir.join("artifacts");
         let containerfile = artifacts_dir.join("containerfile");
