@@ -39,17 +39,17 @@ pub async fn authorize_request(
 }
 
 fn resolve_protected_route(request: &Request) -> Result<String, AuthServiceError> {
-    let path = request.uri().path();
-
-    let segments: Vec<_> = path
+    let segments: Vec<_> = request
+        .uri()
+        .path()
         .trim_matches('/')
         .split('/')
         .filter(|segment| !segment.is_empty())
         .collect();
 
     match segments.as_slice() {
-        ["deploy", name] => Ok((*name).to_string()),
-        ["deploy", name, "state"] => Ok((*name).to_string()),
+        [name] => Ok((*name).to_string()),
+        [name, "state"] => Ok((*name).to_string()),
         _ => Err(AuthServiceError::InvalidRoute),
     }
 }
@@ -68,4 +68,48 @@ fn bearer_token(request: &Request) -> Result<&str, AuthServiceError> {
         .strip_prefix("Bearer ")
         .filter(|token| !token.is_empty())
         .ok_or(AuthServiceError::InvalidToken)
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{
+        body::Body,
+        http::Request,
+    };
+
+    use super::*;
+
+    #[test]
+    fn resolve_name_entity() {
+        let request = Request::builder()
+            .uri("/myapp")
+            .body(Body::empty())
+            .unwrap();
+
+        assert_eq!(resolve_protected_route(&request).unwrap(), "myapp");
+    }
+
+    #[test]
+    fn resolve_name_entity_state() {
+        let request = Request::builder()
+            .uri("/myapp/state")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(resolve_protected_route(&request).unwrap(), "myapp");
+    }
+
+    #[test]
+    fn resolve_name_empty_path() {
+        let request = Request::builder().uri("/").body(Body::empty()).unwrap();
+        assert!(resolve_protected_route(&request).is_err());
+    }
+
+    #[test]
+    fn resolve_name_unknown_suffix() {
+        let request = Request::builder()
+            .uri("/myapp/unknown")
+            .body(Body::empty())
+            .unwrap();
+        assert!(resolve_protected_route(&request).is_err());
+    }
 }
