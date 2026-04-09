@@ -21,7 +21,7 @@ pub async fn authorize_request(
     request: Request,
     next: Next,
 ) -> Response {
-    let name = match resolve_protected_route(&request) {
+    let name = match resolve_access_target(&request) {
         Ok(route) => route,
         Err(err) => return err.into_response(),
     };
@@ -38,7 +38,8 @@ pub async fn authorize_request(
     next.run(request).await
 }
 
-fn resolve_protected_route(request: &Request) -> Result<String, AuthServiceError> {
+/// Extract the entity name from the request path to check token permissions against.
+fn resolve_access_target(request: &Request) -> Result<String, AuthServiceError> {
     let segments: Vec<_> = request
         .uri()
         .path()
@@ -86,7 +87,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        assert_eq!(resolve_protected_route(&request).unwrap(), "myapp");
+        assert_eq!(resolve_access_target(&request).unwrap(), "myapp");
     }
 
     #[test]
@@ -95,13 +96,13 @@ mod tests {
             .uri("/myapp/state")
             .body(Body::empty())
             .unwrap();
-        assert_eq!(resolve_protected_route(&request).unwrap(), "myapp");
+        assert_eq!(resolve_access_target(&request).unwrap(), "myapp");
     }
 
     #[test]
     fn resolve_name_empty_path() {
         let request = Request::builder().uri("/").body(Body::empty()).unwrap();
-        assert!(resolve_protected_route(&request).is_err());
+        assert!(resolve_access_target(&request).is_err());
     }
 
     #[test]
@@ -110,6 +111,6 @@ mod tests {
             .uri("/myapp/unknown")
             .body(Body::empty())
             .unwrap();
-        assert!(resolve_protected_route(&request).is_err());
+        assert!(resolve_access_target(&request).is_err());
     }
 }

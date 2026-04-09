@@ -25,7 +25,7 @@ impl IntoResponse for AuthServiceError {
         let status = match self {
             Self::InvalidToken => StatusCode::UNAUTHORIZED,
             Self::PermissionDenied => StatusCode::FORBIDDEN,
-            Self::InvalidRoute => StatusCode::BAD_REQUEST,
+            Self::InvalidRoute => StatusCode::NOT_FOUND,
             Self::ServiceError => StatusCode::INTERNAL_SERVER_ERROR,
         };
 
