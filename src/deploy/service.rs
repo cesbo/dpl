@@ -3,24 +3,25 @@ use std::{
     sync::{
         Arc,
         Mutex,
+        atomic::AtomicBool,
     },
 };
 
 use tokio::{
     fs,
     io::AsyncRead,
-    sync::Mutex as AsyncMutex,
 };
 
 use super::{
     DeployEntity,
     DeployError,
     DeployState,
+    guard::BusyGuard,
 };
 
 #[derive(Default)]
 pub struct DeployService {
-    locks: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
+    locks: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 impl DeployService {
@@ -28,8 +29,7 @@ impl DeployService {
     where
         R: AsyncRead + Unpin + Send,
     {
-        let lock = self.entity_lock(name);
-        let _guard = lock.lock().await;
+        let _guard = self.entity_lock(name)?;
 
         let entity_dir = crate::config::ENV.base_dir.join(name);
         let entity = DeployEntity::load(name, &entity_dir).await?;
@@ -53,12 +53,15 @@ impl DeployService {
         Ok(state)
     }
 
-    fn entity_lock(&self, name: &str) -> Arc<AsyncMutex<()>> {
-        self.locks
+    fn entity_lock(&self, name: &str) -> Result<BusyGuard, DeployError> {
+        let busy = self
+            .locks
             .lock()
             .unwrap()
             .entry(name.to_owned())
-            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
-            .clone()
+            .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+            .clone();
+
+        BusyGuard::lock(busy)
     }
 }

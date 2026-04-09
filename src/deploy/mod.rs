@@ -4,6 +4,7 @@ pub mod app_entity;
 mod config;
 mod entity;
 mod error;
+mod guard;
 mod handlers;
 mod service;
 mod state;
