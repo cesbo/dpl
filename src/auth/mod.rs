@@ -46,7 +46,12 @@ impl AuthService {
             return Err(AuthServiceError::PermissionDenied);
         }
 
-        if !key.apps.iter().any(|allowed_app| allowed_app == app) {
+        let allow_app = key
+            .apps
+            .iter()
+            .any(|allowed_app| allowed_app == app || allowed_app == "*");
+
+        if !allow_app {
             return Err(AuthServiceError::PermissionDenied);
         }
 
