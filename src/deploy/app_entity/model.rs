@@ -8,9 +8,12 @@ use serde::{
     Serialize,
 };
 
-use crate::deploy::{
-    EntityType,
-    entity::validate_name,
+use crate::{
+    config::ValidateConfig,
+    deploy::{
+        EntityType,
+        entity::validate_name,
+    },
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -89,8 +92,8 @@ pub struct TimerConfig {
     pub script: String,
 }
 
-impl TimerConfig {
-    fn validate(&self) -> Result<(), String> {
+impl ValidateConfig for TimerConfig {
+    fn validate_config(&self) -> Result<(), String> {
         if !validate_name(&self.name) {
             return Err(format!("invalid timer name: '{}'", self.name));
         }
@@ -107,12 +110,12 @@ impl TimerConfig {
     }
 }
 
-impl AppConfig {
-    pub fn validate(&self) -> Result<(), String> {
+impl ValidateConfig for AppConfig {
+    fn validate_config(&self) -> Result<(), String> {
         let mut names = BTreeSet::new();
 
         for timer in &self.timers {
-            timer.validate()?;
+            timer.validate_config()?;
 
             if !names.insert(timer.name.as_str()) {
                 return Err(format!("duplicate timer name: {}", timer.name));

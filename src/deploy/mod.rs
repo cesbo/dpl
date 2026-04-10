@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
-pub mod app_entity;
-mod config;
+mod app_entity;
 mod entity;
 mod error;
 mod guard;
@@ -9,7 +8,6 @@ mod handlers;
 mod service;
 mod state;
 
-use config::*;
 pub use entity::{
     DeployEntity,
     EntityType,

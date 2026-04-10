@@ -27,10 +27,12 @@ use tracing::{
 };
 
 use crate::{
-    config::ConfigError,
+    config::{
+        ConfigError,
+        load_config,
+    },
     deploy::{
         DeployError,
-        load_entity_config,
         state::{
             DeployState,
             DeployStatus,
@@ -46,15 +48,9 @@ pub struct AppEntity {
 }
 
 impl AppEntity {
-    pub async fn load(name: &str, entity_dir: &Path) -> Result<Self, ConfigError> {
-        let config: AppConfig = load_entity_config(entity_dir).await?;
-
-        if let Err(info) = config.validate() {
-            return Err(ConfigError::Invalid {
-                path: entity_dir.join("config.yaml"),
-                info,
-            });
-        }
+    pub fn load(name: &str, entity_dir: &Path) -> Result<Self, ConfigError> {
+        let path = entity_dir.join("config.yaml");
+        let config: AppConfig = load_config(&path)?;
 
         Ok(AppEntity {
             name: name.into(),

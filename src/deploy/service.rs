@@ -32,7 +32,7 @@ impl DeployService {
         let _guard = self.entity_lock(name)?;
 
         let entity_dir = crate::config().base.join(name);
-        let entity = DeployEntity::load(name, &entity_dir).await?;
+        let entity = DeployEntity::load(name, &entity_dir)?;
 
         let state = match entity {
             DeployEntity::App(app) => app.deploy(archive).await?,
