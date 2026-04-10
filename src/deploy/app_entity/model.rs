@@ -8,7 +8,10 @@ use serde::{
     Serialize,
 };
 
-use crate::deploy::EntityType;
+use crate::deploy::{
+    EntityType,
+    entity::validate_name,
+};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -87,27 +90,8 @@ pub struct TimerConfig {
 }
 
 impl TimerConfig {
-    fn validate_name(&self) -> bool {
-        if self.name.is_empty() {
-            return false;
-        }
-
-        if self.name.starts_with('-') || self.name.ends_with('-') {
-            return false;
-        }
-
-        if self.name.contains("--") {
-            return false;
-        }
-
-        self.name
-            .as_bytes()
-            .iter()
-            .all(|&b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-    }
-
     fn validate(&self) -> Result<(), String> {
-        if !self.validate_name() {
+        if !validate_name(&self.name) {
             return Err(format!("invalid timer name: '{}'", self.name));
         }
 

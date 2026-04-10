@@ -23,6 +23,7 @@ use tokio_util::io::StreamReader;
 use super::{
     DeployError,
     DeployService,
+    entity::validate_name,
 };
 
 pub fn router() -> Router<Arc<DeployService>> {
@@ -35,6 +36,10 @@ async fn state_handler(
     State(service): State<Arc<DeployService>>,
     Path(name): Path<String>,
 ) -> Result<impl IntoResponse, DeployError> {
+    if !validate_name(&name) {
+        return Err(DeployError::InvalidEntityName);
+    }
+
     let state = service.state(&name).await?;
     Ok(state)
 }
@@ -44,6 +49,10 @@ async fn deploy_handler(
     Path(name): Path<String>,
     body: Body,
 ) -> Result<impl IntoResponse, DeployError> {
+    if !validate_name(&name) {
+        return Err(DeployError::InvalidEntityName);
+    }
+
     let stream = body.into_data_stream().map_err(io::Error::other);
     let reader = StreamReader::new(stream);
 

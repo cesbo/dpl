@@ -10,10 +10,7 @@ use axum::{
 };
 use thiserror::Error;
 
-use super::{
-    EntityType,
-    state::DeployStateError,
-};
+use super::state::DeployStateError;
 use crate::{
     archive::ArchiveError,
     error::ConfigError,
@@ -27,8 +24,8 @@ pub enum DeployError {
     EntityNotFound,
     #[error("{0}")]
     Status(#[from] DeployStateError),
-    #[error("unexpected entity type, got {0}")]
-    InvalidEntityType(EntityType),
+    #[error("invalid entity name")]
+    InvalidEntityName,
     #[error("entity busy")]
     EntityBusy,
     #[error("save artifacts: {0}")]
