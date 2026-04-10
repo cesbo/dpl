@@ -1,13 +1,17 @@
 pub mod archive;
 mod auth;
-mod config;
 mod deploy;
 pub mod error;
 mod log;
+mod model;
 
 use std::{
     error::Error,
-    sync::Arc,
+    path::PathBuf,
+    sync::{
+        Arc,
+        OnceLock,
+    },
 };
 
 use axum::{
@@ -25,10 +29,20 @@ use tokio::{
 };
 use tracing::info;
 
+use crate::model::MainConfig;
+
 #[derive(Parser)]
 struct Cli {
     #[arg(long = "version", short = None)]
     version: bool,
+    #[arg(long = "config", short = 'c', default_value = "/opt/dpl/config.yaml")]
+    config: PathBuf,
+}
+
+static CONFIG: OnceLock<MainConfig> = OnceLock::new();
+
+pub fn config() -> &'static MainConfig {
+    CONFIG.get().expect("config not initialized")
 }
 
 #[tokio::main]
@@ -42,8 +56,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     log::init_tracing();
 
-    let config = config::MainConfig::load()?;
-    let bind_target = format!("{}:{}", config.server.addr, config.server.port);
+    CONFIG.set(MainConfig::load(&cli.config)?).unwrap();
 
     let service = Arc::new(DeployService::default());
     let deploy_routes = deploy_router().route_layer(middleware::from_fn_with_state(
@@ -51,6 +64,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         auth::authorize_request,
     ));
 
+    let bind_target = format!("{}:{}", config().server.addr, config().server.port);
     let listener = TcpListener::bind(&bind_target).await?;
     let local_addr = listener.local_addr()?;
     let app = Router::new()

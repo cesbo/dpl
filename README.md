@@ -20,7 +20,7 @@ What is not done yet:
 - an HTTP endpoint for reading build logs
 - entity types `domain`, `static`, and `database`
 - hashed auth keys
-- timers to execute scripts in app containers
+- starting/restarting timers
 
 The project is already useful for preparing a deploy and building an image.
 It is not yet a full end-to-end replacement for the old tool.
@@ -29,17 +29,16 @@ It is not yet a full end-to-end replacement for the old tool.
 
 - Linux with podman and systemd
 
-Default base directory is `/opt/dpl`. You can change it with the `DPL_BASE` environment variable.
+The server reads its config from a YAML file. The path is set with `--config` / `-c` (default: `/opt/dpl/config.yaml`).
 
-The server reads its own config from:
-
-```text
-/opt/dpl/config.yaml
+```bash
+dpl --config /opt/dpl/config.yaml
 ```
 
 If this file does not exist, `dpl` uses these defaults:
 
 ```yaml
+base: /opt/dpl
 server:
   addr: 0.0.0.0
   port: 3000
@@ -47,11 +46,13 @@ server:
 
 ## Auth Config
 
-All `/deploy` routes need a Bearer token. Tokens are stored in a config file:
+All `/deploy` routes need a Bearer token. Tokens are stored in:
 
 ```text
-/opt/dpl/auth.yaml
+{config.base}/auth.yaml
 ```
+
+Where `{config.base}` is the `base` field from the config (default `/opt/dpl`).
 
 Example:
 
@@ -72,13 +73,13 @@ Fields:
 
 ## Entity Config
 
-Each entity has its own directory under the base directory:
+Each entity has its own directory under `{config.base}`:
 
 ```text
-/opt/dpl/{name}/
+{config.base}/{name}/
 ```
 
-For example, an entity named `myapp` lives in `/opt/dpl/myapp/`. This path is referred to as `entity_dir` below.
+For example, an entity named `myapp` with the default base lives in `/opt/dpl/myapp/`. This path is referred to as `entity_dir` below.
 
 Common files in every entity directory:
 
@@ -145,7 +146,7 @@ Fields:
 - `runtime` - runtime configuration (see below)
 - `volumes` - persistent storage mounted into the container. Data in volumes survives redeploys
 - `exports` - copies files from the built image into `{deploy_dir}/exports/`
-- `timers` - periodic scripts to run in the container (not implemented yet)
+- `timers` - periodic scripts to run in the container (timer systemd units are generated but not yet started)
 
 Runtime fields:
 
@@ -277,7 +278,7 @@ Response body:
 - Deploy state is stored on disk, not in memory.
 - If the archive has a single top-level folder, `dpl` flattens it after extraction.
 - Exported files are copied from the built image after a successful build.
-- `timers` field is accepted in the config, but the deploy pipeline does not use it yet.
+- `timers` field generates systemd timer/service units in artifacts, but they are not yet started or installed.
 
 ## Development
 
@@ -296,5 +297,5 @@ cargo test
 Run the server:
 
 ```bash
-cargo run
+cargo run -- --config config.yaml
 ```

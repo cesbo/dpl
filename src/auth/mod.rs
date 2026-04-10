@@ -60,7 +60,7 @@ impl AuthService {
 }
 
 fn load_config() -> Result<AuthConfig, ConfigError> {
-    let path = crate::config::ENV.base_dir.join("auth.yaml");
+    let path = crate::config().base.join("auth.yaml");
 
     let content = match fs::read_to_string(&path) {
         Ok(content) => content,

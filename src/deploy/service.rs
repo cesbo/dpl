@@ -31,7 +31,7 @@ impl DeployService {
     {
         let _guard = self.entity_lock(name)?;
 
-        let entity_dir = crate::config::ENV.base_dir.join(name);
+        let entity_dir = crate::config().base.join(name);
         let entity = DeployEntity::load(name, &entity_dir).await?;
 
         let state = match entity {
@@ -42,7 +42,7 @@ impl DeployService {
     }
 
     pub async fn state(&self, name: &str) -> Result<DeployState, DeployError> {
-        let dir = crate::config::ENV.base_dir.join(name);
+        let dir = crate::config().base.join(name);
 
         let config_path = dir.join("config.yaml");
         if fs::metadata(&config_path).await.is_err() {

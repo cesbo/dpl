@@ -6,7 +6,7 @@ Deploy server: accepts deploy archives over HTTP, generates build artifacts from
 
 ```bash
 cargo build          # Build
-cargo run            # Run server (config.yaml or default 0.0.0.0:3000)
+cargo run -- -c config.yaml  # Run server with config file
 cargo test           # Run all tests
 cargo test <name>    # Single test (e.g. cargo test render_templates)
 cargo clippy         # Lint
@@ -19,8 +19,8 @@ cargo clippy         # Lint
 
 ```
 src/
-  main.rs                  # Axum server setup, routes, signal handling
-  config.rs                # Global server config (DPL_BASE, bind address)
+  main.rs                  # Axum server setup, routes, signal handling, global config()
+  model.rs                 # MainConfig, ServerConfig — YAML config models
   archive.rs               # tar.gz extraction into deploy workspace
   error.rs                 # Top-level errors: ConfigError, ArtifactError, archive errors
   log.rs                   # Tracing/logging setup
@@ -80,7 +80,7 @@ Errors use `thiserror` with two layers:
 ### Current Limitations
 
 - Only `app` entities are implemented (no other entity types yet).
-- Auth: plain Bearer tokens from `{DPL_BASE}/auth.yaml`.
+- Auth: plain Bearer tokens from `{config.base}/auth.yaml`.
 - API: only `POST /deploy/{name}` and `GET /deploy/{name}/state`.
 - Systemd service file is generated but not installed or restarted.
 
