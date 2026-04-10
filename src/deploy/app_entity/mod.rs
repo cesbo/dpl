@@ -56,7 +56,7 @@ impl AppEntity {
         })
     }
 
-    pub async fn deploy<R>(self, archive: R) -> Result<u32, DeployError>
+    pub async fn deploy<R>(self, archive: R) -> Result<DeployState, DeployError>
     where
         R: AsyncRead + Unpin + Send,
     {
@@ -81,6 +81,8 @@ impl AppEntity {
             return Err(err);
         }
 
+        let result = state.clone();
+
         tokio::task::spawn_blocking(move || {
             if let Err(err) = self.build_worker(version) {
                 error!(entity = %self.name, error = %err, "build app image");
@@ -99,7 +101,7 @@ impl AppEntity {
             info!(entity = %self.name, version = %version, "deploy completed");
         });
 
-        Ok(version)
+        Ok(result)
     }
 
     async fn prepare<R>(&self, version: u32, archive: R) -> Result<(), DeployError>

@@ -4,7 +4,6 @@ use std::{
 };
 
 use axum::{
-    Json,
     Router,
     body::Body,
     extract::{
@@ -37,7 +36,7 @@ async fn state_handler(
     Path(name): Path<String>,
 ) -> Result<impl IntoResponse, DeployError> {
     let state = service.state(&name).await?;
-    Ok(Json(state))
+    Ok(state)
 }
 
 async fn deploy_handler(
@@ -48,10 +47,6 @@ async fn deploy_handler(
     let stream = body.into_data_stream().map_err(io::Error::other);
     let reader = StreamReader::new(stream);
 
-    let version = service.deploy(&name, reader).await?;
-
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(serde_json::json!({ "name": &name, "version": version })),
-    ))
+    let state = service.deploy(&name, reader).await?;
+    Ok((StatusCode::ACCEPTED, state))
 }

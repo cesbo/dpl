@@ -58,7 +58,7 @@ Example:
 ```yaml
 keys:
   - name: deploy-key
-    token: open-token
+    token: secret-token
     apps: [myapp]
     disabled: false
 ```
@@ -185,7 +185,7 @@ dpl
 ```bash
 git archive --format=tar.gz HEAD | curl \
   -X POST \
-  -H "Authorization: Bearer open-token" \
+  -H "Authorization: Bearer secret-token" \
   --data-binary @- \
   http://127.0.0.1:3000/deploy/myapp
 ```
@@ -194,8 +194,8 @@ Example response:
 
 ```json
 {
-  "name": "myapp",
-  "version": 1
+  "version": 1,
+  "status": "building"
 }
 ```
 
@@ -206,7 +206,7 @@ The image build continues in the background.
 
 ```bash
 curl \
-  -H "Authorization: Bearer open-token" \
+  -H "Authorization: Bearer secret-token" \
   http://127.0.0.1:3000/deploy/myapp/state
 ```
 
@@ -248,7 +248,7 @@ Request body:
 
 Response:
 
-- `202 Accepted` with `{ "name": "...", "version": N }`
+- `202 Accepted` with `{ "version": N, "status": "building" }`
 
 Errors:
 

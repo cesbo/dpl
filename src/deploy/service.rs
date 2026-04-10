@@ -25,7 +25,7 @@ pub struct DeployService {
 }
 
 impl DeployService {
-    pub async fn deploy<R>(&self, name: &str, archive: R) -> Result<u32, DeployError>
+    pub async fn deploy<R>(&self, name: &str, archive: R) -> Result<DeployState, DeployError>
     where
         R: AsyncRead + Unpin + Send,
     {
@@ -34,11 +34,11 @@ impl DeployService {
         let entity_dir = crate::config::ENV.base_dir.join(name);
         let entity = DeployEntity::load(name, &entity_dir).await?;
 
-        let version = match entity {
+        let state = match entity {
             DeployEntity::App(app) => app.deploy(archive).await?,
         };
 
-        Ok(version)
+        Ok(state)
     }
 
     pub async fn state(&self, name: &str) -> Result<DeployState, DeployError> {

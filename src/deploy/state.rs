@@ -4,6 +4,14 @@ use std::{
     path::Path,
 };
 
+use axum::{
+    Json,
+    http::StatusCode,
+    response::{
+        IntoResponse,
+        Response,
+    },
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -74,5 +82,11 @@ impl DeployState {
             .ok_or(DeployStateError::VersionOverflow)?;
         self.version = next;
         Ok(next)
+    }
+}
+
+impl IntoResponse for DeployState {
+    fn into_response(self) -> Response {
+        (StatusCode::OK, Json(self)).into_response()
     }
 }
