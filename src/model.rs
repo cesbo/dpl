@@ -1,15 +1,8 @@
-use std::{
-    fs,
-    io,
-    path::{
-        Path,
-        PathBuf,
-    },
-};
+use std::path::PathBuf;
 
 use serde::Deserialize;
 
-use crate::config::ConfigError;
+use crate::config::ValidateConfig;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -28,23 +21,9 @@ pub struct ServerConfig {
     pub port: u16,
 }
 
-impl MainConfig {
-    pub fn load(path: &Path) -> Result<Self, ConfigError> {
-        let content = match fs::read_to_string(path) {
-            Ok(v) => v,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => String::default(),
-            Err(source) => {
-                return Err(ConfigError::Read {
-                    path: path.into(),
-                    source,
-                });
-            }
-        };
-
-        serde_yaml::from_str(&content).map_err(|source| ConfigError::Parse {
-            path: path.into(),
-            source,
-        })
+impl ValidateConfig for MainConfig {
+    fn default_config() -> Option<Self> {
+        serde_yaml::from_str("").ok()
     }
 }
 

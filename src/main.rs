@@ -57,7 +57,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     log::init_tracing();
 
-    CONFIG.set(MainConfig::load(&cli.config)?).unwrap();
+    CONFIG
+        .set(config::load_config::<MainConfig>(&cli.config)?)
+        .unwrap();
 
     let service = Arc::new(DeployService::default());
     let deploy_routes = deploy_router().route_layer(middleware::from_fn_with_state(
