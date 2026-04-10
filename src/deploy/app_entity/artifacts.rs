@@ -19,7 +19,9 @@ use crate::error::ArtifactError;
 const CONTAINERFILE_TEMPLATE: &str = "containerfile";
 const BUILD_SH_TEMPLATE: &str = "build-sh";
 const RUN_SH_TEMPLATE: &str = "run-sh";
-const SERVICEFILE_TEMPLATE: &str = "servicefile";
+const APP_SERVICE_TEMPLATE: &str = "app-service";
+const TIMER_SERVICE_TEMPLATE: &str = "timer-service";
+const TIMER_UNIT_TEMPLATE: &str = "timer-unit";
 
 static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
     let mut env = Environment::new();
@@ -39,8 +41,18 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
     env.add_template(RUN_SH_TEMPLATE, include_str!("templates/run.sh.jinja"))
         .unwrap();
     env.add_template(
-        SERVICEFILE_TEMPLATE,
-        include_str!("templates/servicefile.jinja"),
+        APP_SERVICE_TEMPLATE,
+        include_str!("templates/app-service.jinja"),
+    )
+    .unwrap();
+    env.add_template(
+        TIMER_SERVICE_TEMPLATE,
+        include_str!("templates/timer-service.jinja"),
+    )
+    .unwrap();
+    env.add_template(
+        TIMER_UNIT_TEMPLATE,
+        include_str!("templates/timer-unit.jinja"),
     )
     .unwrap();
 
@@ -83,6 +95,7 @@ impl<'a> ArtifactsContext<'a> {
                 env => &self.config.runtime.env,
                 init => &self.config.runtime.init,
                 cmd => &self.config.runtime.cmd,
+                timers => &self.config.timers,
             },
         )?;
         Self::write_artifact(path, content).await?;
@@ -104,9 +117,10 @@ impl<'a> ArtifactsContext<'a> {
         }
 
         let image_tag = format!("{}:{}", &self.name, self.version);
-        let path = artifacts_dir.join("app.service");
+        let name = format!("dpl--{}.service", &self.name);
+        let path = artifacts_dir.join(name);
         let content = render(
-            SERVICEFILE_TEMPLATE,
+            APP_SERVICE_TEMPLATE,
             context! {
                 name => &self.name,
                 host_port => self.port,
@@ -116,6 +130,31 @@ impl<'a> ArtifactsContext<'a> {
             },
         )?;
         Self::write_artifact(path, content).await?;
+
+        for timer in &self.config.timers {
+            let name = format!("dpl--{}--{}.service", &self.name, &timer.name);
+            let path = artifacts_dir.join(name);
+            let content = render(
+                TIMER_SERVICE_TEMPLATE,
+                context! {
+                    name => &self.name,
+                    timer_name => &timer.name,
+                },
+            )?;
+            Self::write_artifact(path, content).await?;
+
+            let name = format!("dpl--{}--{}.timer", &self.name, &timer.name);
+            let path = artifacts_dir.join(name);
+            let content = render(
+                TIMER_UNIT_TEMPLATE,
+                context! {
+                    name => &self.name,
+                    timer_name => &timer.name,
+                    schedule => &timer.schedule,
+                },
+            )?;
+            Self::write_artifact(path, content).await?;
+        }
 
         Ok(())
     }
@@ -159,6 +198,7 @@ mod tests {
             AppConfig,
             BuildLayerConfig,
             RuntimeConfig,
+            TimerConfig,
         },
     };
 
@@ -210,10 +250,21 @@ mod tests {
             },
             volumes: Vec::new(),
             exports: Vec::new(),
-            timers: Vec::new(),
+            timers: vec![
+                TimerConfig {
+                    name: "cleanup".into(),
+                    schedule: "*-*-* 03:00:00".into(),
+                    script: "echo cleanup".into(),
+                },
+                TimerConfig {
+                    name: "sync".into(),
+                    schedule: "hourly".into(),
+                    script: "echo sync".into(),
+                },
+            ],
         };
 
-        let name = "demo-app";
+        let name = "my-app";
         let temp_dir = tempdir().unwrap();
         let deploy_dir = temp_dir.path().join(name);
         fs::create_dir_all(&deploy_dir).await.unwrap();
@@ -234,6 +285,12 @@ mod tests {
         assert!(artifacts_dir.join("build-2.sh").exists());
         assert!(!artifacts_dir.join("build-3.sh").exists());
         assert!(artifacts_dir.join("build-4.sh").exists());
-        assert!(artifacts_dir.join("app.service").exists());
+        assert!(artifacts_dir.join("dpl--my-app.service").exists());
+
+        // timer service and timer unit files
+        assert!(artifacts_dir.join("dpl--my-app--cleanup.service").exists());
+        assert!(artifacts_dir.join("dpl--my-app--cleanup.timer").exists());
+        assert!(artifacts_dir.join("dpl--my-app--sync.service").exists());
+        assert!(artifacts_dir.join("dpl--my-app--sync.timer").exists());
     }
 }

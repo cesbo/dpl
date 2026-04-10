@@ -7,7 +7,22 @@ export {{key}}=$(cat <<'{{heredoc}}'
 {{heredoc}}
 )
 {% endfor -%}
+
+if [ $# -eq 0 ]; then
 {% if init -%}
 {{ init }}
-{% endif %}
+{% endif -%}
 exec {{ cmd }}
+fi
+
+case "$1" in
+{% for timer in timers -%}
+{{ timer.name }})
+{{ timer.script }}
+;;
+{% endfor -%}
+*)
+echo "unknown command: $1" >&2
+exit 1
+;;
+esac

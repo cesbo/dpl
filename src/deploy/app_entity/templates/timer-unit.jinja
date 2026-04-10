@@ -1,0 +1,8 @@
+[Unit]
+Description=DPL Timer {{ timer_name }} for {{ name }}
+
+[Timer]
+OnCalendar={{ schedule }}
+
+[Install]
+WantedBy=timers.target

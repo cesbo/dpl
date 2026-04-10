@@ -49,6 +49,13 @@ impl AppEntity {
     pub async fn load(name: &str, entity_dir: &Path) -> Result<Self, ConfigError> {
         let config: AppConfig = load_entity_config(entity_dir).await?;
 
+        if let Err(info) = config.validate() {
+            return Err(ConfigError::Invalid {
+                path: entity_dir.join("config.yaml"),
+                info,
+            });
+        }
+
         Ok(AppEntity {
             name: name.into(),
             entity_dir: entity_dir.into(),

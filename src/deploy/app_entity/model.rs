@@ -1,4 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{
+    BTreeMap,
+    BTreeSet,
+};
 
 use serde::{
     Deserialize,
@@ -77,8 +80,61 @@ pub struct ExportConfig {
 pub struct TimerConfig {
     /// Name of the timer
     pub name: String,
-    /// Schedule for the timer in cron format
+    /// Schedule in systemd OnCalendar format
     pub schedule: String,
     /// Script to run
     pub script: String,
+}
+
+impl TimerConfig {
+    fn validate_name(&self) -> bool {
+        if self.name.is_empty() {
+            return false;
+        }
+
+        if self.name.starts_with('-') || self.name.ends_with('-') {
+            return false;
+        }
+
+        if self.name.contains("--") {
+            return false;
+        }
+
+        self.name
+            .as_bytes()
+            .iter()
+            .all(|&b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if !self.validate_name() {
+            return Err(format!("invalid timer name: '{}'", self.name));
+        }
+
+        if self.schedule.is_empty() {
+            return Err(format!("timer '{}' has empty schedule", self.name));
+        }
+
+        if self.script.is_empty() {
+            return Err(format!("timer '{}' has empty script", self.name));
+        }
+
+        Ok(())
+    }
+}
+
+impl AppConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        let mut names = BTreeSet::new();
+
+        for timer in &self.timers {
+            timer.validate()?;
+
+            if !names.insert(timer.name.as_str()) {
+                return Err(format!("duplicate timer name: {}", timer.name));
+            }
+        }
+
+        Ok(())
+    }
 }
