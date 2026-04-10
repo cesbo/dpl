@@ -2,17 +2,14 @@ mod error;
 mod middleware;
 mod model;
 
-use std::{
-    fs,
-    sync::LazyLock,
-};
+use std::sync::LazyLock;
 
 pub use error::AuthServiceError;
 pub use middleware::authorize_request;
 use model::AuthConfig;
 use tracing::error;
 
-use crate::config::ConfigError;
+use crate::config::load_config;
 
 pub static SERVICE: LazyLock<AuthService> = LazyLock::new(|| AuthService::load());
 
@@ -22,7 +19,8 @@ pub struct AuthService {
 
 impl AuthService {
     fn load() -> Self {
-        let config = match load_config() {
+        let path = crate::config().base.join("auth.yaml");
+        let config = match load_config(&path) {
             Ok(config) => Some(config),
             Err(err) => {
                 error!("load auth config: {}", err);
@@ -59,30 +57,6 @@ impl AuthService {
     }
 }
 
-fn load_config() -> Result<AuthConfig, ConfigError> {
-    let path = crate::config().base.join("auth.yaml");
-
-    let content = match fs::read_to_string(&path) {
-        Ok(content) => content,
-        Err(source) => {
-            return Err(ConfigError::Read { path, source });
-        }
-    };
-
-    let config: AuthConfig = match serde_yaml::from_str(&content) {
-        Ok(config) => config,
-        Err(source) => {
-            return Err(ConfigError::Parse { path, source });
-        }
-    };
-
-    if let Err(info) = config.validate() {
-        return Err(ConfigError::Invalid { path, info });
-    }
-
-    Ok(config)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -93,6 +67,7 @@ mod tests {
             AuthKey,
         },
     };
+    use crate::config::ValidateConfig;
 
     #[test]
     fn rejects_duplicate_key_ids() {
@@ -113,7 +88,7 @@ mod tests {
             ],
         };
 
-        let err = config.validate().unwrap_err();
+        let err = config.validate_config().unwrap_err();
         assert_eq!(err, "duplicate key name: user-1");
     }
 

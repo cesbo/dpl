@@ -1,5 +1,7 @@
 use serde::Deserialize;
 
+use crate::config::ValidateConfig;
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct AuthKey {
@@ -16,8 +18,8 @@ pub struct AuthConfig {
     pub keys: Vec<AuthKey>,
 }
 
-impl AuthConfig {
-    pub fn validate(&self) -> Result<(), String> {
+impl ValidateConfig for AuthConfig {
+    fn validate_config(&self) -> Result<(), String> {
         let mut ids = std::collections::BTreeSet::new();
 
         for key in &self.keys {
