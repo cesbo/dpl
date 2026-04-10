@@ -12,7 +12,7 @@ pub use middleware::authorize_request;
 use model::AuthConfig;
 use tracing::error;
 
-use crate::error::ConfigError;
+use crate::config::ConfigError;
 
 pub static SERVICE: LazyLock<AuthService> = LazyLock::new(|| AuthService::load());
 

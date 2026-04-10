@@ -27,6 +27,7 @@ use tracing::{
 };
 
 use crate::{
+    config::ConfigError,
     deploy::{
         DeployError,
         load_entity_config,
@@ -35,7 +36,6 @@ use crate::{
             DeployStatus,
         },
     },
-    error::ConfigError,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]

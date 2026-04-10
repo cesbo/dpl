@@ -9,7 +9,7 @@ use std::{
 
 use serde::Deserialize;
 
-use crate::error::ConfigError;
+use crate::config::ConfigError;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

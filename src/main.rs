@@ -1,8 +1,8 @@
-pub mod archive;
-pub mod artifacts;
+mod archive;
+mod artifacts;
 mod auth;
+mod config;
 mod deploy;
-pub mod error;
 mod log;
 mod model;
 

@@ -14,7 +14,7 @@ use super::state::DeployStateError;
 use crate::{
     archive::ArchiveError,
     artifacts::ArtifactError,
-    error::ConfigError,
+    config::ConfigError,
 };
 
 #[derive(Debug, Error)]

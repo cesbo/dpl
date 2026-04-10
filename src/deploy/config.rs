@@ -3,7 +3,7 @@ use std::path::Path;
 use serde::de::DeserializeOwned;
 use tokio::fs;
 
-use crate::error::ConfigError;
+use crate::config::ConfigError;
 
 pub async fn load_entity_config<T: DeserializeOwned>(entity_dir: &Path) -> Result<T, ConfigError> {
     let path = entity_dir.join("config.yaml");
