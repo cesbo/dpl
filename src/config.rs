@@ -31,10 +31,10 @@ where
     let content = match fs::read_to_string(path) {
         Ok(v) => v,
         Err(source) => {
-            if source.kind() == io::ErrorKind::NotFound {
-                if let Some(v) = T::default_config() {
-                    return Ok(v);
-                }
+            if source.kind() == io::ErrorKind::NotFound
+                && let Some(v) = T::default_config()
+            {
+                return Ok(v);
             }
 
             return Err(ConfigError::Read {

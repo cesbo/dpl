@@ -11,7 +11,7 @@ use tracing::error;
 
 use crate::config::load_config;
 
-pub static SERVICE: LazyLock<AuthService> = LazyLock::new(|| AuthService::load());
+pub static SERVICE: LazyLock<AuthService> = LazyLock::new(AuthService::load);
 
 pub struct AuthService {
     config: Option<AuthConfig>,
