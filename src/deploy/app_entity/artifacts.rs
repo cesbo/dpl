@@ -14,7 +14,10 @@ use serde::Serialize;
 use tokio::fs;
 
 use super::AppConfig;
-use crate::error::ArtifactError;
+use crate::artifacts::{
+    ArtifactError,
+    render,
+};
 
 const CONTAINERFILE_TEMPLATE: &str = "containerfile";
 const BUILD_SH_TEMPLATE: &str = "build-sh";
@@ -78,18 +81,20 @@ impl<'a> ArtifactsContext<'a> {
         }
 
         let path = artifacts_dir.join("containerfile");
-        let content = render(
+        write_artifact(
+            path,
             CONTAINERFILE_TEMPLATE,
             context! {
                 image => self.config.image,
                 port => self.config.port,
                 layers => &self.config.build,
             },
-        )?;
-        Self::write_artifact(path, content).await?;
+        )
+        .await?;
 
         let path = artifacts_dir.join("run.sh");
-        let content = render(
+        write_artifact(
+            path,
             RUN_SH_TEMPLATE,
             context! {
                 env => &self.config.runtime.env,
@@ -97,8 +102,8 @@ impl<'a> ArtifactsContext<'a> {
                 cmd => &self.config.runtime.cmd,
                 timers => &self.config.timers,
             },
-        )?;
-        Self::write_artifact(path, content).await?;
+        )
+        .await?;
 
         for (index, layer) in self.config.build.iter().enumerate() {
             let Some(script) = &layer.script else {
@@ -106,20 +111,22 @@ impl<'a> ArtifactsContext<'a> {
             };
 
             let path = artifacts_dir.join(format!("build-{}.sh", index + 1));
-            let content = render(
+            write_artifact(
+                path,
                 BUILD_SH_TEMPLATE,
                 context! {
                     env => &layer.env,
                     script => script,
                 },
-            )?;
-            Self::write_artifact(path, content).await?;
+            )
+            .await?;
         }
 
         let image_tag = format!("{}:{}", &self.name, self.version);
         let name = format!("dpl--{}.service", &self.name);
         let path = artifacts_dir.join(name);
-        let content = render(
+        write_artifact(
+            path,
             APP_SERVICE_TEMPLATE,
             context! {
                 name => &self.name,
@@ -128,61 +135,49 @@ impl<'a> ArtifactsContext<'a> {
                 volumes => &self.config.volumes,
                 image_tag => &image_tag,
             },
-        )?;
-        Self::write_artifact(path, content).await?;
+        )
+        .await?;
 
         for timer in &self.config.timers {
             let name = format!("dpl--{}--{}.service", &self.name, &timer.name);
             let path = artifacts_dir.join(name);
-            let content = render(
+            write_artifact(
+                path,
                 TIMER_SERVICE_TEMPLATE,
                 context! {
                     name => &self.name,
                     timer_name => &timer.name,
                 },
-            )?;
-            Self::write_artifact(path, content).await?;
+            )
+            .await?;
 
             let name = format!("dpl--{}--{}.timer", &self.name, &timer.name);
             let path = artifacts_dir.join(name);
-            let content = render(
+            write_artifact(
+                path,
                 TIMER_UNIT_TEMPLATE,
                 context! {
                     name => &self.name,
                     timer_name => &timer.name,
                     schedule => &timer.schedule,
                 },
-            )?;
-            Self::write_artifact(path, content).await?;
+            )
+            .await?;
         }
 
         Ok(())
     }
-
-    async fn write_artifact(path: PathBuf, contents: String) -> Result<(), ArtifactError> {
-        fs::write(&path, contents)
-            .await
-            .map_err(|source| ArtifactError::Write { path, source })
-    }
 }
 
-fn render<S>(name: &str, ctx: S) -> Result<String, ArtifactError>
+async fn write_artifact<S>(path: PathBuf, name: &str, ctx: S) -> Result<(), ArtifactError>
 where
     S: Serialize,
 {
-    let template = TEMPLATES
-        .get_template(name)
-        .map_err(|source| ArtifactError::Render {
-            name: name.into(),
-            source,
-        })?;
+    let content = render(&TEMPLATES, name, ctx)?;
 
-    template
-        .render(ctx)
-        .map_err(|source| ArtifactError::Render {
-            name: name.into(),
-            source,
-        })
+    fs::write(&path, content)
+        .await
+        .map_err(|source| ArtifactError::Write { path, source })
 }
 
 #[cfg(test)]

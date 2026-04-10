@@ -13,6 +13,7 @@ use thiserror::Error;
 use super::state::DeployStateError;
 use crate::{
     archive::ArchiveError,
+    artifacts::ArtifactError,
     error::ConfigError,
 };
 
@@ -29,7 +30,7 @@ pub enum DeployError {
     #[error("entity busy")]
     EntityBusy,
     #[error("save artifacts: {0}")]
-    ArtifactError(#[from] crate::error::ArtifactError),
+    ArtifactError(#[from] ArtifactError),
     #[error("extract archive: {0}")]
     ArchiveError(#[from] ArchiveError),
     #[error("{info}: {source}")]

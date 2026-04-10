@@ -1,4 +1,5 @@
 pub mod archive;
+pub mod artifacts;
 mod auth;
 mod deploy;
 pub mod error;
