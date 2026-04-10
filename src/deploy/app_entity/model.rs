@@ -10,17 +10,12 @@ use serde::{
 
 use crate::{
     config::ValidateConfig,
-    deploy::{
-        EntityType,
-        entity::validate_name,
-    },
+    deploy::entity::validate_name,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
-    #[serde(rename = "type")]
-    pub entity_type: EntityType,
     pub image: String,
     pub port: u16,
     pub build: Vec<BuildLayerConfig>,

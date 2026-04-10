@@ -12,7 +12,7 @@ use std::{
 };
 
 use artifacts::ArtifactsContext;
-use model::AppConfig;
+pub use model::AppConfig;
 use podman::PodmanContext;
 use tokio::{
     fs,
@@ -26,17 +26,11 @@ use tracing::{
     info,
 };
 
-use crate::{
-    config::{
-        ConfigError,
-        load_config,
-    },
-    deploy::{
-        DeployError,
-        state::{
-            DeployState,
-            DeployStatus,
-        },
+use crate::deploy::{
+    DeployError,
+    state::{
+        DeployState,
+        DeployStatus,
     },
 };
 
@@ -48,15 +42,12 @@ pub struct AppEntity {
 }
 
 impl AppEntity {
-    pub fn load(name: &str, entity_dir: &Path) -> Result<Self, ConfigError> {
-        let path = entity_dir.join("config.yaml");
-        let config: AppConfig = load_config(&path)?;
-
-        Ok(AppEntity {
+    pub fn new(name: &str, entity_dir: &Path, config: &AppConfig) -> Self {
+        Self {
             name: name.into(),
             entity_dir: entity_dir.into(),
-            config,
-        })
+            config: config.clone(),
+        }
     }
 
     pub async fn deploy<R>(self, archive: R) -> Result<DeployState, DeployError>

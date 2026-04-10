@@ -187,20 +187,16 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::deploy::{
-        EntityType,
-        app_entity::model::{
-            AppConfig,
-            BuildLayerConfig,
-            RuntimeConfig,
-            TimerConfig,
-        },
+    use crate::deploy::app_entity::model::{
+        AppConfig,
+        BuildLayerConfig,
+        RuntimeConfig,
+        TimerConfig,
     };
 
     #[tokio::test]
     async fn render_templates() {
         let config = AppConfig {
-            entity_type: EntityType::App,
             image: "ghcr.io/example/demo:latest".into(),
             port: 8080,
             build: vec![

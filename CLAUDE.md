@@ -15,36 +15,6 @@ cargo clippy         # Lint
 - Never run `cargo fmt` — the project uses custom rustfmt rules.
 - Rust edition is `2024`.
 
-## Project Structure
-
-```
-src/
-  main.rs                  # Axum server setup, routes, signal handling, global config()
-  model.rs                 # MainConfig, ServerConfig — YAML config models
-  archive.rs               # tar.gz extraction into deploy workspace
-  error.rs                 # Top-level errors: ConfigError, ArtifactError, archive errors
-  log.rs                   # Tracing/logging setup
-  auth/
-    mod.rs                 # Auth module root
-    model.rs               # AuthKey model, auth.yaml parsing
-    middleware.rs           # Axum auth middleware (Bearer tokens)
-    error.rs               # Auth errors
-  deploy/
-    mod.rs                 # Deploy module root
-    config.rs              # Load entity config (config.yaml inside entity directory)
-    handlers.rs            # HTTP handlers: POST /deploy/{name}, GET /deploy/{name}/state
-    service.rs             # DeployService — orchestrates entity lifecycle
-    entity.rs              # Entity enum
-    state.rs               # Deploy state persistence (on-disk)
-    error.rs               # DeployError
-    app_entity/
-      mod.rs               # AppEntity implementation
-      model.rs             # App entity config model
-      artifacts.rs         # MiniJinja template rendering for build artifacts
-      podman.rs            # podman build / image export
-      port.rs              # Port allocation
-```
-
 ## Architecture
 
 ### Separation of Concerns
@@ -59,12 +29,6 @@ Keep this split when adding functionality.
 1. `POST /deploy/{name}` receives a tar.gz archive
 2. Handler extracts archive into a versioned workspace, returns `{ "name": ..., "version": N }` immediately
 3. Background task runs: template rendering -> `podman build` -> optional static file export -> state update
-
-### Error Handling
-
-Errors use `thiserror` with two layers:
-- **`crate::error`** — `ConfigError`, `ArtifactError`, archive errors. Paths captured alongside `io`/`serde_yaml`/`minijinja` sources.
-- **`deploy::error::DeployError`** — deploy-specific errors.
 
 ### Key Dependencies
 
