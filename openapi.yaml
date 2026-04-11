@@ -104,9 +104,9 @@ paths:
       description: |
         Returns the build log of the current (latest) deploy version.
 
-        The response includes an `X-Log-Size` header with the total file size
+        The response includes an `X-Offset` header with the total file size
         in bytes. To incrementally fetch new log content, pass the previously
-        received size as the `offset` query parameter — only bytes after that
+        received value as the `offset` query parameter — only bytes after that
         offset will be returned.
       operationId: getBuildLog
       parameters:
@@ -116,7 +116,7 @@ paths:
           required: false
           description: |
             Byte offset to start reading from. When omitted, the entire log
-            is returned. Use the `X-Log-Size` value from a previous response
+            is returned. Use the `X-Offset` value from a previous response
             to fetch only newly appended content.
           schema:
             type: integer
@@ -126,8 +126,8 @@ paths:
         "200":
           description: Build log content (or empty body if offset >= file size).
           headers:
-            X-Log-Size:
-              description: Total size of the log file in bytes.
+            X-Offset:
+              description: Total size of the log file in bytes. Pass as `offset` to fetch new content.
               schema:
                 type: integer
                 minimum: 0

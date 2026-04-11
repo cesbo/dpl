@@ -82,7 +82,7 @@ async fn log_handler(
 
     Ok((
         [
-            ("x-log-size", total_size.to_string()),
+            ("x-offset", total_size.to_string()),
             ("content-type", "application/octet-stream".to_string()),
         ],
         data,
