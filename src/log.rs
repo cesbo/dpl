@@ -20,11 +20,14 @@ pub fn init_tracing_log(path: &Path) -> io::Result<impl tracing::Subscriber> {
     let file = std::fs::OpenOptions::new().append(true).open(path)?;
 
     let subscriber = tracing_subscriber::fmt::Subscriber::builder()
+        .json()
         .with_writer(Mutex::new(file))
         .with_ansi(false)
         .with_target(false)
         .with_file(false)
         .with_line_number(false)
+        .with_current_span(false)
+        .with_span_list(false)
         .finish();
 
     Ok(subscriber)
