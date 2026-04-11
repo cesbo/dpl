@@ -1,7 +1,9 @@
+{% set container_name = "dpl-" ~ name -%}
+
 [Unit]
 Description=DPL Timer {{ timer_name }} for {{ name }}
 
 [Service]
 Type=oneshot
-ExecCondition=/usr/bin/podman container exists dpl-{{ name }}
-ExecStart=/usr/bin/podman exec dpl-{{ name }} /bin/sh /opt/dpl/run.sh {{ timer_name }}
+ExecCondition=/usr/bin/podman container exists {{ container_name }}
+ExecStart=/usr/bin/podman exec {{ container_name }} /bin/sh /opt/dpl/run.sh {{ timer_name }}
