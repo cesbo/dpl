@@ -2,6 +2,7 @@ mod artifacts;
 mod model;
 mod podman;
 mod port;
+mod systemd;
 
 use std::{
     io,
