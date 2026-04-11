@@ -112,20 +112,26 @@ impl DeployService {
         let total_size = metadata.len();
 
         let mut buf = Vec::new();
-        if offset < total_size {
+
+        if offset >= total_size {
+            return Ok((buf, total_size));
+        }
+
+        if offset > 0 {
             file.seek(std::io::SeekFrom::Start(offset))
                 .await
                 .map_err(|source| DeployError::EntityError {
                     info: "seek build log".to_string(),
                     source,
                 })?;
-            file.read_to_end(&mut buf)
-                .await
-                .map_err(|source| DeployError::EntityError {
-                    info: "read build log".to_string(),
-                    source,
-                })?;
         }
+
+        file.read_to_end(&mut buf)
+            .await
+            .map_err(|source| DeployError::EntityError {
+                info: "read build log".to_string(),
+                source,
+            })?;
 
         Ok((buf, total_size))
     }
