@@ -1,6 +1,6 @@
 # dpl
 
-`dpl` is a deploy server written in Rust.
+`dpl` is a deploy server.
 
 ## Current Status
 
@@ -17,6 +17,7 @@ What works now:
 What is not done yet:
 
 - starting or restarting the generated systemd service
+- app entity health checks after starting container
 - an HTTP endpoint for reading build logs
 - entity types `domain`, `static`, and `database`
 - hashed auth keys
@@ -27,15 +28,17 @@ It is not yet a full end-to-end replacement for the old tool.
 
 ## What You Need
 
-- Linux with podman and systemd
+- linux - recommended Fedora 42
+- podman
+- systemd
 
 The server reads its config from a YAML file. The path is set with `--config` / `-c` (default: `/opt/dpl/config.yaml`).
 
 ```bash
-dpl --config /opt/dpl/config.yaml
+dpl -c /opt/dpl/config.yaml
 ```
 
-If this file does not exist, `dpl` uses these defaults:
+If config does not exist, `dpl` uses these defaults:
 
 ```yaml
 base: /opt/dpl
@@ -60,7 +63,7 @@ Example:
 keys:
   - name: deploy-key
     token: secret-token
-    apps: [myapp]
+    apps: ["myapp"]
     disabled: false
 ```
 
