@@ -1,0 +1,183 @@
+openapi: 3.1.0
+info:
+  title: dpl
+  description: |
+    Deploy server: accepts deploy archives over HTTP, builds container images
+    with podman, exports static files from the built image when configured,
+    and stores deploy state on disk.
+  version: 0.1.0
+
+servers:
+  - url: http://127.0.0.1:3000
+
+security:
+  - bearerAuth: []
+
+paths:
+  /deploy/{name}:
+    post:
+      summary: Start a deploy
+      description: |
+        Accepts a tar.gz archive with source code and starts a background
+        deploy for the named entity. The request returns immediately with
+        status `building`; the image build continues in the background.
+
+        If the archive has a single top-level folder, dpl flattens it
+        after extraction.
+      operationId: deploy
+      parameters:
+        - $ref: "#/components/parameters/name"
+      requestBody:
+        required: true
+        content:
+          application/gzip:
+            schema:
+              type: string
+              format: binary
+              description: tar.gz archive with source code
+      responses:
+        "202":
+          description: Deploy accepted; build started in the background.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeployState"
+              example:
+                version: 1
+                status: building
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Another deploy for this entity is already building.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: entity busy
+
+  /deploy/{name}/state:
+    get:
+      summary: Get deploy state
+      description: Reads the current deploy state from disk.
+      operationId: getDeployState
+      parameters:
+        - $ref: "#/components/parameters/name"
+      responses:
+        "200":
+          description: Current deploy state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeployState"
+              examples:
+                ready:
+                  summary: Successful build
+                  value:
+                    version: 1
+                    status: ready
+                building:
+                  summary: Build in progress
+                  value:
+                    version: 1
+                    status: building
+                failed:
+                  summary: Failed build
+                  value:
+                    version: 1
+                    status: failed
+                    last_error: "failed to build image: podman build exited with exit status: 125"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Plain Bearer token from `{config.base}/auth.yaml`.
+        Each token has a list of allowed entity names (or `"*"` for all).
+
+  parameters:
+    name:
+      name: name
+      in: path
+      required: true
+      description: |
+        Entity name. Must be non-empty, lowercase ASCII alphanumerics
+        and hyphens only, must not start or end with a hyphen, and must
+        not contain consecutive hyphens.
+      schema:
+        type: string
+        pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
+        examples:
+          - myapp
+
+  schemas:
+    DeployState:
+      type: object
+      required:
+        - version
+        - status
+      properties:
+        version:
+          type: integer
+          minimum: 0
+          description: Deploy version number.
+        status:
+          $ref: "#/components/schemas/DeployStatus"
+        last_error:
+          type: string
+          description: Error message from the last failed deploy. Present only when status is `failed`.
+
+    DeployStatus:
+      type: string
+      enum:
+        - idle
+        - building
+        - ready
+        - failed
+
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Human-readable error message.
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid Bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: invalid token
+    Forbidden:
+      description: Token is valid but not allowed for this entity.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: permission denied
+    NotFound:
+      description: Entity config does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: entity not found

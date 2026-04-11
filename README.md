@@ -242,37 +242,7 @@ Possible status values:
 
 ## HTTP API
 
-### `POST /deploy/{name}`
-
-Starts a new deploy for one app.
-
-Request body:
-
-- raw `.tar.gz` bytes
-
-Response:
-
-- `202 Accepted` with `{ "version": N, "status": "building" }`
-
-Errors:
-
-- `401` - missing or invalid `Authorization` header
-- `403` - token is valid but not allowed for this app
-- `404` - app config does not exist
-- `409` - another deploy for the same app is already building
-
-### `GET /deploy/{name}/state`
-
-Reads the current state from disk.
-
-Response body:
-
-```json
-{
-  "version": 1,
-  "status": "ready"
-}
-```
+See [`openapi.yaml`](openapi.yaml) for the full API specification.
 
 ## Notes
 
