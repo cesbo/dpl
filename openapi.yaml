@@ -98,6 +98,51 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /deploy/{name}/log:
+    get:
+      summary: Get build log
+      description: |
+        Returns the build log of the current (latest) deploy version.
+
+        The response includes an `X-Log-Size` header with the total file size
+        in bytes. To incrementally fetch new log content, pass the previously
+        received size as the `offset` query parameter — only bytes after that
+        offset will be returned.
+      operationId: getBuildLog
+      parameters:
+        - $ref: "#/components/parameters/name"
+        - name: offset
+          in: query
+          required: false
+          description: |
+            Byte offset to start reading from. When omitted, the entire log
+            is returned. Use the `X-Log-Size` value from a previous response
+            to fetch only newly appended content.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: Build log content (or empty body if offset >= file size).
+          headers:
+            X-Log-Size:
+              description: Total size of the log file in bytes.
+              schema:
+                type: integer
+                minimum: 0
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   securitySchemes:
     bearerAuth:

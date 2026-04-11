@@ -8,6 +8,7 @@ use axum::{
     body::Body,
     extract::{
         Path,
+        Query,
         State,
     },
     http::StatusCode,
@@ -18,6 +19,7 @@ use axum::{
     },
 };
 use futures_util::TryStreamExt;
+use serde::Deserialize;
 use tokio_util::io::StreamReader;
 
 use super::{
@@ -30,6 +32,7 @@ pub fn router() -> Router<Arc<DeployService>> {
     Router::new()
         .route("/{name}", post(deploy_handler))
         .route("/{name}/state", get(state_handler))
+        .route("/{name}/log", get(log_handler))
 }
 
 async fn state_handler(
@@ -58,4 +61,30 @@ async fn deploy_handler(
 
     let state = service.deploy(&name, reader).await?;
     Ok((StatusCode::ACCEPTED, state))
+}
+
+#[derive(Deserialize)]
+struct LogQuery {
+    offset: Option<u64>,
+}
+
+async fn log_handler(
+    State(service): State<Arc<DeployService>>,
+    Path(name): Path<String>,
+    Query(query): Query<LogQuery>,
+) -> Result<impl IntoResponse, DeployError> {
+    if !validate_name(&name) {
+        return Err(DeployError::InvalidEntityName);
+    }
+
+    let offset = query.offset.unwrap_or(0);
+    let (data, total_size) = service.build_log(&name, offset).await?;
+
+    Ok((
+        [
+            ("x-log-size", total_size.to_string()),
+            ("content-type", "application/octet-stream".to_string()),
+        ],
+        data,
+    ))
 }

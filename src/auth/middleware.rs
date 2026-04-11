@@ -51,6 +51,7 @@ fn resolve_access_target(request: &Request) -> Result<String, AuthServiceError> 
     match segments.as_slice() {
         [name] => Ok((*name).to_string()),
         [name, "state"] => Ok((*name).to_string()),
+        [name, "log"] => Ok((*name).to_string()),
         _ => Err(AuthServiceError::InvalidRoute),
     }
 }
@@ -112,5 +113,14 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         assert!(resolve_access_target(&request).is_err());
+    }
+
+    #[test]
+    fn resolve_name_entity_log() {
+        let request = Request::builder()
+            .uri("/myapp/log")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(resolve_access_target(&request).unwrap(), "myapp");
     }
 }
