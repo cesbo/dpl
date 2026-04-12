@@ -122,25 +122,24 @@ impl<'a> ArtifactsContext<'a> {
             .await?;
         }
 
-        let image_tag = format!("{}:{}", &self.name, self.version);
-        let name = format!("dpl--{}.service", &self.name);
-        let path = artifacts_dir.join(name);
+        let unit = format!("dpl--{}.service", &self.name);
+        let path = artifacts_dir.join(&unit);
         write_artifact(
             path,
             APP_SERVICE_TEMPLATE,
             context! {
                 name => &self.name,
+                version => self.version,
                 host_port => self.port,
                 container_port => &self.config.port,
                 volumes => &self.config.volumes,
-                image_tag => &image_tag,
             },
         )
         .await?;
 
         for timer in &self.config.timers {
-            let name = format!("dpl--{}--{}.service", &self.name, &timer.name);
-            let path = artifacts_dir.join(name);
+            let unit = format!("dpl--{}--{}.service", &self.name, &timer.name);
+            let path = artifacts_dir.join(&unit);
             write_artifact(
                 path,
                 TIMER_SERVICE_TEMPLATE,
@@ -151,8 +150,8 @@ impl<'a> ArtifactsContext<'a> {
             )
             .await?;
 
-            let name = format!("dpl--{}--{}.timer", &self.name, &timer.name);
-            let path = artifacts_dir.join(name);
+            let unit = format!("dpl--{}--{}.timer", &self.name, &timer.name);
+            let path = artifacts_dir.join(&unit);
             write_artifact(
                 path,
                 TIMER_UNIT_TEMPLATE,
