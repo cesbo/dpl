@@ -51,6 +51,30 @@ impl AppEntity {
         }
     }
 
+    pub fn install(&self, version: u32) -> Result<(), DeployError> {
+        let deploy_dir = self.entity_dir.join(format!("deploy_{version}"));
+
+        systemd::install_app(&self.name, &deploy_dir).map_err(|source| {
+            DeployError::EntityError {
+                info: format!("install app {}", &self.name),
+                source,
+            }
+        })?;
+
+        // TODO: health check
+
+        systemd::install_timers(&self.name, &deploy_dir);
+
+        Ok(())
+    }
+
+    pub fn uninstall(&self, version: u32) {
+        systemd::uninstall_timers(&self.name);
+        systemd::uninstall_app(&self.name);
+
+        PodmanContext::new(&self.name, version).remove();
+    }
+
     pub async fn deploy<R>(self, archive: R) -> Result<DeployState, DeployError>
     where
         R: AsyncRead + Unpin + Send,
@@ -183,14 +207,15 @@ impl AppEntity {
         crate::archive::extract(&archive_path, &app_dir)?;
         info!("archive extracted");
 
-        let ctx = PodmanContext::new(&self.name, deploy_dir, version);
+        let ctx = PodmanContext::new(&self.name, version);
 
-        ctx.build().map_err(|source| DeployError::EntityError {
-            info: "failed to build image".to_string(),
-            source,
-        })?;
+        ctx.build(deploy_dir)
+            .map_err(|source| DeployError::EntityError {
+                info: "failed to build image".to_string(),
+                source,
+            })?;
 
-        ctx.export(&self.config.exports)
+        ctx.export(deploy_dir, &self.config.exports)
             .map_err(|source| DeployError::EntityError {
                 info: "failed to export static files".to_string(),
                 source,
@@ -209,24 +234,4 @@ where
     tokio::io::copy(&mut reader, &mut archive_file).await?;
     archive_file.flush().await?;
     Ok(())
-}
-
-pub fn install(name: &str, deploy_dir: &Path) -> Result<(), DeployError> {
-    systemd::install_app(name, deploy_dir).map_err(|source| DeployError::EntityError {
-        info: format!("install app {}", name),
-        source,
-    })?;
-
-    // TODO: health check
-
-    systemd::install_timers(name, deploy_dir);
-
-    Ok(())
-}
-
-pub fn uninstall(name: &str) {
-    systemd::uninstall_timers(name);
-    systemd::uninstall_app(name);
-
-    // TODO: remove podman image
 }

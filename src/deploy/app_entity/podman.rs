@@ -19,25 +19,23 @@ use super::model::ExportConfig;
 
 pub struct PodmanContext<'a> {
     name: &'a str,
-    deploy_dir: &'a Path,
     version: u32,
     image_tag: String,
 }
 
 impl<'a> PodmanContext<'a> {
-    pub fn new(name: &'a str, deploy_dir: &'a Path, version: u32) -> Self {
+    pub fn new(name: &'a str, version: u32) -> Self {
         let image_tag = format!("localhost/{name}:{version}");
         Self {
             name,
-            deploy_dir,
             version,
             image_tag,
         }
     }
 
     /// Build podman image, streams output into the build log.
-    pub fn build(&self) -> io::Result<()> {
-        let artifacts_dir = self.deploy_dir.join("artifacts");
+    pub fn build(&self, deploy_dir: &Path) -> io::Result<()> {
+        let artifacts_dir = deploy_dir.join("artifacts");
         let containerfile = artifacts_dir.join("containerfile");
         let dispatch = tracing::dispatcher::get_default(|dispatch| dispatch.clone());
 
@@ -71,7 +69,7 @@ impl<'a> PodmanContext<'a> {
             .arg(&containerfile)
             .arg("--tag")
             .arg(&self.image_tag)
-            .arg(self.deploy_dir);
+            .arg(deploy_dir);
 
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
@@ -110,12 +108,12 @@ impl<'a> PodmanContext<'a> {
     }
 
     /// Export files from podman image into deploy directory
-    pub fn export(&self, exports: &[ExportConfig]) -> io::Result<()> {
+    pub fn export(&self, deploy_dir: &Path, exports: &[ExportConfig]) -> io::Result<()> {
         if exports.is_empty() {
             return Ok(());
         }
 
-        let exports_dir = self.deploy_dir.join("exports");
+        let exports_dir = deploy_dir.join("exports");
         std::fs::create_dir(&exports_dir)?;
 
         let container = format!("dpl-export-{}", cuid::cuid2());
@@ -139,14 +137,13 @@ impl<'a> PodmanContext<'a> {
             let source = export.source.trim_end_matches('/');
             let src = format!("{container}:{source}/.");
 
-            let output = Command::new("podman")
-                .args(["cp", "-a", "--overwrite", &src, &dst.to_string_lossy()])
-                .output()?;
-
-            if output.status.success() {
-                info!("podman cp {} -> {} ok", &src, dst.display());
-            } else {
-                error!("podman cp {} -> {} failed", &src, dst.display());
+            match run_podman(&["cp", "-a", "--overwrite", &src, &dst.to_string_lossy()]) {
+                Ok(_) => {
+                    info!("export {src} completed");
+                }
+                Err(err) => {
+                    error!("export {src} failed: {err}");
+                }
             }
         }
 
