@@ -156,8 +156,14 @@ impl<'a> PodmanContext<'a> {
         Ok(())
     }
 
-    pub fn remove(&self) -> io::Result<()> {
-        unimplemented!()
+    pub fn remove(&self) {
+        let _ = run_podman(&["rmi", &self.image_tag]);
+
+        // Remove dangling images from local storage
+        let _ = run_podman(&["image", "prune", "-f"]);
+        let _ = run_podman(&["image", "prune", "-f", "--external"]);
+
+        info!("removed app image");
     }
 }
 
