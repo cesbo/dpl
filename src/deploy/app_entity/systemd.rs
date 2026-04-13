@@ -13,41 +13,20 @@ use tracing::{
     info,
 };
 
-use crate::deploy::DeployError;
-
 fn systemd_dir() -> &'static Path {
     Path::new("/etc/systemd/system")
 }
 
-pub fn install(name: &str, deploy_dir: &Path) -> Result<(), DeployError> {
-    let artifacts_dir = deploy_dir.join("artifacts");
-    install_app(name, &artifacts_dir).map_err(|source| DeployError::EntityError {
-        info: format!("install app {}", name),
-        source,
-    })?;
-
-    // TODO: health check
-
-    install_timers(name, deploy_dir);
-
-    Ok(())
-}
-
-pub fn uninstall(name: &str) {
-    uninstall_timers(name);
-    uninstall_app(name);
-}
-
-fn install_app(name: &str, artifacts_dir: &Path) -> io::Result<()> {
+pub fn install_app(name: &str, deploy_dir: &Path) -> io::Result<()> {
     let unit = format!("dpl--{name}.service");
-    let src = artifacts_dir.join(&unit);
+    let src = deploy_dir.join("artifacts").join(&unit);
     let dst = systemd_dir().join(&unit);
 
     fs::copy(&src, &dst)?;
 
     reload_systemd();
 
-    if let Err(err) = run_systemctl(&["enable", "--now", &unit]) {
+    if let Err(err) = run_systemctl(&["-q", "enable", "--now", &unit]) {
         let _ = fs::remove_file(&dst);
         reload_systemd();
         Err(err)
@@ -56,12 +35,18 @@ fn install_app(name: &str, artifacts_dir: &Path) -> io::Result<()> {
     }
 }
 
-fn uninstall_app(name: &str) {
+pub fn uninstall_app(name: &str) {
     let prefix = format!("dpl--{name}");
 
     let app_service = format!("{prefix}.service");
     let app_service_path = systemd_dir().join(&app_service);
-    let _ = run_systemctl(&["disable", "--now", &app_service]);
+    let _ = run_systemctl(&["-q", "disable", "--now", &app_service]);
+
+    // Check if the container failed to stop
+    if run_systemctl(&["-q", "is-failed", &app_service]).is_ok() {
+        let _ = run_systemctl(&["-q", "reset-failed", &app_service]);
+    }
+
     if let Err(err) = fs::remove_file(&app_service_path) {
         if err.kind() == io::ErrorKind::NotFound {
             info!("app service {prefix} not found");
@@ -74,7 +59,7 @@ fn uninstall_app(name: &str) {
     }
 }
 
-fn install_timers(name: &str, deploy_dir: &Path) {
+pub fn install_timers(name: &str, deploy_dir: &Path) {
     let prefix = format!("dpl--{name}--");
     let artifacts_dir = deploy_dir.join("artifacts");
 
@@ -88,7 +73,7 @@ fn install_timers(name: &str, deploy_dir: &Path) {
 
     for prefix in &timers {
         let unit = format!("{prefix}.timer");
-        match run_systemctl(&["enable", "--now", &unit]) {
+        match run_systemctl(&["-q", "enable", "--now", &unit]) {
             Ok(_) => {
                 info!("timer {unit} installed")
             }
@@ -100,7 +85,7 @@ fn install_timers(name: &str, deploy_dir: &Path) {
     }
 }
 
-fn uninstall_timers(name: &str) {
+pub fn uninstall_timers(name: &str) {
     let prefix = format!("dpl--{name}--");
 
     let timers = list_timers(systemd_dir(), &prefix);
@@ -139,11 +124,11 @@ fn list_timers(dir: &Path, prefix: &str) -> Vec<String> {
 /// Removes a timer and its associated service from the systemd.
 fn remove_timer(prefix: &str) {
     let timer_unit = format!("{prefix}.timer");
-    let _ = run_systemctl(&["disable", "--now", &timer_unit]);
+    let _ = run_systemctl(&["-q", "disable", "--now", &timer_unit]);
     let removed = remove_timer_unit(&timer_unit);
 
     let timer_service = format!("{prefix}.service");
-    let _ = run_systemctl(&["stop", &timer_service]);
+    let _ = run_systemctl(&["-q", "stop", &timer_service]);
     remove_timer_unit(&timer_service);
 
     if removed {
@@ -200,7 +185,7 @@ fn copy_timer_unit(artifacts_dir: &Path, unit: &str) -> bool {
 }
 
 fn reload_systemd() {
-    if let Err(err) = run_systemctl(&["daemon-reload"]) {
+    if let Err(err) = run_systemctl(&["-q", "daemon-reload"]) {
         error!("reload systemd: {}", err);
     }
 }

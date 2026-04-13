@@ -210,3 +210,23 @@ where
     archive_file.flush().await?;
     Ok(())
 }
+
+pub fn install(name: &str, deploy_dir: &Path) -> Result<(), DeployError> {
+    systemd::install_app(name, deploy_dir).map_err(|source| DeployError::EntityError {
+        info: format!("install app {}", name),
+        source,
+    })?;
+
+    // TODO: health check
+
+    systemd::install_timers(name, deploy_dir);
+
+    Ok(())
+}
+
+pub fn uninstall(name: &str) {
+    systemd::uninstall_timers(name);
+    systemd::uninstall_app(name);
+
+    // TODO: remove podman image
+}
