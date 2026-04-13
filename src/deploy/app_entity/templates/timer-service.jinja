@@ -6,4 +6,4 @@ Description=DPL Timer {{ timer_name }} for {{ name }}
 [Service]
 Type=oneshot
 ExecCondition=/usr/bin/podman container exists {{ container_name }}
-ExecStart=/usr/bin/podman exec {{ container_name }} /bin/sh /opt/dpl/run.sh {{ timer_name }}
+ExecStart=/usr/bin/podman exec {{ container_name }} /bin/sh /opt/dpl/run.sh timer--{{ timer_name }}
