@@ -120,17 +120,7 @@ impl<'a> PodmanContext<'a> {
 
         let container = format!("dpl-export-{}", cuid::cuid2());
 
-        let status = Command::new("podman")
-            .args(["create", "--name", &container, &self.image_tag])
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .status()?;
-
-        if !status.success() {
-            return Err(io::Error::other(format!(
-                "podman create exited with {status}"
-            )));
-        }
+        run_podman(&["create", "--name", &container, &self.image_tag])?;
 
         for export in exports {
             if export.url == "/" {
@@ -161,13 +151,13 @@ impl<'a> PodmanContext<'a> {
         }
 
         // Always remove the temporary container
-        let _ = Command::new("podman")
-            .args(["rm", &container])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        let _ = run_podman(&["rm", &container]);
 
         Ok(())
+    }
+
+    pub fn remove(&self) -> io::Result<()> {
+        unimplemented!()
     }
 }
 
@@ -182,5 +172,22 @@ where
             break;
         };
         info!(target: "podman_build", stream, line);
+    }
+}
+
+fn run_podman(args: &[&str]) -> io::Result<()> {
+    let status = Command::new("podman")
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("podman exited with {}", status),
+        ))
     }
 }
