@@ -20,21 +20,30 @@ use thiserror::Error;
 
 const STATE_FILE_NAME: &str = "state.yaml";
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeployStatus {
+    #[default]
     Idle,
     Building,
     Ready,
     Failed,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct DeployState {
+#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct BuildResult {
     pub version: u32,
     pub status: DeployStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_error: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DeployState {
+    /// Currently running version
+    pub active_version: u32,
+    /// Version for last attempt
+    pub latest_build: BuildResult,
 }
 
 #[derive(Debug, Error)]
@@ -54,11 +63,7 @@ impl DeployState {
         let content = match fs::read_to_string(&path) {
             Ok(content) => content,
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                return Ok(DeployState {
-                    version: 0,
-                    status: DeployStatus::Idle,
-                    last_error: None,
-                });
+                return Ok(DeployState::default());
             }
             Err(err) => return Err(DeployStateError::Read(err)),
         };
@@ -75,13 +80,28 @@ impl DeployState {
         fs::write(path, content).map_err(DeployStateError::Write)
     }
 
+    /// Checked version addition.
+    /// Sets the latest build status to `Building` and clears previous error.
     pub fn bump_version(&mut self) -> Result<u32, DeployStateError> {
         let next = self
+            .latest_build
             .version
             .checked_add(1)
             .ok_or(DeployStateError::VersionOverflow)?;
-        self.version = next;
+        self.latest_build.version = next;
+        self.latest_build.status = DeployStatus::Building;
+        self.latest_build.error = None;
         Ok(next)
+    }
+
+    pub fn set_error<T: ToString>(&mut self, error: T) {
+        self.latest_build.status = DeployStatus::Failed;
+        self.latest_build.error = Some(error.to_string());
+    }
+
+    pub fn set_ready(&mut self) {
+        self.latest_build.status = DeployStatus::Ready;
+        self.latest_build.error = None;
     }
 }
 

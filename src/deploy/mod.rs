@@ -90,7 +90,7 @@ impl DeployService {
         let state = DeployState::load(&entity_dir)?;
 
         let log_path = entity_dir
-            .join(format!("deploy_{}", state.version))
+            .join(format!("deploy_{}", state.latest_build.version))
             .join("log")
             .join("build.log");
 

@@ -80,22 +80,18 @@ impl AppEntity {
         R: AsyncRead + Unpin + Send,
     {
         let mut state = DeployState::load(&self.entity_dir)?;
-        if state.status == DeployStatus::Building {
+        if state.latest_build.status == DeployStatus::Building {
             return Err(DeployError::EntityBusy);
         }
 
         let version = state.bump_version()?;
+        state.save(&self.entity_dir)?;
 
         info!(entity = %self.name, version = %version, "deploy started");
 
-        state.status = DeployStatus::Building;
-        state.last_error = None;
-        state.save(&self.entity_dir)?;
-
         if let Err(err) = self.prepare(version, archive).await {
             error!(entity = %self.name, error = %err, "prepare app deploy");
-            state.status = DeployStatus::Failed;
-            state.last_error = Some(err.to_string());
+            state.set_error(&err);
             let _ = state.save(&self.entity_dir);
             return Err(err);
         }
@@ -105,16 +101,15 @@ impl AppEntity {
         tokio::task::spawn_blocking(move || {
             if let Err(err) = self.build_worker(version) {
                 error!(entity = %self.name, error = %err, "build app image");
-                state.status = DeployStatus::Failed;
-                state.last_error = Some(err.to_string());
+                state.set_error(&err);
                 let _ = state.save(&self.entity_dir);
                 return;
             }
 
+            // TODO: uninstall active version
             // TODO: run
 
-            state.status = DeployStatus::Ready;
-            state.last_error = None;
+            state.set_ready();
             let _ = state.save(&self.entity_dir);
 
             info!(entity = %self.name, version = %version, "deploy completed");
