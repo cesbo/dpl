@@ -41,7 +41,8 @@ pub struct BuildResult {
 #[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DeployState {
     /// Currently running version
-    pub active_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_version: Option<u32>,
     /// Version for last attempt
     pub latest_build: BuildResult,
 }

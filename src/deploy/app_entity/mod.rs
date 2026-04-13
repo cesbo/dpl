@@ -51,30 +51,6 @@ impl AppEntity {
         }
     }
 
-    pub fn install(&self, version: u32) -> Result<(), DeployError> {
-        let deploy_dir = self.entity_dir.join(format!("deploy_{version}"));
-
-        systemd::install_app(&self.name, &deploy_dir).map_err(|source| {
-            DeployError::EntityError {
-                info: format!("install app {}", &self.name),
-                source,
-            }
-        })?;
-
-        // TODO: health check
-
-        systemd::install_timers(&self.name, &deploy_dir);
-
-        Ok(())
-    }
-
-    pub fn uninstall(&self, version: u32) {
-        systemd::uninstall_timers(&self.name);
-        systemd::uninstall_app(&self.name);
-
-        PodmanContext::new(&self.name, version).remove();
-    }
-
     pub async fn deploy<R>(self, archive: R) -> Result<DeployState, DeployError>
     where
         R: AsyncRead + Unpin + Send,
@@ -91,7 +67,7 @@ impl AppEntity {
 
         if let Err(err) = self.prepare(version, archive).await {
             error!(entity = %self.name, error = %err, "prepare app deploy");
-            state.set_error(&err);
+            state.set_error(format!("prepare app deploy failed: {err}"));
             let _ = state.save(&self.entity_dir);
             return Err(err);
         }
@@ -100,15 +76,26 @@ impl AppEntity {
 
         tokio::task::spawn_blocking(move || {
             if let Err(err) = self.build_worker(version) {
-                error!(entity = %self.name, error = %err, "build app image");
-                state.set_error(&err);
+                error!(entity = %self.name, version = %version, error = %err, "build app image");
+                state.set_error(format!("build app image failed: {err}"));
                 let _ = state.save(&self.entity_dir);
                 return;
             }
 
-            // TODO: uninstall active version
-            // TODO: run
+            // Uninstall active version
+            if let Some(active_version) = state.active_version {
+                self.uninstall(active_version);
+            }
 
+            // Install new version
+            if let Err(err) = self.install(version) {
+                error!(entity = %self.name, version = %version, error = %err, "install app");
+                state.set_error(format!("install app failed: {err}"));
+                let _ = state.save(&self.entity_dir);
+                return;
+            }
+
+            state.active_version = Some(version);
             state.set_ready();
             let _ = state.save(&self.entity_dir);
 
@@ -217,6 +204,25 @@ impl AppEntity {
             })?;
 
         Ok(())
+    }
+
+    fn install(&self, version: u32) -> io::Result<()> {
+        let deploy_dir = self.entity_dir.join(format!("deploy_{version}"));
+
+        systemd::install_app(&self.name, &deploy_dir)?;
+
+        // TODO: health check
+
+        systemd::install_timers(&self.name, &deploy_dir);
+
+        Ok(())
+    }
+
+    fn uninstall(&self, version: u32) {
+        systemd::uninstall_timers(&self.name);
+        systemd::uninstall_app(&self.name);
+
+        PodmanContext::new(&self.name, version).remove();
     }
 }
 
