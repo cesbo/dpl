@@ -200,9 +200,6 @@ fn run_systemctl(args: &[&str]) -> io::Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("systemctl exited with {}", status),
-        ))
+        Err(io::Error::other(format!("systemctl exited with {status}")))
     }
 }

@@ -188,9 +188,6 @@ fn run_podman(args: &[&str]) -> io::Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("podman exited with {}", status),
-        ))
+        Err(io::Error::other(format!("podman exited with {status}")))
     }
 }
