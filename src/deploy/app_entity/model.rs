@@ -32,6 +32,8 @@ pub struct AppConfig {
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct BuildLayerConfig {
+    /// Description
+    pub description: Option<String>,
     /// Files to include in the build layer
     #[serde(default)]
     pub files: Vec<String>,
@@ -59,6 +61,8 @@ pub struct RuntimeConfig {
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct VolumeConfig {
+    /// Description
+    pub description: Option<String>,
     /// Source is a podman volume name or full path to the host directory
     pub source: String,
     /// Path inside the container where the volume will be mounted
@@ -69,6 +73,8 @@ pub struct VolumeConfig {
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ExportConfig {
+    /// Description
+    pub description: Option<String>,
     /// Path inside the container where static files located
     pub source: String,
     /// URL where the exported files will be accessible
@@ -79,8 +85,10 @@ pub struct ExportConfig {
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct TimerConfig {
-    /// Name of the timer
+    /// Name
     pub name: String,
+    /// Description
+    pub description: Option<String>,
     /// Schedule in systemd OnCalendar format
     pub schedule: String,
     /// Script to run

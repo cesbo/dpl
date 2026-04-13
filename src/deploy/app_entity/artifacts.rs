@@ -201,24 +201,28 @@ mod tests {
             build: vec![
                 // without files
                 BuildLayerConfig {
+                    description: None,
                     files: Vec::new(),
                     env: BTreeMap::new(),
                     script: Some("date".to_owned()),
                 },
                 // with some files
                 BuildLayerConfig {
+                    description: None,
                     files: vec!["package.json".to_owned(), "package-lock.json".to_owned()],
                     env: BTreeMap::new(),
                     script: Some("npm ci".to_owned()),
                 },
                 // without script
                 BuildLayerConfig {
+                    description: None,
                     files: vec!["test.txt".to_owned()],
                     env: BTreeMap::new(),
                     script: None,
                 },
                 // copy all
                 BuildLayerConfig {
+                    description: None,
                     files: vec!["*".to_owned()],
                     env: {
                         let mut map = BTreeMap::new();
@@ -243,11 +247,13 @@ mod tests {
             timers: vec![
                 TimerConfig {
                     name: "cleanup".into(),
+                    description: None,
                     schedule: "*-*-* 03:00:00".into(),
                     script: "echo cleanup".into(),
                 },
                 TimerConfig {
                     name: "sync".into(),
+                    description: None,
                     schedule: "hourly".into(),
                     script: "echo sync".into(),
                 },
