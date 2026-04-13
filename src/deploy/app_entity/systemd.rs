@@ -13,64 +13,106 @@ use tracing::{
     info,
 };
 
-const SYSTEMD_DIR: &str = "/etc/systemd/system";
+use crate::deploy::DeployError;
 
-fn remove_timer_unit(systemd_dir: &Path, unit: &str) -> bool {
-    let path = systemd_dir.join(unit);
-    match fs::remove_file(&path) {
-        Ok(_) => true,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {
-            info!("timer unit {unit} not found");
-            false
+fn systemd_dir() -> &'static Path {
+    Path::new("/etc/systemd/system")
+}
+
+pub fn install(name: &str, deploy_dir: &Path) -> Result<(), DeployError> {
+    let artifacts_dir = deploy_dir.join("artifacts");
+    install_app(name, &artifacts_dir).map_err(|source| DeployError::EntityError {
+        info: format!("install app {}", name),
+        source,
+    })?;
+
+    // TODO: health check
+
+    install_timers(name, deploy_dir);
+
+    Ok(())
+}
+
+pub fn uninstall(name: &str) {
+    uninstall_timers(name);
+    uninstall_app(name);
+}
+
+fn install_app(name: &str, artifacts_dir: &Path) -> io::Result<()> {
+    let unit = format!("dpl--{name}.service");
+    let src = artifacts_dir.join(&unit);
+    let dst = systemd_dir().join(&unit);
+
+    fs::copy(&src, &dst)?;
+
+    reload_systemd();
+
+    if let Err(err) = run_systemctl(&["enable", "--now", &unit]) {
+        let _ = fs::remove_file(&dst);
+        reload_systemd();
+        Err(err)
+    } else {
+        Ok(())
+    }
+}
+
+fn uninstall_app(name: &str) {
+    let prefix = format!("dpl--{name}");
+
+    let app_service = format!("{prefix}.service");
+    let app_service_path = systemd_dir().join(&app_service);
+    let _ = run_systemctl(&["disable", "--now", &app_service]);
+    if let Err(err) = fs::remove_file(&app_service_path) {
+        if err.kind() == io::ErrorKind::NotFound {
+            info!("app service {prefix} not found");
+        } else {
+            error!("failed to remove app service {prefix}: {err}");
         }
-        Err(err) => {
-            error!("failed to remove timer unit {unit}: {err}");
-            false
+    } else {
+        info!("app service {prefix} removed");
+        reload_systemd();
+    }
+}
+
+fn install_timers(name: &str, deploy_dir: &Path) {
+    let prefix = format!("dpl--{name}--");
+    let artifacts_dir = deploy_dir.join("artifacts");
+
+    let mut timers: Vec<String> = list_timers(&artifacts_dir, &prefix);
+    timers.retain(|p: &String| copy_timer(&artifacts_dir, p));
+    if timers.is_empty() {
+        return;
+    }
+
+    reload_systemd();
+
+    for prefix in &timers {
+        let unit = format!("{prefix}.timer");
+        match run_systemctl(&["enable", "--now", &unit]) {
+            Ok(_) => {
+                info!("timer {unit} installed")
+            }
+            Err(err) => {
+                remove_timer(prefix);
+                error!("failed to install timer {unit}: {err}");
+            }
         }
     }
 }
 
-fn remove_timer(systemd_dir: &Path, prefix: &str) {
-    let timer_unit = format!("{prefix}.timer");
-    let _ = run_systemctl(&["disable", "--now", &timer_unit]);
-    let removed = remove_timer_unit(systemd_dir, &timer_unit);
+fn uninstall_timers(name: &str) {
+    let prefix = format!("dpl--{name}--");
 
-    let timer_service = format!("{prefix}.service");
-    let _ = run_systemctl(&["stop", &timer_service]);
-    remove_timer_unit(systemd_dir, &timer_service);
-
-    if removed {
-        info!("timer {prefix} removed");
+    let timers = list_timers(systemd_dir(), &prefix);
+    if timers.is_empty() {
+        return;
     }
+
+    timers.iter().for_each(|t| remove_timer(t));
+    reload_systemd();
 }
 
-fn copy_timer_unit(artifacts_dir: &Path, systemd_dir: &Path, unit: &str) -> bool {
-    let src = artifacts_dir.join(unit);
-    let dst = systemd_dir.join(unit);
-    match fs::copy(&src, &dst) {
-        Ok(_) => true,
-        Err(err) => {
-            error!("failed to copy timer service {unit}: {err}");
-            false
-        }
-    }
-}
-
-fn copy_timer(artifacts_dir: &Path, systemd_dir: &Path, prefix: &str) -> bool {
-    let timer_service = format!("{prefix}.service");
-    if !copy_timer_unit(artifacts_dir, systemd_dir, &timer_service) {
-        return false;
-    }
-
-    let timer_unit = format!("{prefix}.timer");
-    if !copy_timer_unit(artifacts_dir, systemd_dir, &timer_unit) {
-        remove_timer_unit(systemd_dir, &timer_service);
-        return false;
-    }
-
-    true
-}
-
+/// Lists all timer units in the specified directory with filenames starting with the given prefix
 fn list_timers(dir: &Path, prefix: &str) -> Vec<String> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -94,84 +136,66 @@ fn list_timers(dir: &Path, prefix: &str) -> Vec<String> {
         .collect()
 }
 
-fn install_timers(deploy_dir: &Path) {
-    let systemd_dir = Path::new(SYSTEMD_DIR);
-    let artifacts_dir = deploy_dir.join("artifacts");
+/// Removes a timer and its associated service from the systemd.
+fn remove_timer(prefix: &str) {
+    let timer_unit = format!("{prefix}.timer");
+    let _ = run_systemctl(&["disable", "--now", &timer_unit]);
+    let removed = remove_timer_unit(&timer_unit);
 
-    let mut timers: Vec<String> = list_timers(&artifacts_dir, "dpl--");
-    timers.retain(|p: &String| copy_timer(&artifacts_dir, systemd_dir, p));
+    let timer_service = format!("{prefix}.service");
+    let _ = run_systemctl(&["stop", &timer_service]);
+    remove_timer_unit(&timer_service);
 
-    if timers.is_empty() {
-        return;
+    if removed {
+        info!("timer {prefix} removed");
     }
+}
 
-    reload_systemd();
-
-    for prefix in &timers {
-        let unit = format!("{prefix}.timer");
-        match run_systemctl(&["enable", "--now", &unit]) {
-            Ok(_) => {
-                info!("timer {unit} installed")
-            }
-            Err(err) => {
-                remove_timer(systemd_dir, prefix);
-                error!("failed to install timer {unit}: {err}");
-            }
+/// Removes a timer unit file from the systemd.
+/// Returns `true` if the file was successfully removed.
+fn remove_timer_unit(unit: &str) -> bool {
+    let path = systemd_dir().join(unit);
+    match fs::remove_file(&path) {
+        Ok(_) => true,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            info!("timer unit {unit} not found");
+            false
+        }
+        Err(err) => {
+            error!("failed to remove timer unit {unit}: {err}");
+            false
         }
     }
 }
 
-/// Stop and remove all stale timer-related unit files for the given entity.
-fn uninstall_timers(name: &str) {
-    let prefix = format!("dpl--{name}--");
-    let systemd_dir = Path::new(SYSTEMD_DIR);
-
-    let timers = list_timers(systemd_dir, &prefix);
-
-    if timers.is_empty() {
-        return;
+/// Copies a timer and its associated service from the artifacts directory to systemd.
+/// Returns `true` if both were successfully copied.
+fn copy_timer(artifacts_dir: &Path, prefix: &str) -> bool {
+    let timer_service = format!("{prefix}.service");
+    if !copy_timer_unit(artifacts_dir, &timer_service) {
+        return false;
     }
 
-    for prefix in &timers {
-        remove_timer(systemd_dir, prefix);
+    let timer_unit = format!("{prefix}.timer");
+    if !copy_timer_unit(artifacts_dir, &timer_unit) {
+        remove_timer_unit(&timer_service);
+        return false;
     }
 
-    reload_systemd();
+    true
 }
 
-pub fn install_app(name: &str, artifacts_dir: &Path) -> io::Result<()> {
-    let unit = format!("dpl--{name}.service");
-    let src = artifacts_dir.join(&unit);
-    let dst = Path::new(SYSTEMD_DIR).join(&unit);
-
-    fs::copy(&src, &dst)?;
-
-    reload_systemd();
-
-    if let Err(err) = run_systemctl(&["enable", "--now", &unit]) {
-        let _ = fs::remove_file(&dst);
-        Err(err)
-    } else {
-        Ok(())
-    }
-}
-
-fn uninstall_app(name: &str) {
-    let systemd_dir = Path::new(SYSTEMD_DIR);
-    let prefix = format!("dpl--{name}");
-
-    let app_service = format!("{prefix}.service");
-    let app_service_path = systemd_dir.join(&app_service);
-    let _ = run_systemctl(&["disable", "--now", &app_service]);
-    if let Err(err) = fs::remove_file(&app_service_path) {
-        if err.kind() == io::ErrorKind::NotFound {
-            info!("app service {prefix} not found");
-        } else {
-            error!("failed to remove app service {prefix}: {err}");
+/// Copies a timer unit file from the artifacts directory to systemd.
+/// Returns `true` if the file was successfully copied.
+fn copy_timer_unit(artifacts_dir: &Path, unit: &str) -> bool {
+    let src = artifacts_dir.join(unit);
+    let dst = systemd_dir().join(unit);
+    match fs::copy(&src, &dst) {
+        Ok(_) => true,
+        Err(err) => {
+            error!("failed to copy timer service {unit}: {err}");
+            false
         }
-    } else {
-        info!("app service {prefix} removed");
-        reload_systemd();
     }
 }
 
