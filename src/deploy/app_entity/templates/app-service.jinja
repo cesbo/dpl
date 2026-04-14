@@ -16,7 +16,7 @@ ExecStart=/usr/bin/podman run --name {{ container_name }} --cidfile=%t/%N.cid --
 ExecStop=/usr/bin/podman stop --cidfile=%t/%N.cid
 ExecStopPost=-/usr/bin/podman rm -v -f -i --cidfile=%t/%N.cid
 ExecStopPost=-/usr/bin/rm -f %t/%N.cid
-Restart=always
+Restart=no {#- will be changed to "always" after health check #}
 RestartSec=2
 
 [Install]

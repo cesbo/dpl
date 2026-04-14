@@ -178,7 +178,7 @@ where
     }
 }
 
-fn run_podman(args: &[&str]) -> io::Result<()> {
+pub fn run_podman(args: &[&str]) -> io::Result<()> {
     let status = Command::new("podman")
         .args(args)
         .stdout(Stdio::null())

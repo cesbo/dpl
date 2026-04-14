@@ -1,4 +1,5 @@
 mod artifacts;
+mod health;
 mod model;
 mod podman;
 mod port;
@@ -15,6 +16,7 @@ use std::{
 use artifacts::ArtifactsContext;
 pub use model::AppConfig;
 use podman::PodmanContext;
+use systemd::SystemdContext;
 use tokio::{
     fs,
     io::{
@@ -90,6 +92,8 @@ impl AppEntity {
             // Install new version
             if let Err(err) = self.install(version) {
                 error!(entity = %self.name, version = %version, error = %err, "install app");
+                self.uninstall(version);
+                state.active_version = None;
                 state.set_error(format!("install app failed: {err}"));
                 let _ = state.save(&self.entity_dir);
                 return;
@@ -209,20 +213,24 @@ impl AppEntity {
     fn install(&self, version: u32) -> io::Result<()> {
         let deploy_dir = self.entity_dir.join(format!("deploy_{version}"));
 
-        systemd::install_app(&self.name, &deploy_dir)?;
+        let systemd_ctx = SystemdContext::new(&self.name);
+        systemd_ctx.install_app(&deploy_dir)?;
 
-        // TODO: health check
+        health::check(&self.name, self.config.port)?;
+        systemd_ctx.set_restart_value("always")?;
 
-        systemd::install_timers(&self.name, &deploy_dir);
+        systemd_ctx.install_timers(&deploy_dir);
 
         Ok(())
     }
 
     fn uninstall(&self, version: u32) {
-        systemd::uninstall_timers(&self.name);
-        systemd::uninstall_app(&self.name);
+        let systemd_ctx = SystemdContext::new(&self.name);
+        systemd_ctx.uninstall_timers();
+        systemd_ctx.uninstall_app();
 
-        PodmanContext::new(&self.name, version).remove();
+        let podman_ctx = PodmanContext::new(&self.name, version);
+        podman_ctx.remove();
     }
 }
 
