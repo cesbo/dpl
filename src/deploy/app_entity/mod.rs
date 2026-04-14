@@ -77,33 +77,12 @@ impl AppEntity {
         let result = state.clone();
 
         tokio::task::spawn_blocking(move || {
-            if let Err(err) = self.build_worker(version) {
-                error!(entity = %self.name, version = %version, error = %err, "build app image");
-                state.set_error(format!("build app image failed: {err}"));
-                let _ = state.save(&self.entity_dir);
-                return;
-            }
-
-            // Uninstall active version
-            if let Some(active_version) = state.active_version {
-                self.uninstall(active_version);
-            }
-
-            // Install new version
-            if let Err(err) = self.install(version) {
-                error!(entity = %self.name, version = %version, error = %err, "install app");
-                self.uninstall(version);
-                state.active_version = None;
-                state.set_error(format!("install app failed: {err}"));
-                let _ = state.save(&self.entity_dir);
-                return;
-            }
-
-            state.active_version = Some(version);
-            state.set_ready();
-            let _ = state.save(&self.entity_dir);
-
-            info!(entity = %self.name, version = %version, "deploy completed");
+            let deploy_dir = self.entity_dir.join(format!("deploy_{version}"));
+            let log_path = deploy_dir.join("log").join("build.log");
+            let subscriber = crate::log::init_tracing_log(&log_path).unwrap();
+            tracing::subscriber::with_default(subscriber, || {
+                self.deploy_worker(&deploy_dir, state);
+            });
         });
 
         Ok(result)
@@ -165,23 +144,39 @@ impl AppEntity {
         Ok(())
     }
 
-    fn build_worker(&self, version: u32) -> Result<(), DeployError> {
-        let deploy_dir = self.entity_dir.join(format!("deploy_{version}"));
-        let log_path = deploy_dir.join("log").join("build.log");
+    fn deploy_worker(&self, deploy_dir: &Path, mut state: DeployState) {
+        let version = state.latest_build.version;
 
-        let subscriber = crate::log::init_tracing_log(&log_path).unwrap();
-        tracing::subscriber::with_default(subscriber, || {
-            match self.build_inner(&deploy_dir, version) {
-                Ok(_) => {
-                    info!("app image built successfully");
-                    Ok(())
-                }
-                Err(err) => {
-                    error!(error = %err, "app image build failed");
-                    Err(err)
-                }
-            }
-        })
+        if let Err(err) = self.build_inner(deploy_dir, version) {
+            error!(%version, %err, "failed to build app image");
+            state.set_error(format!("failed to build app image: {err}"));
+            let _ = state.save(&self.entity_dir);
+            return;
+        }
+
+        info!(%version, "app image build completed");
+
+        // Uninstall active version
+        if let Some(active_version) = state.active_version {
+            info!(version = %active_version, "uninstalling active version");
+            self.uninstall_inner(active_version);
+        }
+
+        // Install new version
+        if let Err(err) = self.install_inner(version) {
+            error!(%version, %err, "failed to install app");
+            self.uninstall_inner(version);
+            state.active_version = None;
+            state.set_error(format!("failed to install app: {err}"));
+            let _ = state.save(&self.entity_dir);
+            return;
+        }
+
+        state.active_version = Some(version);
+        state.set_ready();
+        let _ = state.save(&self.entity_dir);
+
+        info!(%version, "app deploy completed");
     }
 
     fn build_inner(&self, deploy_dir: &Path, version: u32) -> Result<(), DeployError> {
@@ -210,12 +205,13 @@ impl AppEntity {
         Ok(())
     }
 
-    fn install(&self, version: u32) -> io::Result<()> {
+    fn install_inner(&self, version: u32) -> io::Result<()> {
         let deploy_dir = self.entity_dir.join(format!("deploy_{version}"));
 
         let systemd_ctx = SystemdContext::new(&self.name);
         systemd_ctx.install_app(&deploy_dir)?;
 
+        info!(%version, "checking app health");
         health::check(&self.name, self.config.port)?;
         systemd_ctx.set_restart_value("always")?;
 
@@ -224,7 +220,7 @@ impl AppEntity {
         Ok(())
     }
 
-    fn uninstall(&self, version: u32) {
+    fn uninstall_inner(&self, version: u32) {
         let systemd_ctx = SystemdContext::new(&self.name);
         systemd_ctx.uninstall_timers();
         systemd_ctx.uninstall_app();

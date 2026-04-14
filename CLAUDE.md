@@ -53,3 +53,4 @@ Keep this split when adding functionality.
 - Use `thiserror` for error types; include file paths in error context where applicable.
 - Prefer `tracing` macros (`info!`, `error!`, `debug!`) over `println!`.
 - Keep modules focused: one concern per file.
+- Function argument order: context/destination (`&Path`, config refs) → subject/data → mutable/owned state → options/callbacks.
