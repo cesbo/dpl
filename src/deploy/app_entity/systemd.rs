@@ -255,3 +255,37 @@ fn run_systemctl(args: &[&str]) -> io::Result<()> {
         Err(io::Error::other(format!("systemctl exited with {status}")))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        path::Path,
+    };
+
+    use tempfile::tempdir;
+
+    use super::SystemdContext;
+
+    #[test]
+    fn systemd_set_restart_value() {
+        let tmp = tempdir().expect("create temp directory");
+        let unit_name = "dpl--demo.service";
+        let unit_path = tmp.path().join(unit_name);
+
+        let source = "[Unit]\nDescription=Demo\n\n[Service]\nRestart=no\nExecStart=/usr/bin/true\n";
+        fs::write(&unit_path, source).expect("write source unit file");
+
+        let ctx = SystemdContext {
+            systemd_dir: Path::new(tmp.path()),
+            name: "demo",
+        };
+
+        ctx.set_restart_value("always")
+            .expect("rewrite Restart directive");
+
+        let updated = fs::read_to_string(&unit_path).expect("read updated unit file");
+        assert!(updated.contains("Restart=always"));
+        assert!(!updated.contains("Restart=no"));
+    }
+}
