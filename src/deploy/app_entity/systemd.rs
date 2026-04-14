@@ -60,9 +60,7 @@ impl<'a> SystemdContext<'a> {
         }
 
         if let Err(err) = fs::remove_file(&app_service_path) {
-            if err.kind() == io::ErrorKind::NotFound {
-                info!("app service {prefix} not found");
-            } else {
+            if err.kind() != io::ErrorKind::NotFound {
                 error!("failed to remove app service {prefix}: {err}");
             }
         } else {
