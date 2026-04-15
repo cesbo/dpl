@@ -92,6 +92,8 @@ impl<'a> RunContext<'a> {
             }
         }
 
+        fs::create_dir_all(&config.base)?;
+
         config.server.addr = Input::with_theme(self.theme)
             .with_prompt("Bind address")
             .default(config.server.addr.clone())
@@ -101,6 +103,8 @@ impl<'a> RunContext<'a> {
             .with_prompt("Port")
             .default(config.server.port)
             .interact_text()?;
+
+        self.write_yaml(&config_path, &config)?;
 
         println!();
         println!("Access token is bearer credential for the HTTP API.");
@@ -123,15 +127,6 @@ impl<'a> RunContext<'a> {
             .with_prompt("Token value")
             .interact()?;
 
-        let autostart: bool = Confirm::with_theme(self.theme)
-            .with_prompt("Enable autostart?")
-            .default(true)
-            .interact()?;
-
-        fs::create_dir_all(&config.base)?;
-
-        self.write_yaml(&config_path, &config)?;
-
         let auth_config = AuthConfig {
             keys: vec![AuthKey {
                 name: token_name,
@@ -140,15 +135,21 @@ impl<'a> RunContext<'a> {
                 disabled: false,
             }],
         };
+
         self.write_yaml(&auth_path, &auth_config)?;
 
         self.install_service(&config.base)?;
+
+        let autostart: bool = Confirm::with_theme(self.theme)
+            .with_prompt("Enable autostart?")
+            .default(true)
+            .interact()?;
 
         if autostart {
             run_systemctl(&["-q", "enable", "--now", "dpl"])?;
         }
 
-        println!("Done.");
+        println!("dpl installed");
         Ok(())
     }
 
