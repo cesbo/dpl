@@ -28,6 +28,11 @@ use crate::{
 };
 
 const SERVICE_PATH: &str = "/etc/systemd/system/dpl.service";
+const SYSTEMD_RUNTIME_DIR: &str = "/run/systemd/system";
+
+unsafe extern "C" {
+    fn geteuid() -> u32;
+}
 
 struct RunContext<'a> {
     theme: &'a ColorfulTheme,
@@ -41,15 +46,14 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
 impl<'a> RunContext<'a> {
     fn run(&self) -> Result<(), Box<dyn Error>> {
-        if Path::new(SERVICE_PATH).exists() {
-            let reinstall = Confirm::with_theme(self.theme)
-                .with_prompt("dpl service is already installed. Reinstall?")
-                .default(false)
-                .interact()?;
-            if !reinstall {
-                return Ok(());
-            }
-            let _ = run_systemctl(&["-q", "disable", "--now", "dpl"]);
+        if unsafe { geteuid() } != 0 {
+            return Err("dpl init must be run as root (try: sudo dpl init)".into());
+        }
+
+        if !Path::new(SYSTEMD_RUNTIME_DIR).exists() {
+            return Err(
+                "systemd is not running on this system (missing /run/systemd/system)".into(),
+            );
         }
 
         let mut config = MainConfig::default();
@@ -59,6 +63,34 @@ impl<'a> RunContext<'a> {
             .default(config.base.to_string_lossy().to_string())
             .interact_text()
             .map(|s| PathBuf::from(s))?;
+
+        let config_path = config.base.join("config.yaml");
+        let auth_path = config.base.join("auth.yaml");
+
+        if config.base.is_dir() {
+            println!("Base directory already exists");
+
+            let mut ask_overwrite = false;
+            if config_path.is_file() {
+                println!("  - config.yaml will be overwritten");
+                ask_overwrite = true;
+            }
+            if auth_path.is_file() {
+                println!("  - auth.yaml (access tokens) will be overwritten");
+                ask_overwrite = true;
+            }
+
+            if ask_overwrite {
+                let proceed = Confirm::with_theme(self.theme)
+                    .with_prompt("Overwrite and continue?")
+                    .default(false)
+                    .interact()?;
+
+                if !proceed {
+                    return Ok(());
+                }
+            }
+        }
 
         config.server.addr = Input::with_theme(self.theme)
             .with_prompt("Bind address")
@@ -70,17 +102,22 @@ impl<'a> RunContext<'a> {
             .default(config.server.port)
             .interact_text()?;
 
+        println!();
+        println!("Access token is bearer credential for the HTTP API.");
+        println!("The name is just a label for identification in auth.yaml.");
+        println!();
+
         let token_name: String = Input::with_theme(self.theme)
-        .with_prompt("Token name")
-        .default("admin".into())
-        .validate_with(|input: &String| -> Result<(), &str> {
-            if validate::resource_name(input) {
-                Ok(())
-            } else {
-                Err("name must be lowercase letters, digits, hyphens (no leading/trailing/double hyphens)")
-            }
-        })
-        .interact_text()?;
+            .with_prompt("Token name")
+            .default("admin".into())
+            .validate_with(|input: &String| -> Result<(), &str> {
+                if validate::resource_name(input) {
+                    Ok(())
+                } else {
+                    Err("name must be lowercase letters, digits, hyphens (no leading/trailing/double hyphens)")
+                }
+            })
+            .interact_text()?;
 
         let token: String = Password::with_theme(self.theme)
             .with_prompt("Token value")
@@ -93,7 +130,7 @@ impl<'a> RunContext<'a> {
 
         fs::create_dir_all(&config.base)?;
 
-        self.write_yaml(&config.base.join("config.yaml"), &config)?;
+        self.write_yaml(&config_path, &config)?;
 
         let auth_config = AuthConfig {
             keys: vec![AuthKey {
@@ -103,14 +140,12 @@ impl<'a> RunContext<'a> {
                 disabled: false,
             }],
         };
-        self.write_yaml(&config.base.join("auth.yaml"), &auth_config)?;
+        self.write_yaml(&auth_path, &auth_config)?;
 
         self.install_service(&config.base)?;
 
         if autostart {
-            println!("Enabling dpl.service...");
             run_systemctl(&["-q", "enable", "--now", "dpl"])?;
-            println!("dpl.service enabled and started");
         }
 
         println!("Done.");
@@ -122,24 +157,16 @@ impl<'a> RunContext<'a> {
         path: &Path,
         value: &T,
     ) -> Result<(), Box<dyn Error>> {
-        if path.exists() {
-            let overwrite = Confirm::with_theme(self.theme)
-                .with_prompt(format!("{} already exists. Overwrite?", path.display()))
-                .default(false)
-                .interact()?;
-            if !overwrite {
-                println!("Keeping existing {}", path.display());
-                return Ok(());
-            }
-        }
-
         let content = serde_yaml::to_string(value)?;
         fs::write(path, content)?;
-
         Ok(())
     }
 
     fn install_service(&self, base: &Path) -> Result<(), Box<dyn Error>> {
+        if Path::new(SERVICE_PATH).exists() {
+            let _ = run_systemctl(&["-q", "disable", "--now", "dpl"]);
+        }
+
         let exe = std::env::current_exe()?;
         let config_path = base.join("config.yaml");
         let service = format!(
