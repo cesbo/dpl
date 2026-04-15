@@ -1,0 +1,20 @@
+{
+    "$schema": "https://json.schemastore.org/claude-code-settings.json",
+    "model": "claude-opus-4-6",
+    "effortLevel": "high",
+    "alwaysThinkingEnabled": true,
+    "language": "english",
+    "env": {
+        "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING": "1",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000"
+    },
+    "permissions": {
+        "allow": [
+            "Bash(cargo clippy)"
+        ],
+        "deny": [
+            "Read(./.env)",
+            "Bash(cargo fmt)"
+        ]
+    }
+}
