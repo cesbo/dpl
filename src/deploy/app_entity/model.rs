@@ -10,7 +10,7 @@ use serde::{
 
 use crate::{
     config::ValidateConfig,
-    deploy::entity::validate_name,
+    validate::resource_name,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -97,7 +97,7 @@ pub struct TimerConfig {
 
 impl ValidateConfig for TimerConfig {
     fn validate_config(&self) -> Result<(), String> {
-        if !validate_name(&self.name) {
+        if !resource_name(&self.name) {
             return Err(format!("invalid timer name: '{}'", self.name));
         }
 

@@ -1,10 +1,13 @@
 use std::path::PathBuf;
 
-use serde::Deserialize;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 use crate::config::ValidateConfig;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct MainConfig {
     pub base: PathBuf,
@@ -20,7 +23,7 @@ impl Default for MainConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct ServerConfig {
     pub addr: String,

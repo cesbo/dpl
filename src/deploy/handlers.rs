@@ -25,7 +25,6 @@ use tokio_util::io::StreamReader;
 use super::{
     DeployError,
     DeployService,
-    entity::validate_name,
 };
 
 pub fn router() -> Router<Arc<DeployService>> {
@@ -39,7 +38,7 @@ async fn state_handler(
     State(service): State<Arc<DeployService>>,
     Path(name): Path<String>,
 ) -> Result<impl IntoResponse, DeployError> {
-    if !validate_name(&name) {
+    if !crate::validate::resource_name(&name) {
         return Err(DeployError::InvalidEntityName);
     }
 
@@ -52,7 +51,7 @@ async fn deploy_handler(
     Path(name): Path<String>,
     body: Body,
 ) -> Result<impl IntoResponse, DeployError> {
-    if !validate_name(&name) {
+    if !crate::validate::resource_name(&name) {
         return Err(DeployError::InvalidEntityName);
     }
 
@@ -73,7 +72,7 @@ async fn log_handler(
     Path(name): Path<String>,
     Query(query): Query<LogQuery>,
 ) -> Result<impl IntoResponse, DeployError> {
-    if !validate_name(&name) {
+    if !crate::validate::resource_name(&name) {
         return Err(DeployError::InvalidEntityName);
     }
 

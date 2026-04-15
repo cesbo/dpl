@@ -1,10 +1,12 @@
 mod archive;
 mod artifacts;
 mod auth;
+mod cmd;
 mod config;
 mod deploy;
 mod log;
 mod model;
+mod validate;
 
 use std::{
     error::Error,
@@ -19,7 +21,10 @@ use axum::{
     Router,
     middleware,
 };
-use clap::Parser;
+use clap::{
+    Parser,
+    Subcommand,
+};
 use deploy::{
     DeployService,
     deploy_router,
@@ -34,10 +39,22 @@ use crate::model::MainConfig;
 
 #[derive(Parser)]
 struct Cli {
-    #[arg(long = "version", short = None)]
-    version: bool,
-    #[arg(long = "config", short = 'c', default_value = "/opt/dpl/config.yaml")]
+    /// Configuration file
+    #[arg(
+        long = "config",
+        short = 'c',
+        default_value = "/opt/dpl/config.yaml",
+        global = true
+    )]
     config: PathBuf,
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Interactive wizard for initial server setup
+    Init,
 }
 
 static CONFIG: OnceLock<MainConfig> = OnceLock::new();
@@ -50,9 +67,8 @@ pub fn config() -> &'static MainConfig {
 async fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
-    if cli.version {
-        println!("dpl {}", env!("CARGO_PKG_VERSION"));
-        return Ok(());
+    if let Some(Command::Init) = cli.command {
+        return cmd::init::run();
     }
 
     log::init_tracing();

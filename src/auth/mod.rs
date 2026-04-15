@@ -1,6 +1,6 @@
 mod error;
 mod middleware;
-mod model;
+pub mod model;
 
 use std::sync::LazyLock;
 
