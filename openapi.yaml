@@ -60,6 +60,14 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: entity busy
+        "405":
+          description: Deploy is not allowed for this entity type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: not allowed
 
   /deploy/{name}/state:
     get:

@@ -1,0 +1,62 @@
+mod model;
+
+use std::path::{
+    Path,
+    PathBuf,
+};
+
+pub use model::DomainConfig;
+use tokio::io::AsyncRead;
+
+use crate::deploy::{
+    DeployError,
+    state::DeployState,
+};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DomainEntity {
+    pub name: String,
+    pub entity_dir: PathBuf,
+    pub config: DomainConfig,
+}
+
+impl DomainEntity {
+    pub fn new(name: &str, entity_dir: &Path, config: &DomainConfig) -> Self {
+        Self {
+            name: name.into(),
+            entity_dir: entity_dir.into(),
+            config: config.clone(),
+        }
+    }
+
+    pub async fn deploy<R>(self, _archive: R) -> Result<DeployState, DeployError>
+    where
+        R: AsyncRead + Unpin + Send,
+    {
+        Err(DeployError::EntityNotAllowed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::empty;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn domain_entity_direct_deploy_is_not_allowed() {
+        let entity = DomainEntity::new(
+            "example-domain",
+            Path::new("/tmp/example-domain"),
+            &DomainConfig {
+                proxy: model::ProxyConfig::Cloudflare,
+                https: model::HttpsConfig::Proxy,
+                custom_config: String::new(),
+                routes: Vec::new(),
+            },
+        );
+
+        let err = entity.deploy(empty()).await.unwrap_err();
+        assert!(matches!(err, DeployError::EntityNotAllowed));
+    }
+}

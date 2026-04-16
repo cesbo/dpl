@@ -29,6 +29,8 @@ pub enum DeployError {
     InvalidEntityName,
     #[error("entity busy")]
     EntityBusy,
+    #[error("not allowed")]
+    EntityNotAllowed,
     #[error("save artifacts: {0}")]
     ArtifactError(#[from] ArtifactError),
     #[error("extract archive: {0}")]
@@ -46,6 +48,7 @@ impl IntoResponse for DeployError {
         let status = match &self {
             DeployError::EntityNotFound => StatusCode::NOT_FOUND,
             DeployError::EntityBusy => StatusCode::CONFLICT,
+            DeployError::EntityNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
 
