@@ -2,35 +2,39 @@
 
 `dpl` is a deploy server.
 
-## Current Status
-
-What works now:
-
-- `app` entities
-- Bearer auth from `auth.yaml`
-- `POST /deploy/{name}` to start a deploy
-- `GET /deploy/{name}/state` to check deploy state
-- generated build artifacts in `deploy_N/artifacts/`
-- build logs in `deploy_N/log/build.log`
-- static file export from the built image into `deploy_N/exports/`
-
-What is not done yet:
-
-- starting or restarting the generated systemd service
-- app entity health checks after starting container
-- an HTTP endpoint for reading build logs
-- entity types `domain`, `static`, and `database`
-- hashed auth keys
-- starting/restarting timers
-
-The project is already useful for preparing a deploy and building an image.
-It is not yet a full end-to-end replacement for the old tool.
-
-## What You Need
+## Requirements
 
 - linux - recommended Fedora 42
-- podman
 - systemd
+- podman
+- nginx
+
+### Directory Structure
+
+- `{base_dir}` - base directory for all `dpl` files (default: `/opt/dpl`), set via `base` in config
+- `{entity_dir}` - entity directory: `{base_dir}/{entity_name}/`
+- `{deploy_dir}` - versioned deploy directory: `{entity_dir}/deploy_{version}/`
+
+## Initial Setup
+
+Run the interactive wizard as root to prepare a fresh host:
+
+```bash
+sudo dpl init
+```
+
+The wizard asks for the base directory, bind address, port, and one access
+token (name + value), then:
+
+- creates main config in `{base_dir}/config.yaml` and auth config in `{base_dir}/auth.yaml`
+- writes `/etc/systemd/system/dpl.service`
+- optionally runs `systemctl enable --now dpl`
+
+If the `{base_dir}` directory already exists, the wizard stops the running unit before
+reinstalling. Existing `config.yaml` / `auth.yaml` are only overwritten after
+an explicit confirmation.
+
+## Main Config
 
 The server reads its config from a YAML file. The path is set with `--config` / `-c` (default: `/opt/dpl/config.yaml`).
 
@@ -38,7 +42,7 @@ The server reads its config from a YAML file. The path is set with `--config` / 
 dpl -c /opt/dpl/config.yaml
 ```
 
-If config does not exist, `dpl` uses these defaults:
+Example:
 
 ```yaml
 base: /opt/dpl
@@ -47,15 +51,20 @@ server:
   port: 3000
 ```
 
+Fields:
+
+- `base` - base directory for all `dpl` files (default: `/opt/dpl`). Referred to as `{base_dir}`
+- `server.addr` - bind address (default: `0.0.0.0`)
+- `server.port` - port (default: `3000`)
+
+
 ## Auth Config
 
 All `/deploy` routes need a Bearer token. Tokens are stored in:
 
 ```text
-{config.base}/auth.yaml
+{base_dir}/auth.yaml
 ```
-
-Where `{config.base}` is the `base` field from the config (default `/opt/dpl`).
 
 Example:
 
@@ -76,13 +85,13 @@ Fields:
 
 ## Entity Config
 
-Each entity has its own directory under `{config.base}`:
+Each entity has its own directory under `{base_dir}`:
 
 ```text
-{config.base}/{name}/
+{base_dir}/{entity_name}/
 ```
 
-For example, an entity named `myapp` with the default base lives in `/opt/dpl/myapp/`. This path is referred to as `entity_dir` below.
+For example, an entity named `myapp` with the default base lives in `/opt/dpl/myapp/`. Referred to as `{entity_dir}`.
 
 Common files in every entity directory:
 
@@ -166,7 +175,7 @@ Build layer fields:
 ### Files
 
 - `{entity_dir}/port.txt` - persisted host port for the entity
-- `{entity_dir}/deploy_{version}/` - versioned deploy directory (referred to as `deploy_dir` below)
+- `{entity_dir}/deploy_{version}/` - versioned deploy directory. Referred to as `{deploy_dir}`
 
 deploy_dir layout:
 
