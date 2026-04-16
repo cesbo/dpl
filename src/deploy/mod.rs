@@ -68,7 +68,7 @@ impl DeployService {
             }
             EntityConfig::Domain(config) => {
                 DomainEntity::new(name, &entity_dir, &config)
-                    .deploy(archive)
+                    .deploy()
                     .await
             }
         }

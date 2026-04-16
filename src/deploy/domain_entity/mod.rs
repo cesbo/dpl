@@ -6,7 +6,6 @@ use std::path::{
 };
 
 pub use model::DomainConfig;
-use tokio::io::AsyncRead;
 
 use crate::deploy::{
     DeployError,
@@ -29,18 +28,13 @@ impl DomainEntity {
         }
     }
 
-    pub async fn deploy<R>(self, _archive: R) -> Result<DeployState, DeployError>
-    where
-        R: AsyncRead + Unpin + Send,
-    {
+    pub async fn deploy(self) -> Result<DeployState, DeployError> {
         Err(DeployError::EntityNotAllowed)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use tokio::io::empty;
-
     use super::*;
 
     #[tokio::test]
@@ -49,14 +43,14 @@ mod tests {
             "example-domain",
             Path::new("/tmp/example-domain"),
             &DomainConfig {
-                proxy: model::ProxyConfig::Cloudflare,
-                https: model::HttpsConfig::Proxy,
+                proxy: Some(model::ProxyConfig::Cloudflare),
+                https: Some(model::HttpsConfig::Proxy),
                 custom_config: String::new(),
                 routes: Vec::new(),
             },
         );
 
-        let err = entity.deploy(empty()).await.unwrap_err();
+        let err = entity.deploy().await.unwrap_err();
         assert!(matches!(err, DeployError::EntityNotAllowed));
     }
 }
