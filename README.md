@@ -13,7 +13,7 @@
 
 - `{base_dir}` - base directory for all `dpl` files (default: `/opt/dpl`), set via `base` in config
 - `{entity_dir}` - entity directory: `{base_dir}/{entity_name}/`
-- `{deploy_dir}` - versioned deploy directory: `{entity_dir}/deploy_{version}/`
+- `{deploy_dir}` - deploy directory for one version: `{entity_dir}/deploy_{version}/`
 
 ## Initial Setup
 
@@ -85,18 +85,10 @@ Fields:
 
 ## Entity Config
 
-Each entity has its own directory under `{base_dir}`:
+Each entity uses `{entity_dir}`. Common files in every entity directory:
 
-```text
-{base_dir}/{entity_name}/
-```
-
-For example, an entity named `myapp` with the default base lives in `/opt/dpl/myapp/`. Referred to as `{entity_dir}`.
-
-Common files in every entity directory:
-
-- `config.yaml` - entity config. The `type` field selects the entity kind (`app`, `domain`, `static`, `database`)
-- `state.yaml` - stores `version`, `status`, and optional `last_error`
+- `config.yaml` - entity config. Currently only `type: app` is implemented
+- `state.yaml` - serialized deploy state stored on disk (`active_version` and `latest_build`)
 
 ## App Entity
 
@@ -107,7 +99,7 @@ An app entity represents a containerized application. When you deploy an app, `d
 File:
 
 ```text
-/opt/dpl/myapp/config.yaml
+{entity_dir}/config.yaml
 ```
 
 Example:
@@ -158,7 +150,7 @@ Fields:
 - `runtime` - runtime configuration (see below)
 - `volumes` - persistent storage mounted into the container. Data in volumes survives redeploys
 - `exports` - copies files from the built image into `{deploy_dir}/exports/`
-- `timers` - periodic scripts to run in the container (timer systemd units are generated but not yet started)
+- `timers` - periodic scripts to run in the container
 
 Runtime fields:
 
@@ -174,22 +166,18 @@ Build layer fields:
 
 ### Files
 
+App-specific files in `{entity_dir}`:
+
 - `{entity_dir}/port.txt` - persisted host port for the entity
 - `{entity_dir}/deploy_{version}/` - versioned deploy directory. Referred to as `{deploy_dir}`
 
-deploy_dir layout:
+`{deploy_dir}` layout:
 
 - `{deploy_dir}/app.tar.gz` - uploaded archive
 - `{deploy_dir}/app/` - extracted archive
-- `{deploy_dir}/artifacts/` - holds generated deploy files
+- `{deploy_dir}/artifacts/` - generated deploy files such as `containerfile`, `run.sh`, `build-N.sh`, and systemd unit files
 - `{deploy_dir}/exports/` - static files exported from the built image
 - `{deploy_dir}/log/build.log` - build log with podman build output
-
-## Start DPL
-
-```bash
-dpl
-```
 
 ## Deploy
 
@@ -238,16 +226,29 @@ Example response after a failed build:
 {
   "version": 1,
   "status": "failed",
-  "last_error": "failed to build image: podman build exited with exit status: 125"
+  "error": "failed to build image: podman build exited with exit status: 125"
 }
 ```
 
-Possible status values:
+If an app is currently active, the state also includes `active_version`.
+
+Possible `latest_build.status` values:
 
 - `idle`
 - `building`
 - `ready`
 - `failed`
+
+### Read build log
+
+```bash
+curl \
+  -H "Authorization: Bearer secret-token" \
+  http://127.0.0.1:3000/deploy/myapp/log
+```
+
+The response body is the current build log from `{deploy_dir}/log/build.log`.
+The `X-Offset` response header contains the current log size in bytes; pass it back as `?offset=<value>` to fetch only newly appended output.
 
 ## HTTP API
 
@@ -259,8 +260,6 @@ See [`openapi.yaml`](openapi.yaml) for the full API specification.
 - The auth config is loaded once on the first protected request. Restart `dpl` after changing `auth.yaml`.
 - Deploy state is stored on disk, not in memory.
 - If the archive has a single top-level folder, `dpl` flattens it after extraction.
-- Exported files are copied from the built image after a successful build.
-- `timers` field generates systemd timer/service units in artifacts, but they are not yet started or installed.
 
 ## Development
 

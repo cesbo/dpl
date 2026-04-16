@@ -4,6 +4,7 @@ use std::{
 };
 
 use axum::{
+    Json,
     Router,
     body::Body,
     extract::{
@@ -43,7 +44,7 @@ async fn state_handler(
     }
 
     let state = service.state(&name).await?;
-    Ok(state)
+    Ok((StatusCode::OK, Json(state.latest_build)))
 }
 
 async fn deploy_handler(
@@ -59,7 +60,7 @@ async fn deploy_handler(
     let reader = StreamReader::new(stream);
 
     let state = service.deploy(&name, reader).await?;
-    Ok((StatusCode::ACCEPTED, state))
+    Ok((StatusCode::ACCEPTED, Json(state.latest_build)))
 }
 
 #[derive(Deserialize)]

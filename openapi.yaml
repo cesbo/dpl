@@ -20,7 +20,8 @@ paths:
       description: |
         Accepts a tar.gz archive with source code and starts a background
         deploy for the named entity. The request returns immediately with
-        status `building`; the image build continues in the background.
+        `status` set to `building`; the image build continues
+        in the background.
 
         If the archive has a single top-level folder, dpl flattens it
         after extraction.
@@ -41,7 +42,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/DeployState"
+                $ref: "#/components/schemas/BuildResult"
               example:
                 version: 1
                 status: building
@@ -64,7 +65,7 @@ paths:
     get:
       summary: Get deploy state
       description: Reads the current deploy state from disk.
-      operationId: getDeployState
+      operationId: getBuildResult
       parameters:
         - $ref: "#/components/parameters/name"
       responses:
@@ -73,7 +74,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/DeployState"
+                $ref: "#/components/schemas/BuildResult"
               examples:
                 ready:
                   summary: Successful build
@@ -90,7 +91,7 @@ paths:
                   value:
                     version: 1
                     status: failed
-                    last_error: "failed to build image: podman build exited with exit status: 125"
+                    error: "failed to build image: podman build exited with exit status: 125"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -168,7 +169,7 @@ components:
           - myapp
 
   schemas:
-    DeployState:
+    BuildResult:
       type: object
       required:
         - version
@@ -177,12 +178,12 @@ components:
         version:
           type: integer
           minimum: 0
-          description: Deploy version number.
+          description: Version number of the latest deploy attempt.
         status:
           $ref: "#/components/schemas/DeployStatus"
-        last_error:
+        error:
           type: string
-          description: Error message from the last failed deploy. Present only when status is `failed`.
+          description: Error message from the latest failed deploy. Present only when status is `failed`.
 
     DeployStatus:
       type: string

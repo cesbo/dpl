@@ -4,14 +4,6 @@ use std::{
     path::Path,
 };
 
-use axum::{
-    Json,
-    http::StatusCode,
-    response::{
-        IntoResponse,
-        Response,
-    },
-};
 use serde::{
     Deserialize,
     Serialize,
@@ -103,11 +95,5 @@ impl DeployState {
     pub fn set_ready(&mut self) {
         self.latest_build.status = DeployStatus::Ready;
         self.latest_build.error = None;
-    }
-}
-
-impl IntoResponse for DeployState {
-    fn into_response(self) -> Response {
-        (StatusCode::OK, Json(self)).into_response()
     }
 }
