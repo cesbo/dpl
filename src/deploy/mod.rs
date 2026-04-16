@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 mod app_entity;
+mod domain_entity;
 mod entity;
 mod error;
 mod guard;
@@ -17,6 +18,7 @@ use std::{
 };
 
 use app_entity::AppEntity;
+use domain_entity::DomainEntity;
 use entity::EntityConfig;
 use error::DeployError;
 use guard::BusyGuard;
@@ -62,6 +64,11 @@ impl DeployService {
             EntityConfig::App(config) => {
                 AppEntity::new(name, &entity_dir, &config)
                     .deploy(archive)
+                    .await
+            }
+            EntityConfig::Domain(config) => {
+                DomainEntity::new(name, &entity_dir, &config)
+                    .deploy()
                     .await
             }
         }
