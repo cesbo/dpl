@@ -121,12 +121,12 @@ impl<'a> PodmanContext<'a> {
         run_podman(&["create", "--name", &container, &self.image_tag])?;
 
         for export in exports {
-            if export.url == "/" {
+            if export.path == "/" {
                 continue;
             }
 
             let mut dst = exports_dir.clone();
-            for item in export.url.trim_start_matches('/').split('/') {
+            for item in export.path.trim_start_matches('/').split('/') {
                 if item.is_empty() {
                     continue;
                 }

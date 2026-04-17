@@ -133,7 +133,7 @@ volumes:
 
 exports:
   - source: /app/public
-    url: /static
+    path: /static
 
 timers:
   - name: cleanup

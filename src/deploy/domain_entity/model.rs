@@ -2,7 +2,10 @@ use serde::Deserialize;
 
 use crate::{
     config::ValidateConfig,
-    validate::resource_name,
+    validate::{
+        resource_name,
+        url_path,
+    },
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -89,8 +92,8 @@ impl ValidateConfig for DomainConfig {
         }
 
         for route in &self.routes {
-            if route.path.is_empty() || !route.path.starts_with('/') {
-                return Err(format!("route path must start with '/': '{}'", route.path));
+            if !url_path(&route.path) {
+                return Err(format!("invalid route path: '{}'", route.path));
             }
 
             let entity = match &route.target {

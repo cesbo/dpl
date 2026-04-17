@@ -10,7 +10,10 @@ use serde::{
 
 use crate::{
     config::ValidateConfig,
-    validate::resource_name,
+    validate::{
+        resource_name,
+        url_path,
+    },
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -77,8 +80,8 @@ pub struct ExportConfig {
     pub description: Option<String>,
     /// Path inside the container where static files located
     pub source: String,
-    /// URL where the exported files will be accessible
-    pub url: String,
+    /// URL path where the exported files will be accessible
+    pub path: String,
 }
 
 /// Timers to start scripts periodically in the container
@@ -122,6 +125,12 @@ impl ValidateConfig for AppConfig {
 
             if !names.insert(timer.name.as_str()) {
                 return Err(format!("duplicate timer name: {}", timer.name));
+            }
+        }
+
+        for export in &self.exports {
+            if !url_path(&export.path) {
+                return Err(format!("invalid export path: '{}'", export.path));
             }
         }
 
