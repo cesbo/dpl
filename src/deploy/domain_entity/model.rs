@@ -61,8 +61,25 @@ pub enum HttpsConfig {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RouteConfig {
-    pub app: String,
-    pub resource: String,
+    /// URL path prefix (e.g. "/billing", "/billing/static")
+    pub path: String,
+    /// Where the route points to
+    pub target: RouteTarget,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RouteTarget {
+    /// Proxy pass to an app entity socket
+    App {
+        /// Name of the app entity
+        entity: String,
+    },
+    /// Serve static files from `{deploy_dir}/exports`
+    Static {
+        /// Name of the app entity that exports the files
+        entity: String,
+    },
 }
 
 impl ValidateConfig for DomainConfig {
@@ -72,14 +89,18 @@ impl ValidateConfig for DomainConfig {
         }
 
         for route in &self.routes {
-            if !resource_name(&route.app) {
-                return Err(format!("invalid route app name: '{}'", route.app));
+            if route.path.is_empty() || !route.path.starts_with('/') {
+                return Err(format!("route path must start with '/': '{}'", route.path));
             }
 
-            if route.resource.is_empty() {
+            let entity = match &route.target {
+                RouteTarget::App { entity } | RouteTarget::Static { entity } => entity,
+            };
+
+            if !resource_name(entity) {
                 return Err(format!(
-                    "route resource must not be empty for app '{}'",
-                    route.app
+                    "invalid entity name '{}' in route '{}'",
+                    entity, route.path
                 ));
             }
         }
@@ -106,8 +127,14 @@ https: proxy
 custom_config: |
   add_header X-Test true;
 routes:
-  - app: backend
-    resource: static
+  - path: /api
+    target:
+      kind: app
+      entity: backend
+  - path: /static
+    target:
+      kind: static
+      entity: backend
 "#,
         )
         .unwrap();
@@ -120,7 +147,19 @@ routes:
             })
         );
         assert_eq!(config.https, Some(HttpsConfig::Proxy));
-        assert_eq!(config.routes.len(), 1);
+        assert_eq!(config.routes.len(), 2);
+        assert_eq!(
+            config.routes[0].target,
+            RouteTarget::App {
+                entity: "backend".into()
+            }
+        );
+        assert_eq!(
+            config.routes[1].target,
+            RouteTarget::Static {
+                entity: "backend".into()
+            }
+        );
         assert!(config.validate_config().is_ok());
     }
 
@@ -147,8 +186,10 @@ https: acme
 custom_config: |
   add_header X-Domain test;
 routes:
-  - app: backend
-    resource: static
+  - path: /
+    target:
+      kind: app
+      entity: backend
 "#,
         )
         .unwrap();

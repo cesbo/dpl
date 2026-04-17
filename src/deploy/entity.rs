@@ -59,8 +59,10 @@ proxy:
   type: cloudflare
 https: proxy
 routes:
-  - app: backend
-    resource: static
+  - path: /api
+    target:
+      kind: app
+      entity: backend
 "#,
         )
         .unwrap();
