@@ -27,8 +27,8 @@ pub enum ProxyConfig {
     Cloudflare,
     Fastly,
     Custom {
-        proxy_header: String,
-        proxy_ip: Vec<String>,
+        header: String,
+        proxies: Vec<String>,
     },
 }
 
@@ -36,16 +36,13 @@ impl ValidateConfig for ProxyConfig {
     fn validate_config(&self) -> Result<(), String> {
         match self {
             ProxyConfig::Cloudflare | ProxyConfig::Fastly => Ok(()),
-            ProxyConfig::Custom {
-                proxy_header,
-                proxy_ip,
-            } => {
-                if proxy_header.is_empty() {
-                    return Err("custom proxy_header must not be empty".into());
+            ProxyConfig::Custom { header, proxies } => {
+                if header.is_empty() {
+                    return Err("custom header must not be empty".into());
                 }
 
-                if proxy_ip.is_empty() {
-                    return Err("custom proxy_ip must not be empty".into());
+                if proxies.is_empty() {
+                    return Err("custom proxies must not be empty".into());
                 }
 
                 Ok(())
@@ -123,8 +120,8 @@ mod tests {
             r#"
 proxy:
   type: custom
-  proxy_header: X-Forwarded-For
-  proxy_ip:
+  header: X-Forwarded-For
+  proxies:
     - 192.0.2.10
 https: proxy
 custom_config: |
@@ -145,8 +142,8 @@ routes:
         assert_eq!(
             config.proxy,
             Some(ProxyConfig::Custom {
-                proxy_header: "X-Forwarded-For".into(),
-                proxy_ip: vec!["192.0.2.10".into()],
+                header: "X-Forwarded-For".into(),
+                proxies: vec!["192.0.2.10".into()],
             })
         );
         assert_eq!(config.https, Some(HttpsConfig::Proxy));
@@ -172,8 +169,8 @@ routes:
             r#"
 proxy:
   type: custom
-  proxy_header: X-Forwarded-For
-  proxy_ip: []
+  header: X-Forwarded-For
+  proxies: []
 https: acme
 "#,
         )

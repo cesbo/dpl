@@ -18,7 +18,6 @@ use std::{
 };
 
 use app_entity::AppEntity;
-use domain_entity::DomainEntity;
 use entity::EntityConfig;
 use error::DeployError;
 use guard::BusyGuard;
@@ -66,11 +65,7 @@ impl DeployService {
                     .deploy(archive)
                     .await
             }
-            EntityConfig::Domain(config) => {
-                DomainEntity::new(name, &entity_dir, &config)
-                    .deploy()
-                    .await
-            }
+            EntityConfig::Domain(_) => Err(DeployError::EntityNotAllowed),
         }
     }
 

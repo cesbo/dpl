@@ -29,7 +29,7 @@ impl DomainEntity {
     }
 
     pub async fn deploy(self) -> Result<DeployState, DeployError> {
-        Err(DeployError::EntityNotAllowed)
+        unimplemented!()
     }
 }
 
