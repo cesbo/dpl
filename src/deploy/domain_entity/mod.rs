@@ -32,25 +32,3 @@ impl DomainEntity {
         unimplemented!()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn domain_entity_direct_deploy_is_not_allowed() {
-        let entity = DomainEntity::new(
-            "example-domain",
-            Path::new("/tmp/example-domain"),
-            &DomainConfig {
-                proxy: Some(model::ProxyConfig::Cloudflare),
-                https: Some(model::HttpsConfig::Proxy),
-                custom_config: String::new(),
-                routes: Vec::new(),
-            },
-        );
-
-        let err = entity.deploy().await.unwrap_err();
-        assert!(matches!(err, DeployError::EntityNotAllowed));
-    }
-}

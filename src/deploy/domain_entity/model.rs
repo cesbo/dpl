@@ -79,6 +79,9 @@ pub enum RouteTarget {
     Static {
         /// Name of the app entity that exports the files
         entity: String,
+        /// Single Page Application (SPA) flag
+        #[serde(default)]
+        spa: bool,
     },
 }
 
@@ -94,7 +97,7 @@ impl ValidateConfig for DomainConfig {
             }
 
             let entity = match &route.target {
-                RouteTarget::App { entity } | RouteTarget::Static { entity } => entity,
+                RouteTarget::App { entity } | RouteTarget::Static { entity, .. } => entity,
             };
 
             if !resource_name(entity) {
@@ -157,7 +160,8 @@ routes:
         assert_eq!(
             config.routes[1].target,
             RouteTarget::Static {
-                entity: "backend".into()
+                entity: "backend".into(),
+                spa: false,
             }
         );
         assert!(config.validate_config().is_ok());
