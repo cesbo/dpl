@@ -1,0 +1,38 @@
+# Generated with DPL. DO NOT EDIT
+
+server {
+    server_name {{ name }};
+    listen 80;
+    listen [::]:80;
+{% if proxy %}
+{% for ip in proxy.proxies %}
+    set_real_ip_from {{ ip }};
+{% endfor %}
+    real_ip_header {{ proxy.header }};
+{% endif %}
+{% if custom_config %}
+
+{{ custom_config }}
+{% endif %}
+{% for route in routes %}
+
+    location {{ route.path }} {
+{% if route.target.kind == "app" %}
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control "private, no-store" always;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_pass http://127.0.0.1:{{ route.target.port }};
+{% else %}
+        root {{ route.target.root }};
+{% if route.target.spa %}
+        try_files $uri $uri/ {{ route.path }}/index.html;
+{% else %}
+        try_files $uri $uri/ =404;
+{% endif %}
+{% endif %}
+    }
+{% endfor %}
+}

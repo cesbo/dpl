@@ -47,6 +47,8 @@ pub enum DeployStateError {
     Write(io::Error),
     #[error("entity version overflow")]
     VersionOverflow,
+    #[error("entity has no active version")]
+    NoActiveVersion,
 }
 
 impl DeployState {
