@@ -117,12 +117,14 @@ build:
   - files: ["*"]
     env:
       NODE_ENV: production
+      NPM_TOKEN: !secret npm-token
     script: |
       npm run build
 
 runtime:
   env:
     NODE_ENV: production
+    DB_PASS: !secret db/prod-password
   init: |
     test -d /app/dist
   cmd: node server.js
@@ -154,15 +156,14 @@ Fields:
 
 Runtime fields:
 
-- `env` - environment variables
-- `secrets` - environment variables sourced from encrypted files. Map of `ENV_NAME` to secret name. See [Secrets](#secrets)
+- `env` - environment variables. Values may be plain strings or `!secret <name>` to pull a value from an encrypted secret. See [Secrets](#secrets)
 - `init` - optional shell script that runs before `cmd`
 - `cmd` - main start command
 
 Build layer fields:
 
 - `files` - paths copied from the extracted archive into `/app`. Use `"*"` to copy all files
-- `env` - build-time environment variables for the layer script
+- `env` - build-time environment variables for the layer script. Supports `!secret <name>` the same way as `runtime.env`
 - `script` - shell script for the layer. If missing, the layer only copies files
 
 ### Files
@@ -189,18 +190,17 @@ Storage layout:
 - `{base_dir}/secrets.key` - 32-byte AES-256-GCM master key, mode `0600`
 - `{base_dir}/secrets/<name>.bin` - encrypted secret, mode `0600`. Subdirectories are allowed (`db/prod-password.bin`)
 
-Reference a secret from an entity config:
+Reference a secret from an entity config with the `!secret` YAML tag inside any `env` map (build layer or runtime):
 
 ```yaml
 runtime:
   env:
     ALLOWED_HOSTS: app.example.com
-  secrets:
-    SECRET_KEY: secret_name
-    DB_PASS: db/prod-password
+    SECRET_KEY: !secret secret_name
+    DB_PASS: !secret db/prod-password
 ```
 
-At deploy time `dpl` decrypts each referenced secret and inlines the value into the same env-var slot as `runtime.env`.
+The tag value is the secret name (matching the `<name>` used with `dpl secret set`). Plain strings and tagged secrets can be mixed freely in the same `env` map. At deploy time `dpl` decrypts each tagged value and inlines the plaintext into the generated `run.sh` (or `build-N.sh` for build-layer envs).
 
 ### CLI
 

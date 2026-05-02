@@ -52,6 +52,7 @@ enum Cmd {
         name: String,
     },
     /// List existing secret names
+    #[command(alias = "ls")]
     List,
 }
 

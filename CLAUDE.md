@@ -43,9 +43,9 @@ Keep this split when adding functionality.
 
 ### Current Limitations
 
-- Only `app` entities are implemented (no other entity types yet).
+- Entity types implemented: `app`, `domain`.
 - Auth: plain Bearer tokens from `{config.base}/auth.yaml`.
-- API: only `POST /deploy/{name}` and `GET /deploy/{name}/state`.
+- API: `POST /deploy/{name}`, `GET /deploy/{name}/state`, `GET /deploy/{name}/log`.
 - Systemd service file is generated but not installed or restarted.
 
 ## Coding Style
