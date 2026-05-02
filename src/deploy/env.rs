@@ -104,9 +104,9 @@ impl EnvList {
         }
 
         let base = crate::config().base.as_path();
-        let master_key = crate::secret::load_master_key(base)?;
+        let master_key = crate::secret::MasterKey::load(base)?;
         for (key, name) in secrets {
-            let value = crate::secret::decrypt_from_file(base, &name, &master_key)?;
+            let value = master_key.decrypt_from_file(&name)?;
             result.insert(key, value);
         }
 

@@ -70,36 +70,37 @@ fn set(base: &Path, name: &str, source: Option<&str>) -> Result<(), Box<dyn Erro
         return Err(secret::SecretError::InvalidName.into());
     }
 
-    let key = ensure_master_key(base)?;
-    let value = read_plaintext(source)?;
-    let blob = secret::encrypt(name, &key, &value)?;
-
-    let target = secret::get_secret_path(base, name);
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    fs::write(&target, blob)?;
+    let key = match secret::MasterKey::load(base) {
+        Ok(key) => key,
+        Err(secret::SecretError::KeyIo(ref e)) if e.kind() == io::ErrorKind::NotFound => {
+            let key = secret::MasterKey::generate(base);
+            key.save()?;
+            key
+        }
+        Err(err) => return Err(err.into()),
+    };
+    let text = read_plaintext(source)?;
+    key.encrypt_to_file(name, &text)?;
 
     Ok(())
 }
 
-fn read_plaintext(source: Option<&str>) -> Result<Vec<u8>, Box<dyn Error>> {
-    match source {
+fn read_plaintext(source: Option<&str>) -> Result<String, Box<dyn Error>> {
+    let value = match source {
         Some("-") => {
             let mut buf = Vec::new();
             io::stdin().read_to_end(&mut buf)?;
             if buf.is_empty() {
-                return Err("empty stdin".into());
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty stdin").into());
             }
-            Ok(buf)
+            String::from_utf8(buf)?
         }
         Some(path) => {
             let buf = fs::read(path)?;
             if buf.is_empty() {
-                return Err("empty file".into());
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty file").into());
             }
-            Ok(buf)
+            String::from_utf8(buf)?
         }
         None => {
             let value = Password::with_theme(&ColorfulTheme::default())
@@ -108,16 +109,18 @@ fn read_plaintext(source: Option<&str>) -> Result<Vec<u8>, Box<dyn Error>> {
                 .interact()?;
 
             if value.is_empty() {
-                let buf = rand::thread_rng()
+                rand::thread_rng()
                     .sample_iter(&Alphanumeric)
                     .take(RANDOM_SECRET_LEN)
-                    .collect::<Vec<u8>>();
-                Ok(buf)
+                    .map(char::from)
+                    .collect()
             } else {
-                Ok(value.into_bytes())
+                value
             }
         }
-    }
+    };
+
+    Ok(value)
 }
 
 fn rm(base: &Path, name: &str) -> Result<(), Box<dyn Error>> {
@@ -197,19 +200,4 @@ fn walk_secrets(root: &Path, dir: &Path, out: &mut Vec<String>) -> io::Result<()
     }
 
     Ok(())
-}
-
-fn ensure_master_key(path: &Path) -> Result<secret::MasterKey, secret::SecretError> {
-    match secret::load_master_key(path) {
-        Ok(key) => Ok(key),
-        Err(secret::SecretError::KeyIo(ref e)) if e.kind() == io::ErrorKind::NotFound => {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).map_err(secret::SecretError::KeyIo)?;
-            }
-            let key = secret::generate_master_key();
-            secret::write_master_key(path, &key)?;
-            Ok(key)
-        }
-        Err(err) => Err(err),
-    }
 }
