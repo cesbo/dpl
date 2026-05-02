@@ -1,7 +1,4 @@
-use std::collections::{
-    BTreeMap,
-    BTreeSet,
-};
+use std::collections::BTreeSet;
 
 use serde::{
     Deserialize,
@@ -10,13 +7,11 @@ use serde::{
 
 use crate::{
     config::ValidateConfig,
-    validate::{
-        resource_name,
-        url_path,
-    },
+    deploy::EnvList,
+    validate,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
     pub image: String,
@@ -32,7 +27,7 @@ pub struct AppConfig {
 }
 
 /// Configuration for a build layer of the application
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct BuildLayerConfig {
     /// Description
@@ -42,18 +37,18 @@ pub struct BuildLayerConfig {
     pub files: Vec<String>,
     /// Environment variables for the build layer
     #[serde(default)]
-    pub env: BTreeMap<String, String>,
+    pub env: EnvList,
     /// Shell script to execute for the build layer
     pub script: Option<String>,
 }
 
 /// Configuration for the runtime environment of the application
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeConfig {
     /// Environment variables
     #[serde(default)]
-    pub env: BTreeMap<String, String>,
+    pub env: EnvList,
     /// Shell script to initialize the runtime environment
     pub init: Option<String>,
     /// Command to run the application
@@ -61,7 +56,7 @@ pub struct RuntimeConfig {
 }
 
 /// Creates a bind mount
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct VolumeConfig {
     /// Description
@@ -73,7 +68,7 @@ pub struct VolumeConfig {
 }
 
 /// Exports static files from the container to the host
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ExportConfig {
     /// Description
@@ -85,7 +80,7 @@ pub struct ExportConfig {
 }
 
 /// Timers to start scripts periodically in the container
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TimerConfig {
     /// Name
@@ -100,7 +95,7 @@ pub struct TimerConfig {
 
 impl ValidateConfig for TimerConfig {
     fn validate_config(&self) -> Result<(), String> {
-        if !resource_name(&self.name) {
+        if !validate::resource_name(&self.name) {
             return Err(format!("invalid timer name: '{}'", self.name));
         }
 
@@ -120,6 +115,8 @@ impl ValidateConfig for AppConfig {
     fn validate_config(&self) -> Result<(), String> {
         let mut names = BTreeSet::new();
 
+        self.runtime.env.validate_config()?;
+
         for timer in &self.timers {
             timer.validate_config()?;
 
@@ -129,7 +126,7 @@ impl ValidateConfig for AppConfig {
         }
 
         for export in &self.exports {
-            if !url_path(&export.path) {
+            if !validate::url_path(&export.path) {
                 return Err(format!("invalid export path: '{}'", export.path));
             }
         }

@@ -155,6 +155,7 @@ Fields:
 Runtime fields:
 
 - `env` - environment variables
+- `secrets` - environment variables sourced from encrypted files. Map of `ENV_NAME` to secret name. See [Secrets](#secrets)
 - `init` - optional shell script that runs before `cmd`
 - `cmd` - main start command
 
@@ -178,6 +179,55 @@ App-specific files in `{entity_dir}`:
 - `{deploy_dir}/artifacts/` - generated deploy files such as `containerfile`, `run.sh`, `build-N.sh`, and systemd unit files
 - `{deploy_dir}/exports/` - static files exported from the built image
 - `{deploy_dir}/log/build.log` - build log with podman build output
+
+## Secrets
+
+Runtime values that should not live in `config.yaml` (DB passwords, API keys, signing secrets) are stored as encrypted files under `{base_dir}/secrets/` and exposed to the container as environment variables.
+
+Storage layout:
+
+- `{base_dir}/secrets.key` - 32-byte AES-256-GCM master key, mode `0600`
+- `{base_dir}/secrets/<name>.bin` - encrypted secret, mode `0600`. Subdirectories are allowed (`db/prod-password.bin`)
+
+Reference a secret from an entity config:
+
+```yaml
+runtime:
+  env:
+    ALLOWED_HOSTS: app.example.com
+  secrets:
+    SECRET_KEY: secret_name
+    DB_PASS: db/prod-password
+```
+
+At deploy time `dpl` decrypts each referenced secret and inlines the value into the same env-var slot as `runtime.env`.
+
+### CLI
+
+```bash
+dpl secret set db/prod-password                          # interactive prompt; Enter to generate
+echo -n 'topsecret' | dpl secret set db/prod-password -  # read from stdin
+dpl secret set db/prod-password ./payload.txt            # read from a file
+
+dpl secret list                                          # print secret names
+dpl secret rm db/prod-password                           # delete
+```
+
+`secret set` takes an optional source:
+
+- omitted - prompts for the value (terminal echo off). An empty input generates a random 32-character alphanumeric secret and prints it once
+- `-` - reads stdin to EOF; a single trailing `\n` is stripped
+- any other value - treated as a file path
+
+The first `dpl secret set` creates `{base_dir}/secrets.key` automatically.
+
+### Backup
+
+`{base_dir}/secrets.key` and `{base_dir}/secrets/` live together inside `{base_dir}`. `rsync -a {base_dir}/ host2:{base_dir}/` is sufficient to restore secrets on a new host - no host- or TPM-bound material is involved.
+
+### Threat model
+
+The encryption keeps plaintext out of `config.yaml`, source control, and ad-hoc backups of just the entity directory. It does not protect against an attacker with root on the deploy host: the master key sits next to the encrypted files, and decrypted values are inlined into the generated `run.sh` and the built image.
 
 ## Deploy
 

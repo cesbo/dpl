@@ -1,11 +1,11 @@
 mod archive;
-mod artifacts;
 mod auth;
 mod cmd;
 mod config;
 mod deploy;
 mod log;
 mod model;
+mod secret;
 mod validate;
 
 use std::{
@@ -55,6 +55,8 @@ struct Cli {
 enum Command {
     /// Interactive wizard for initial server setup
     Init,
+    /// Manage encrypted runtime secrets
+    Secret(cmd::secret::Args),
 }
 
 static CONFIG: OnceLock<MainConfig> = OnceLock::new();
@@ -67,8 +69,10 @@ pub fn config() -> &'static MainConfig {
 async fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
-    if let Some(Command::Init) = cli.command {
-        return cmd::init::run();
+    match cli.command {
+        Some(Command::Init) => return cmd::init::run(),
+        Some(Command::Secret(args)) => return cmd::secret::run(args, &cli.config),
+        None => {}
     }
 
     log::init_tracing();

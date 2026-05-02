@@ -34,16 +34,21 @@ pub enum ArtifactError {
         #[source]
         source: io::Error,
     },
+
     #[error("render template {name}: {source}")]
     Render {
         name: String,
         #[source]
         source: minijinja::Error,
     },
+
     #[error("write artifact {path}: {source}")]
     Write {
         path: PathBuf,
         #[source]
         source: io::Error,
     },
+
+    #[error("resolve env: {0}")]
+    Env(#[from] super::EnvError),
 }

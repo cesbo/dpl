@@ -62,7 +62,7 @@ impl<'a> RunContext<'a> {
             .with_prompt("Base directory")
             .default(config.base.to_string_lossy().to_string())
             .interact_text()
-            .map(|s| PathBuf::from(s))?;
+            .map(PathBuf::from)?;
 
         let config_path = config.base.join("config.yaml");
         let auth_path = config.base.join("auth.yaml");

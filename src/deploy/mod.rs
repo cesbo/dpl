@@ -1,8 +1,10 @@
 #![allow(dead_code)]
 
 mod app_entity;
+mod artifacts;
 mod domain_entity;
 mod entity;
+mod env;
 mod error;
 mod guard;
 mod handlers;
@@ -19,6 +21,10 @@ use std::{
 
 use app_entity::AppEntity;
 use entity::EntityConfig;
+use env::{
+    EnvError,
+    EnvList,
+};
 use error::DeployError;
 use guard::BusyGuard;
 pub use handlers::router as deploy_router;

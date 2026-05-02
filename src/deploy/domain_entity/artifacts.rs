@@ -17,17 +17,15 @@ use super::model::{
     RouteConfig,
     RouteTarget,
 };
-use crate::{
+use crate::deploy::{
+    DeployError,
     artifacts::{
         ArtifactError,
         render,
     },
-    deploy::{
-        DeployError,
-        state::{
-            DeployState,
-            DeployStateError,
-        },
+    state::{
+        DeployState,
+        DeployStateError,
     },
 };
 
@@ -99,7 +97,7 @@ impl<'a> ArtifactsContext<'a> {
 
         let mut routes = Vec::new();
         for route in &self.config.routes {
-            routes.push(resolve_route(&route).await?);
+            routes.push(resolve_route(route).await?);
         }
 
         let path = artifacts_dir.join(format!("{}.conf", self.name));
@@ -178,7 +176,7 @@ async fn resolve_route_static(entity: &str, spa: bool) -> Result<RenderTarget, D
     let state = DeployState::load(&entity_dir)?;
     let version = state
         .active_version
-        .ok_or_else(|| DeployStateError::NoActiveVersion)?;
+        .ok_or(DeployStateError::NoActiveVersion)?;
 
     Ok(RenderTarget::Static {
         root: entity_dir

@@ -14,7 +14,7 @@ use serde::Serialize;
 use tokio::fs;
 
 use super::AppConfig;
-use crate::artifacts::{
+use crate::deploy::artifacts::{
     ArtifactError,
     render,
 };
@@ -80,6 +80,22 @@ impl<'a> ArtifactsContext<'a> {
             });
         }
 
+        #[derive(Serialize)]
+        struct BuildContext<'a> {
+            files: &'a Vec<String>,
+            script: Option<&'a str>,
+        }
+
+        let layers = self
+            .config
+            .build
+            .iter()
+            .map(|b| BuildContext {
+                files: &b.files,
+                script: b.script.as_deref(),
+            })
+            .collect::<Vec<BuildContext>>();
+
         let path = artifacts_dir.join("containerfile");
         write_artifact(
             path,
@@ -87,7 +103,7 @@ impl<'a> ArtifactsContext<'a> {
             context! {
                 image => self.config.image,
                 port => self.config.port,
-                layers => &self.config.build,
+                layers => &layers,
             },
         )
         .await?;
@@ -97,7 +113,7 @@ impl<'a> ArtifactsContext<'a> {
             path,
             RUN_SH_TEMPLATE,
             context! {
-                env => &self.config.runtime.env,
+                env => self.config.runtime.env.resolve()?,
                 init => &self.config.runtime.init,
                 cmd => &self.config.runtime.cmd,
                 timers => &self.config.timers,
@@ -115,7 +131,7 @@ impl<'a> ArtifactsContext<'a> {
                 path,
                 BUILD_SH_TEMPLATE,
                 context! {
-                    env => &layer.env,
+                    env => layer.env.resolve()?,
                     script => script,
                 },
             )
@@ -181,16 +197,17 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use tempfile::tempdir;
 
     use super::*;
-    use crate::deploy::app_entity::model::{
-        AppConfig,
-        BuildLayerConfig,
-        RuntimeConfig,
-        TimerConfig,
+    use crate::deploy::{
+        EnvList,
+        app_entity::model::{
+            AppConfig,
+            BuildLayerConfig,
+            RuntimeConfig,
+            TimerConfig,
+        },
     };
 
     #[tokio::test]
@@ -203,21 +220,21 @@ mod tests {
                 BuildLayerConfig {
                     description: None,
                     files: Vec::new(),
-                    env: BTreeMap::new(),
+                    env: EnvList::new(),
                     script: Some("date".to_owned()),
                 },
                 // with some files
                 BuildLayerConfig {
                     description: None,
                     files: vec!["package.json".to_owned(), "package-lock.json".to_owned()],
-                    env: BTreeMap::new(),
+                    env: EnvList::new(),
                     script: Some("npm ci".to_owned()),
                 },
                 // without script
                 BuildLayerConfig {
                     description: None,
                     files: vec!["test.txt".to_owned()],
-                    env: BTreeMap::new(),
+                    env: EnvList::new(),
                     script: None,
                 },
                 // copy all
@@ -225,19 +242,19 @@ mod tests {
                     description: None,
                     files: vec!["*".to_owned()],
                     env: {
-                        let mut map = BTreeMap::new();
-                        map.insert("SITE_ID".to_owned(), "hello-world".to_owned());
-                        map
+                        let mut env = EnvList::new();
+                        env.insert_plain("SITE_ID".to_owned(), "hello-world".to_owned());
+                        env
                     },
                     script: Some("npm run build".to_owned()),
                 },
             ],
             runtime: RuntimeConfig {
                 env: {
-                    let mut map = BTreeMap::new();
-                    map.insert("PORT".to_owned(), "8080".to_owned());
-                    map.insert("NODE_ENV".to_owned(), "production".to_owned());
-                    map
+                    let mut env = EnvList::new();
+                    env.insert_plain("PORT".to_owned(), "8080".to_owned());
+                    env.insert_plain("NODE_ENV".to_owned(), "production".to_owned());
+                    env
                 },
                 init: Some("npm run static-generate\nnpm run migrate".to_owned()),
                 cmd: "demo-server".to_owned(),

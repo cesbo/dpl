@@ -16,6 +16,28 @@ pub fn resource_name(name: &str) -> bool {
         .all(|&b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
+pub fn env_name(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+
+    if name.starts_with(|c: char| c.is_ascii_digit()) {
+        return false;
+    }
+
+    name.as_bytes()
+        .iter()
+        .all(|&b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+pub fn secret_name(path: &str) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+
+    path.split('/').all(resource_name)
+}
+
 pub fn url_path(path: &str) -> bool {
     if path == "/" {
         return true;
@@ -45,6 +67,58 @@ pub fn url_path(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn env_name_accepts_valid() {
+        assert!(env_name("FOO"));
+        assert!(env_name("foo_bar"));
+        assert!(env_name("_private"));
+        assert!(env_name("X1"));
+        assert!(env_name("MIXED_Case_42"));
+    }
+
+    #[test]
+    fn env_name_rejects_invalid() {
+        assert!(!env_name(""));
+        assert!(!env_name("1FOO"));
+        assert!(!env_name("FOO-BAR"));
+        assert!(!env_name("FOO BAR"));
+        assert!(!env_name("FOO.BAR"));
+        assert!(!env_name("ÜMLAUT"));
+    }
+
+    #[test]
+    fn secret_name_accepts_valid() {
+        assert!(secret_name("foo"));
+        assert!(secret_name("foo/bar"));
+        assert!(secret_name("a-b-c"));
+        assert!(secret_name("db/prod-password"));
+        assert!(secret_name("a/b/c"));
+    }
+
+    #[test]
+    fn secret_name_rejects_invalid() {
+        assert!(!secret_name(""));
+        assert!(!secret_name("/foo"));
+        assert!(!secret_name("foo/"));
+        assert!(!secret_name("foo//bar"));
+        assert!(!secret_name("foo/../bar"));
+    }
+
+    #[test]
+    fn resource_name_rejects_invalid() {
+        assert!(!resource_name(""));
+        assert!(!resource_name("."));
+        assert!(!resource_name("foo/bar"));
+        assert!(!resource_name("foo_bar"));
+        assert!(!resource_name("foo.bar"));
+        assert!(!resource_name("foo--bar"));
+        assert!(!resource_name(" foo"));
+        assert!(!resource_name("Ümlaut"));
+        assert!(!resource_name("FOO"));
+        assert!(!resource_name("-foo"));
+        assert!(!resource_name("foo-"));
+    }
 
     #[test]
     fn url_path_accepts_valid() {

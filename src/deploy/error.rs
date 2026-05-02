@@ -10,10 +10,12 @@ use axum::{
 };
 use thiserror::Error;
 
-use super::state::DeployStateError;
+use super::{
+    artifacts::ArtifactError,
+    state::DeployStateError,
+};
 use crate::{
     archive::ArchiveError,
-    artifacts::ArtifactError,
     config::ConfigError,
 };
 
