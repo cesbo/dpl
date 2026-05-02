@@ -209,6 +209,7 @@ dpl secret set db/prod-password                          # interactive prompt; E
 echo -n 'topsecret' | dpl secret set db/prod-password -  # read from stdin
 dpl secret set db/prod-password ./payload.txt            # read from a file
 
+dpl secret cat db/prod-password                          # print plaintext to stdout
 dpl secret list                                          # print secret names
 dpl secret rm db/prod-password                           # delete
 ```

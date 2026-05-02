@@ -46,6 +46,11 @@ enum Cmd {
         /// On an empty interactive prompt a random secret is generated and printed.
         source: Option<String>,
     },
+    /// Print a secret's plaintext to stdout
+    Cat {
+        /// Secret name: `name` or `group/name` (lowercase letters, digits, `-`)
+        name: String,
+    },
     /// Remove an encrypted secret
     Rm {
         /// Secret name: `name` or `group/name` (lowercase letters, digits, `-`)
@@ -61,6 +66,7 @@ pub fn run(args: Args, config_path: &Path) -> Result<(), Box<dyn Error>> {
 
     match args.cmd {
         Cmd::Set { name, source } => set(&config.base, &name, source.as_deref()),
+        Cmd::Cat { name } => cat(&config.base, &name),
         Cmd::Rm { name } => rm(&config.base, &name),
         Cmd::List => list(&config.base),
     }
@@ -122,6 +128,18 @@ fn read_plaintext(source: Option<&str>) -> Result<String, Box<dyn Error>> {
     };
 
     Ok(value)
+}
+
+fn cat(base: &Path, name: &str) -> Result<(), Box<dyn Error>> {
+    if !validate::secret_name(name) {
+        return Err(secret::SecretError::InvalidName.into());
+    }
+
+    let key = secret::MasterKey::load(base)?;
+    let plaintext = key.decrypt_from_file(name)?;
+    println!("{plaintext}");
+
+    Ok(())
 }
 
 fn rm(base: &Path, name: &str) -> Result<(), Box<dyn Error>> {
