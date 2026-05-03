@@ -8,13 +8,14 @@ use thiserror::Error;
 
 use crate::{
     config::ValidateConfig,
+    secret::SecretError,
     validate,
 };
 
 #[derive(Debug, Error)]
 pub enum EnvError {
     #[error("secret: {0}")]
-    Secret(#[from] crate::secret::SecretError),
+    Secret(#[from] SecretError),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -111,6 +112,27 @@ impl EnvList {
         }
 
         Ok(result)
+    }
+
+    pub fn validate_references(&self) -> Result<(), EnvError> {
+        let mut count = 0;
+
+        let base = crate::config().base.as_path();
+
+        for value in self.0.values() {
+            if let EnvValue::Secret(name) = value {
+                if !crate::secret::secret_exists(base, name) {
+                    return Err((SecretError::SecretNotFound { name: name.into() }).into());
+                }
+                count += 1;
+            }
+        }
+
+        if count > 0 && !crate::secret::master_key_exists(base) {
+            return Err(SecretError::KeyNotFound.into());
+        }
+
+        Ok(())
     }
 }
 

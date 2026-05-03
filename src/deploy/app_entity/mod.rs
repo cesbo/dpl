@@ -57,6 +57,22 @@ impl AppEntity {
     where
         R: AsyncRead + Unpin + Send,
     {
+        if let Err(err) = self.config.runtime.env.validate_references() {
+            return Err(DeployError::EntityError {
+                info: "runtime env references".into(),
+                source: io::Error::other(err),
+            });
+        }
+
+        for layer in &self.config.build {
+            if let Err(err) = layer.env.validate_references() {
+                return Err(DeployError::EntityError {
+                    info: "build env references".into(),
+                    source: io::Error::other(err),
+                });
+            }
+        }
+
         let mut state = DeployState::load(&self.entity_dir)?;
         if state.latest_build.status == DeployStatus::Building {
             return Err(DeployError::EntityBusy);

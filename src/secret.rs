@@ -22,7 +22,6 @@ use thiserror::Error;
 const KEY_LEN: usize = 32;
 const NONCE_LEN: usize = 12;
 const TAG_LEN: usize = 16;
-const KEY_NAME: &str = "secrets.key";
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct MasterKey {
@@ -41,8 +40,14 @@ pub enum SecretError {
     #[error("master key: {0}")]
     KeyIo(io::Error),
 
-    #[error("master key is malformed")]
-    KeyMalformed,
+    #[error("master key not found")]
+    KeyNotFound,
+
+    #[error("invalid master key")]
+    InvalidKey,
+
+    #[error("secret not found '{name}'")]
+    SecretNotFound { name: String },
 
     #[error("decrypt secret '{name}'")]
     Decrypt { name: String },
@@ -58,7 +63,7 @@ pub enum SecretError {
 }
 
 pub fn get_secrets_dir(base: &Path) -> PathBuf {
-    base.join("secrets")
+    base.join(".secrets")
 }
 
 pub fn get_secret_path(base: &Path, name: &str) -> PathBuf {
@@ -71,21 +76,33 @@ pub fn get_secret_path(base: &Path, name: &str) -> PathBuf {
     dir.join(format!("{last}.bin"))
 }
 
+pub fn get_master_key_path(base: &Path) -> PathBuf {
+    get_secrets_dir(base).join("master.key")
+}
+
+pub fn secret_exists(base: &Path, name: &str) -> bool {
+    get_secret_path(base, name).try_exists().unwrap_or(false)
+}
+
+pub fn master_key_exists(base: &Path) -> bool {
+    get_master_key_path(base).try_exists().unwrap_or(false)
+}
+
 impl MasterKey {
     pub fn generate(base: &Path) -> Self {
         let mut key = [0u8; KEY_LEN];
         rand::thread_rng().fill_bytes(&mut key);
         Self {
-            path: base.join(KEY_NAME),
+            path: get_master_key_path(base),
             key,
         }
     }
 
     pub fn load(base: &Path) -> Result<Self, SecretError> {
-        let path = base.join(KEY_NAME);
+        let path = get_master_key_path(base);
         let bytes = fs::read(&path).map_err(SecretError::KeyIo)?;
         if bytes.len() != KEY_LEN {
-            return Err(SecretError::KeyMalformed);
+            return Err(SecretError::InvalidKey);
         }
 
         let mut key = [0u8; KEY_LEN];
@@ -228,11 +245,11 @@ mod tests {
     #[test]
     fn load_master_key_round_trip() {
         let tmp = tempdir().unwrap();
-        let path = tmp.path();
-        let key = MasterKey::generate(path);
+        let base = tmp.path();
+        let key = MasterKey::generate(base);
 
         key.save().unwrap();
-        let loaded = MasterKey::load(path).unwrap();
+        let loaded = MasterKey::load(base).unwrap();
         assert_eq!(loaded, key);
     }
 
@@ -248,9 +265,11 @@ mod tests {
     #[test]
     fn load_master_key_malformed() {
         let tmp = tempdir().unwrap();
-        let path = tmp.path();
-        fs::write(&path.join("secrets.key"), b"too short").unwrap();
-        let err = MasterKey::load(path).unwrap_err();
-        assert!(matches!(err, SecretError::KeyMalformed));
+        let base = tmp.path();
+        let master_key_path = get_master_key_path(base);
+        fs::create_dir_all(master_key_path.parent().unwrap()).unwrap();
+        fs::write(&master_key_path, b"too short").unwrap();
+        let err = MasterKey::load(base).unwrap_err();
+        assert!(matches!(err, SecretError::InvalidKey));
     }
 }
