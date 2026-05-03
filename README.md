@@ -179,12 +179,12 @@ App-specific files in `{unit_dir}`:
 
 ## Secrets
 
-Runtime values that should not live in `config.yaml` (DB passwords, API keys, signing secrets) are stored as encrypted files under `{base_dir}/secrets/` and exposed to the container as environment variables.
+Runtime values that should not live in `config.yaml` (DB passwords, API keys, signing secrets) are stored as encrypted files under `{base_dir}/.secrets/` and exposed to the container as environment variables.
 
 Storage layout:
 
-- `{base_dir}/secrets.key` - 32-byte AES-256-GCM master key, mode `0600`
-- `{base_dir}/secrets/<name>.bin` - encrypted secret, mode `0600`. Subdirectories are allowed (`db/prod-password.bin`)
+- `{base_dir}/.secrets/master.key` - 32-byte AES-256-GCM master key, mode `0600`
+- `{base_dir}/.secrets/<name>.bin` - encrypted secret, mode `0600`. Subdirectories are allowed (`db/prod-password.bin`)
 
 Reference a secret from a unit config with the `!secret` YAML tag inside any `env` map (build layer or runtime):
 
