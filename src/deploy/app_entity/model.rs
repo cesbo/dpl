@@ -116,6 +116,9 @@ impl ValidateConfig for AppConfig {
         let mut names = BTreeSet::new();
 
         self.runtime.env.validate_config()?;
+        for layer in &self.build {
+            layer.env.validate_config()?;
+        }
 
         for timer in &self.timers {
             timer.validate_config()?;
