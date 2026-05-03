@@ -30,15 +30,15 @@ impl<'a> SystemdContext<'a> {
     }
 
     pub fn install_app(&self, deploy_dir: &Path) -> io::Result<()> {
-        let unit = format!("dpl--{}.service", self.name);
-        let src = deploy_dir.join("artifacts").join(&unit);
-        let dst = self.systemd_dir.join(&unit);
+        let service_name = format!("dpl--{}.service", self.name);
+        let src = deploy_dir.join("artifacts").join(&service_name);
+        let dst = self.systemd_dir.join(&service_name);
 
         fs::copy(&src, &dst)?;
 
         reload_systemd();
 
-        if let Err(err) = run_systemctl(&["-q", "enable", "--now", &unit]) {
+        if let Err(err) = run_systemctl(&["-q", "enable", "--now", &service_name]) {
             let _ = fs::remove_file(&dst);
             reload_systemd();
             Err(err)
@@ -82,14 +82,14 @@ impl<'a> SystemdContext<'a> {
         reload_systemd();
 
         for prefix in &timers {
-            let unit = format!("{prefix}.timer");
-            match run_systemctl(&["-q", "enable", "--now", &unit]) {
+            let timer_name = format!("{prefix}.timer");
+            match run_systemctl(&["-q", "enable", "--now", &timer_name]) {
                 Ok(_) => {
-                    info!("timer {unit} installed")
+                    info!("timer {timer_name} installed")
                 }
                 Err(err) => {
                     remove_timer(self.systemd_dir, prefix);
-                    error!("failed to install timer {unit}: {err}");
+                    error!("failed to install timer {timer_name}: {err}");
                 }
             }
         }
@@ -111,8 +111,8 @@ impl<'a> SystemdContext<'a> {
 
     /// Rewrites the installed service file
     pub fn set_restart_value(&self, value: &str) -> io::Result<()> {
-        let unit = format!("dpl--{}.service", self.name);
-        let path = self.systemd_dir.join(&unit);
+        let service_name = format!("dpl--{}.service", self.name);
+        let path = self.systemd_dir.join(&service_name);
 
         let mut in_service = false;
         let mut result = Vec::new();
@@ -147,7 +147,7 @@ impl<'a> SystemdContext<'a> {
     }
 }
 
-/// Lists all timer units in the specified directory with filenames starting with the given prefix
+/// Lists all timers in the specified directory with filenames starting with the given prefix
 fn list_timers(dir: &Path, prefix: &str) -> Vec<String> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -175,29 +175,29 @@ fn list_timers(dir: &Path, prefix: &str) -> Vec<String> {
 fn remove_timer(systemd_dir: &Path, prefix: &str) {
     let timer_unit = format!("{prefix}.timer");
     let _ = run_systemctl(&["-q", "disable", "--now", &timer_unit]);
-    let removed = remove_timer_unit(systemd_dir, &timer_unit);
+    let removed = remove_timer_file(systemd_dir, &timer_unit);
 
     let timer_service = format!("{prefix}.service");
     let _ = run_systemctl(&["-q", "stop", &timer_service]);
-    remove_timer_unit(systemd_dir, &timer_service);
+    remove_timer_file(systemd_dir, &timer_service);
 
     if removed {
         info!("timer {prefix} removed");
     }
 }
 
-/// Removes a timer unit file from the systemd.
+/// Removes a timer file from the systemd.
 /// Returns `true` if the file was successfully removed.
-fn remove_timer_unit(systemd_dir: &Path, unit: &str) -> bool {
-    let path = systemd_dir.join(unit);
+fn remove_timer_file(systemd_dir: &Path, file_name: &str) -> bool {
+    let path = systemd_dir.join(file_name);
     match fs::remove_file(&path) {
         Ok(_) => true,
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
-            info!("timer unit {unit} not found");
+            info!("timer service file {file_name} not found");
             false
         }
         Err(err) => {
-            error!("failed to remove timer unit {unit}: {err}");
+            error!("failed to remove timer service file {file_name}: {err}");
             false
         }
     }
@@ -207,28 +207,28 @@ fn remove_timer_unit(systemd_dir: &Path, unit: &str) -> bool {
 /// Returns `true` if both were successfully copied.
 fn copy_timer(systemd_dir: &Path, artifacts_dir: &Path, prefix: &str) -> bool {
     let timer_service = format!("{prefix}.service");
-    if !copy_timer_unit(systemd_dir, artifacts_dir, &timer_service) {
+    if !copy_timer_file(systemd_dir, artifacts_dir, &timer_service) {
         return false;
     }
 
     let timer_unit = format!("{prefix}.timer");
-    if !copy_timer_unit(systemd_dir, artifacts_dir, &timer_unit) {
-        remove_timer_unit(systemd_dir, &timer_service);
+    if !copy_timer_file(systemd_dir, artifacts_dir, &timer_unit) {
+        remove_timer_file(systemd_dir, &timer_service);
         return false;
     }
 
     true
 }
 
-/// Copies a timer unit file from the artifacts directory to systemd.
+/// Copies a timer file from the artifacts directory to systemd.
 /// Returns `true` if the file was successfully copied.
-fn copy_timer_unit(systemd_dir: &Path, artifacts_dir: &Path, unit: &str) -> bool {
-    let src = artifacts_dir.join(unit);
-    let dst = systemd_dir.join(unit);
+fn copy_timer_file(systemd_dir: &Path, artifacts_dir: &Path, file_name: &str) -> bool {
+    let src = artifacts_dir.join(file_name);
+    let dst = systemd_dir.join(file_name);
     match fs::copy(&src, &dst) {
         Ok(_) => true,
         Err(err) => {
-            error!("failed to copy timer service {unit}: {err}");
+            error!("failed to copy timer service {file_name}: {err}");
             false
         }
     }
@@ -268,11 +268,11 @@ mod tests {
     #[test]
     fn systemd_set_restart_value() {
         let tmp = tempdir().expect("create temp directory");
-        let unit_name = "dpl--demo.service";
-        let unit_path = tmp.path().join(unit_name);
+        let service_name = "dpl--demo.service";
+        let service_path = tmp.path().join(service_name);
 
         let source = "[Unit]\nDescription=Demo\n\n[Service]\nRestart=no\nExecStart=/usr/bin/true\n";
-        fs::write(&unit_path, source).expect("write source unit file");
+        fs::write(&service_path, source).expect("write source service file");
 
         let ctx = SystemdContext {
             systemd_dir: Path::new(tmp.path()),
@@ -282,7 +282,7 @@ mod tests {
         ctx.set_restart_value("always")
             .expect("rewrite Restart directive");
 
-        let updated = fs::read_to_string(&unit_path).expect("read updated unit file");
+        let updated = fs::read_to_string(&service_path).expect("read updated service file");
         assert!(updated.contains("Restart=always"));
         assert!(!updated.contains("Restart=no"));
     }

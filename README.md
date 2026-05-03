@@ -30,10 +30,6 @@ token (name + value), then:
 - writes `/etc/systemd/system/dpl.service`
 - optionally runs `systemctl enable --now dpl`
 
-If the `{base_dir}` directory already exists, the wizard stops the running unit before
-reinstalling. Existing `config.yaml` / `auth.yaml` are only overwritten after
-an explicit confirmation.
-
 ## Main Config
 
 The server reads its config from a YAML file. The path is set with `--config` / `-c` (default: `/opt/dpl/config.yaml`).
@@ -177,7 +173,7 @@ App-specific files in `{entity_dir}`:
 
 - `{deploy_dir}/app.tar.gz` - uploaded archive
 - `{deploy_dir}/app/` - extracted archive
-- `{deploy_dir}/artifacts/` - generated deploy files such as `containerfile`, `run.sh`, `build-N.sh`, and systemd unit files
+- `{deploy_dir}/artifacts/` - generated deploy files such as `containerfile`, `run.sh`, `build-N.sh`, and systemd service files
 - `{deploy_dir}/exports/` - static files exported from the built image
 - `{deploy_dir}/log/build.log` - build log with podman build output
 
