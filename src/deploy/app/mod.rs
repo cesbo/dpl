@@ -38,17 +38,17 @@ use crate::deploy::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AppEntity {
+pub struct AppUnit {
     pub name: String,
-    pub entity_dir: PathBuf,
+    pub unit_dir: PathBuf,
     pub config: AppConfig,
 }
 
-impl AppEntity {
-    pub fn new(name: &str, entity_dir: &Path, config: &AppConfig) -> Self {
+impl AppUnit {
+    pub fn new(name: &str, unit_dir: &Path, config: &AppConfig) -> Self {
         Self {
             name: name.into(),
-            entity_dir: entity_dir.into(),
+            unit_dir: unit_dir.into(),
             config: config.clone(),
         }
     }
@@ -58,7 +58,7 @@ impl AppEntity {
         R: AsyncRead + Unpin + Send,
     {
         if let Err(err) = self.config.runtime.env.validate_references() {
-            return Err(DeployError::EntityError {
+            return Err(DeployError::UnitError {
                 info: "runtime env references".into(),
                 source: io::Error::other(err),
             });
@@ -66,34 +66,34 @@ impl AppEntity {
 
         for layer in &self.config.build {
             if let Err(err) = layer.env.validate_references() {
-                return Err(DeployError::EntityError {
+                return Err(DeployError::UnitError {
                     info: "build env references".into(),
                     source: io::Error::other(err),
                 });
             }
         }
 
-        let mut state = DeployState::load(&self.entity_dir)?;
+        let mut state = DeployState::load(&self.unit_dir)?;
         if state.latest_build.status == DeployStatus::Building {
-            return Err(DeployError::EntityBusy);
+            return Err(DeployError::UnitBusy);
         }
 
         let version = state.bump_version()?;
-        state.save(&self.entity_dir)?;
+        state.save(&self.unit_dir)?;
 
-        info!(entity = %self.name, version = %version, "deploy started");
+        info!(unit = %self.name, version = %version, "deploy started");
 
         if let Err(err) = self.prepare(version, archive).await {
-            error!(entity = %self.name, error = %err, "prepare app deploy");
+            error!(unit = %self.name, error = %err, "prepare app deploy");
             state.set_error(format!("prepare app deploy failed: {err}"));
-            let _ = state.save(&self.entity_dir);
+            let _ = state.save(&self.unit_dir);
             return Err(err);
         }
 
         let result = state.clone();
 
         tokio::task::spawn_blocking(move || {
-            let deploy_dir = self.entity_dir.join(format!("deploy_{version}"));
+            let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
             let log_path = deploy_dir.join("log").join("build.log");
             let subscriber = crate::log::init_tracing_log(&log_path).unwrap();
             tracing::subscriber::with_default(subscriber, || {
@@ -108,11 +108,11 @@ impl AppEntity {
     where
         R: AsyncRead + Unpin + Send,
     {
-        let deploy_dir = self.entity_dir.join(format!("deploy_{version}"));
+        let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
 
         fs::create_dir(&deploy_dir)
             .await
-            .map_err(|source| DeployError::EntityError {
+            .map_err(|source| DeployError::UnitError {
                 info: "failed to create deploy directory".to_string(),
                 source,
             })?;
@@ -120,7 +120,7 @@ impl AppEntity {
         let log_dir = deploy_dir.join("log");
         fs::create_dir(&log_dir)
             .await
-            .map_err(|source| DeployError::EntityError {
+            .map_err(|source| DeployError::UnitError {
                 info: "failed to create log directory".to_string(),
                 source,
             })?;
@@ -128,7 +128,7 @@ impl AppEntity {
         let build_log = log_dir.join("build.log");
         fs::File::create(&build_log)
             .await
-            .map_err(|source| DeployError::EntityError {
+            .map_err(|source| DeployError::UnitError {
                 info: "failed to create build.log".to_string(),
                 source,
             })?;
@@ -136,18 +136,17 @@ impl AppEntity {
         let archive_path = deploy_dir.join("app.tar.gz");
         save_archive(archive, &archive_path)
             .await
-            .map_err(|source| DeployError::EntityError {
+            .map_err(|source| DeployError::UnitError {
                 info: "failed to save archive".to_string(),
                 source,
             })?;
 
-        let port =
-            port::get_port(&self.entity_dir)
-                .await
-                .map_err(|source| DeployError::EntityError {
-                    info: "failed to get port".to_string(),
-                    source,
-                })?;
+        let port = port::get_port(&self.unit_dir)
+            .await
+            .map_err(|source| DeployError::UnitError {
+                info: "failed to get port".to_string(),
+                source,
+            })?;
 
         let artifacts = ArtifactsContext {
             name: &self.name,
@@ -166,7 +165,7 @@ impl AppEntity {
         if let Err(err) = self.build_inner(deploy_dir, version) {
             error!(%version, %err, "failed to build app image");
             state.set_error(format!("failed to build app image: {err}"));
-            let _ = state.save(&self.entity_dir);
+            let _ = state.save(&self.unit_dir);
             return;
         }
 
@@ -184,13 +183,13 @@ impl AppEntity {
             self.uninstall_inner(version);
             state.active_version = None;
             state.set_error(format!("failed to install app: {err}"));
-            let _ = state.save(&self.entity_dir);
+            let _ = state.save(&self.unit_dir);
             return;
         }
 
         state.active_version = Some(version);
         state.set_ready();
-        let _ = state.save(&self.entity_dir);
+        let _ = state.save(&self.unit_dir);
 
         info!(%version, "app deploy completed");
     }
@@ -207,13 +206,13 @@ impl AppEntity {
         let ctx = PodmanContext::new(&self.name, version);
 
         ctx.build(deploy_dir)
-            .map_err(|source| DeployError::EntityError {
+            .map_err(|source| DeployError::UnitError {
                 info: "failed to build image".to_string(),
                 source,
             })?;
 
         ctx.export(deploy_dir, &self.config.exports)
-            .map_err(|source| DeployError::EntityError {
+            .map_err(|source| DeployError::UnitError {
                 info: "failed to export static files".to_string(),
                 source,
             })?;
@@ -222,7 +221,7 @@ impl AppEntity {
     }
 
     fn install_inner(&self, version: u32) -> io::Result<()> {
-        let deploy_dir = self.entity_dir.join(format!("deploy_{version}"));
+        let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
 
         let systemd_ctx = SystemdContext::new(&self.name);
         systemd_ctx.install_app(&deploy_dir)?;

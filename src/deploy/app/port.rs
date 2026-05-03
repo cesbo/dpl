@@ -17,7 +17,7 @@ async fn find_free_port() -> io::Result<u16> {
         .map(|addr| addr.port())
 }
 
-/// get_port returns the persisted host port for the entity, or picks a
+/// get_port returns the persisted host port for the unit, or picks a
 /// random free port, persists it, and returns it.
 pub async fn get_port(dir: &Path) -> io::Result<u16> {
     let path = dir.join(PORT_FILE_NAME);

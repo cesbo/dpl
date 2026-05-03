@@ -22,23 +22,23 @@ use crate::{
 #[derive(Debug, Error)]
 pub enum DeployError {
     #[error("{0}")]
-    EntityConfig(#[from] ConfigError),
-    #[error("entity not found")]
-    EntityNotFound,
+    UnitConfig(#[from] ConfigError),
+    #[error("unit not found")]
+    UnitNotFound,
     #[error("{0}")]
     Status(#[from] DeployStateError),
-    #[error("invalid entity name")]
-    InvalidEntityName,
-    #[error("entity busy")]
-    EntityBusy,
+    #[error("invalid unit name")]
+    InvalidUnitName,
+    #[error("unit busy")]
+    UnitBusy,
     #[error("not allowed")]
-    EntityNotAllowed,
+    UnitNotAllowed,
     #[error("save artifacts: {0}")]
     ArtifactError(#[from] ArtifactError),
     #[error("extract archive: {0}")]
     ArchiveError(#[from] ArchiveError),
     #[error("{info}: {source}")]
-    EntityError {
+    UnitError {
         info: String,
         #[source]
         source: io::Error,
@@ -48,9 +48,9 @@ pub enum DeployError {
 impl IntoResponse for DeployError {
     fn into_response(self) -> Response {
         let status = match &self {
-            DeployError::EntityNotFound => StatusCode::NOT_FOUND,
-            DeployError::EntityBusy => StatusCode::CONFLICT,
-            DeployError::EntityNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
+            DeployError::UnitNotFound => StatusCode::NOT_FOUND,
+            DeployError::UnitBusy => StatusCode::CONFLICT,
+            DeployError::UnitNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
 

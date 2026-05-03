@@ -40,7 +40,7 @@ async fn state_handler(
     Path(name): Path<String>,
 ) -> Result<impl IntoResponse, DeployError> {
     if !crate::validate::resource_name(&name) {
-        return Err(DeployError::InvalidEntityName);
+        return Err(DeployError::InvalidUnitName);
     }
 
     let state = service.state(&name).await?;
@@ -53,7 +53,7 @@ async fn deploy_handler(
     body: Body,
 ) -> Result<impl IntoResponse, DeployError> {
     if !crate::validate::resource_name(&name) {
-        return Err(DeployError::InvalidEntityName);
+        return Err(DeployError::InvalidUnitName);
     }
 
     let stream = body.into_data_stream().map_err(io::Error::other);
@@ -74,7 +74,7 @@ async fn log_handler(
     Query(query): Query<LogQuery>,
 ) -> Result<impl IntoResponse, DeployError> {
     if !crate::validate::resource_name(&name) {
-        return Err(DeployError::InvalidEntityName);
+        return Err(DeployError::InvalidUnitName);
     }
 
     let offset = query.offset.unwrap_or(0);

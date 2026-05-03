@@ -19,8 +19,8 @@ cargo clippy         # Lint
 
 ### Separation of Concerns
 
-- **`DeployService`** (`deploy/service.rs`) — "is the entity busy?", "which entity method to call?". Orchestration only.
-- **Entity implementations** (e.g. `deploy/app_entity/`) — "what does a deploy of this kind actually do". All build logic lives here.
+- **`DeployService`** (`deploy/service.rs`) — "is the unit busy?", "which unit method to call?". Orchestration only.
+- **Unit implementations** (e.g. `deploy/app/`) — "what does a deploy of this kind actually do". All build logic lives here.
 
 Keep this split when adding functionality.
 
@@ -43,7 +43,7 @@ Keep this split when adding functionality.
 
 ### Current Limitations
 
-- Entity types implemented: `app`, `domain`.
+- Unit types implemented: `app`, `domain`.
 - Auth: plain Bearer tokens from `{config.base}/auth.yaml`.
 - API: `POST /deploy/{name}`, `GET /deploy/{name}/state`, `GET /deploy/{name}/log`.
 - Systemd service file is generated but not installed or restarted.

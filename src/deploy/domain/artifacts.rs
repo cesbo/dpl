@@ -66,7 +66,7 @@ enum RenderTarget {
         port: u16,
     },
     Static {
-        /// Path to root directory. Eg. /opt/dpl/entity-name/deplout_xx/exports
+        /// Path to root directory. Eg. /opt/dpl/unit-name/deplout_xx/exports
         root: String,
         /// Single Page Application (SPA) flag
         spa: bool,
@@ -139,8 +139,8 @@ async fn render_proxy(proxy: &ProxyConfig) -> RenderProxy<'_> {
 
 async fn resolve_route(route: &RouteConfig) -> Result<RenderRoute, DeployError> {
     let target = match &route.target {
-        RouteTarget::App { entity } => resolve_route_app(entity).await?,
-        RouteTarget::Static { entity, spa } => resolve_route_static(entity, *spa).await?,
+        RouteTarget::App { unit } => resolve_route_app(unit).await?,
+        RouteTarget::Static { unit, spa } => resolve_route_static(unit, *spa).await?,
     };
 
     Ok(RenderRoute {
@@ -149,37 +149,37 @@ async fn resolve_route(route: &RouteConfig) -> Result<RenderRoute, DeployError> 
     })
 }
 
-async fn resolve_route_app(entity: &str) -> Result<RenderTarget, DeployError> {
-    let entity_dir = crate::config().base.join(entity);
-    let path = entity_dir.join("port.txt");
+async fn resolve_route_app(unit: &str) -> Result<RenderTarget, DeployError> {
+    let unit_dir = crate::config().base.join(unit);
+    let path = unit_dir.join("port.txt");
 
     let content = fs::read_to_string(&path)
         .await
-        .map_err(|source| DeployError::EntityError {
-            info: "read app entity port".into(),
+        .map_err(|source| DeployError::UnitError {
+            info: "read app unit port".into(),
             source,
         })?;
 
     let port = content
         .trim()
         .parse::<u16>()
-        .map_err(|_| DeployError::EntityError {
-            info: "invalid app entity port".into(),
+        .map_err(|_| DeployError::UnitError {
+            info: "invalid app unit port".into(),
             source: io::ErrorKind::InvalidData.into(),
         })?;
 
     Ok(RenderTarget::App { port })
 }
 
-async fn resolve_route_static(entity: &str, spa: bool) -> Result<RenderTarget, DeployError> {
-    let entity_dir = crate::config().base.join(entity);
-    let state = DeployState::load(&entity_dir)?;
+async fn resolve_route_static(unit: &str, spa: bool) -> Result<RenderTarget, DeployError> {
+    let unit_dir = crate::config().base.join(unit);
+    let state = DeployState::load(&unit_dir)?;
     let version = state
         .active_version
         .ok_or(DeployStateError::NoActiveVersion)?;
 
     Ok(RenderTarget::Static {
-        root: entity_dir
+        root: unit_dir
             .join(format!("deploy_{version}"))
             .join("exports")
             .display()

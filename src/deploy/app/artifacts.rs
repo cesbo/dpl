@@ -202,7 +202,7 @@ mod tests {
     use super::*;
     use crate::deploy::{
         EnvList,
-        app_entity::model::{
+        app::model::{
             AppConfig,
             BuildLayerConfig,
             RuntimeConfig,

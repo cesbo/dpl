@@ -1,14 +1,14 @@
 #![allow(dead_code)]
 
-mod app_entity;
+mod app;
 mod artifacts;
-mod domain_entity;
-mod entity;
+mod domain;
 mod env;
 mod error;
 mod guard;
 mod handlers;
 mod state;
+mod unit;
 
 use std::{
     collections::HashMap,
@@ -19,12 +19,12 @@ use std::{
     },
 };
 
-use app_entity::AppEntity;
-use entity::EntityConfig;
+use app::AppUnit;
 use env::{
     EnvError,
     EnvList,
 };
+use unit::UnitConfig;
 use error::DeployError;
 use guard::BusyGuard;
 pub use handlers::router as deploy_router;
@@ -44,7 +44,7 @@ pub struct DeployService {
 }
 
 impl DeployService {
-    fn entity_lock(&self, name: &str) -> Result<BusyGuard, DeployError> {
+    fn unit_lock(&self, name: &str) -> Result<BusyGuard, DeployError> {
         let busy = self
             .locks
             .lock()
@@ -60,18 +60,16 @@ impl DeployService {
     where
         R: AsyncRead + Unpin + Send,
     {
-        let _guard = self.entity_lock(name)?;
+        let _guard = self.unit_lock(name)?;
 
-        let entity_dir = crate::config().base.join(name);
-        let entity = EntityConfig::load(&entity_dir)?;
+        let unit_dir = crate::config().base.join(name);
+        let unit = UnitConfig::load(&unit_dir)?;
 
-        match entity {
-            EntityConfig::App(config) => {
-                AppEntity::new(name, &entity_dir, &config)
-                    .deploy(archive)
-                    .await
+        match unit {
+            UnitConfig::App(config) => {
+                AppUnit::new(name, &unit_dir, &config).deploy(archive).await
             }
-            EntityConfig::Domain(_) => Err(DeployError::EntityNotAllowed),
+            UnitConfig::Domain(_) => Err(DeployError::UnitNotAllowed),
         }
     }
 
@@ -80,7 +78,7 @@ impl DeployService {
 
         let config_path = dir.join("config.yaml");
         if fs::metadata(&config_path).await.is_err() {
-            return Err(DeployError::EntityNotFound);
+            return Err(DeployError::UnitNotFound);
         }
 
         let state = DeployState::load(&dir)?;
@@ -88,32 +86,31 @@ impl DeployService {
     }
 
     pub async fn build_log(&self, name: &str, offset: u64) -> Result<(Vec<u8>, u64), DeployError> {
-        let entity_dir = crate::config().base.join(name);
+        let unit_dir = crate::config().base.join(name);
 
-        let config_path = entity_dir.join("config.yaml");
+        let config_path = unit_dir.join("config.yaml");
         if fs::metadata(&config_path).await.is_err() {
-            return Err(DeployError::EntityNotFound);
+            return Err(DeployError::UnitNotFound);
         }
 
-        let state = DeployState::load(&entity_dir)?;
+        let state = DeployState::load(&unit_dir)?;
 
-        let log_path = entity_dir
+        let log_path = unit_dir
             .join(format!("deploy_{}", state.latest_build.version))
             .join("log")
             .join("build.log");
 
-        let mut file =
-            fs::File::open(&log_path)
-                .await
-                .map_err(|source| DeployError::EntityError {
-                    info: "read build log".into(),
-                    source,
-                })?;
+        let mut file = fs::File::open(&log_path)
+            .await
+            .map_err(|source| DeployError::UnitError {
+                info: "read build log".into(),
+                source,
+            })?;
 
         let metadata = file
             .metadata()
             .await
-            .map_err(|source| DeployError::EntityError {
+            .map_err(|source| DeployError::UnitError {
                 info: "read build log metadata".into(),
                 source,
             })?;
@@ -128,7 +125,7 @@ impl DeployService {
         if offset > 0 {
             file.seek(std::io::SeekFrom::Start(offset))
                 .await
-                .map_err(|source| DeployError::EntityError {
+                .map_err(|source| DeployError::UnitError {
                     info: "seek build log".to_string(),
                     source,
                 })?;
@@ -136,7 +133,7 @@ impl DeployService {
 
         file.read_to_end(&mut buf)
             .await
-            .map_err(|source| DeployError::EntityError {
+            .map_err(|source| DeployError::UnitError {
                 info: "read build log".to_string(),
                 source,
             })?;

@@ -38,7 +38,7 @@ pub async fn authorize_request(
     next.run(request).await
 }
 
-/// Extract the entity name from the request path to check token permissions against.
+/// Extract the unit name from the request path to check token permissions against.
 fn resolve_access_target(request: &Request) -> Result<String, AuthServiceError> {
     let segments: Vec<_> = request
         .uri()
@@ -82,7 +82,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_name_entity() {
+    fn resolve_name_unit() {
         let request = Request::builder()
             .uri("/myapp")
             .body(Body::empty())
@@ -92,7 +92,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_name_entity_state() {
+    fn resolve_name_unit_state() {
         let request = Request::builder()
             .uri("/myapp/state")
             .body(Body::empty())
@@ -116,7 +116,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_name_entity_log() {
+    fn resolve_name_unit_log() {
         let request = Request::builder()
             .uri("/myapp/log")
             .body(Body::empty())

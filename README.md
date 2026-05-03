@@ -12,8 +12,8 @@
 ### Directory Structure
 
 - `{base_dir}` - base directory for all `dpl` files (default: `/opt/dpl`), set via `base` in config
-- `{entity_dir}` - entity directory: `{base_dir}/{entity_name}/`
-- `{deploy_dir}` - deploy directory for one version: `{entity_dir}/deploy_{version}/`
+- `{unit_dir}` - unit directory: `{base_dir}/{unit_name}/`
+- `{deploy_dir}` - deploy directory for one version: `{unit_dir}/deploy_{version}/`
 
 ## Initial Setup
 
@@ -79,23 +79,23 @@ Fields:
 - `apps` - list of allowed app names. Use `"*"` to allow all apps
 - `disabled` - if `true`, the key is rejected
 
-## Entity Config
+## Unit Config
 
-Each entity uses `{entity_dir}`. Common files in every entity directory:
+Each unit uses `{unit_dir}`. Common files in every unit directory:
 
-- `config.yaml` - entity config. Currently only `type: app` is implemented
+- `config.yaml` - unit config. Currently only `type: app` is implemented
 - `state.yaml` - serialized deploy state stored on disk (`active_version` and `latest_build`)
 
-## App Entity
+## App Unit
 
-An app entity represents a containerized application. When you deploy an app, `dpl` receives a `.tar.gz` archive with your source code, generates a `containerfile` from your config, builds a podman image, and optionally exports static files from the built image.
+An app unit represents a containerized application. When you deploy an app, `dpl` receives a `.tar.gz` archive with your source code, generates a `containerfile` from your config, builds a podman image, and optionally exports static files from the built image.
 
 ### Configuration file
 
 File:
 
 ```text
-{entity_dir}/config.yaml
+{unit_dir}/config.yaml
 ```
 
 Example:
@@ -164,10 +164,10 @@ Build layer fields:
 
 ### Files
 
-App-specific files in `{entity_dir}`:
+App-specific files in `{unit_dir}`:
 
-- `{entity_dir}/port.txt` - persisted host port for the entity
-- `{entity_dir}/deploy_{version}/` - versioned deploy directory. Referred to as `{deploy_dir}`
+- `{unit_dir}/port.txt` - persisted host port for the unit
+- `{unit_dir}/deploy_{version}/` - versioned deploy directory. Referred to as `{deploy_dir}`
 
 `{deploy_dir}` layout:
 
@@ -186,7 +186,7 @@ Storage layout:
 - `{base_dir}/secrets.key` - 32-byte AES-256-GCM master key, mode `0600`
 - `{base_dir}/secrets/<name>.bin` - encrypted secret, mode `0600`. Subdirectories are allowed (`db/prod-password.bin`)
 
-Reference a secret from an entity config with the `!secret` YAML tag inside any `env` map (build layer or runtime):
+Reference a secret from a unit config with the `!secret` YAML tag inside any `env` map (build layer or runtime):
 
 ```yaml
 runtime:
@@ -224,7 +224,7 @@ The first `dpl secret set` creates `{base_dir}/secrets.key` automatically.
 
 ### Threat model
 
-The encryption keeps plaintext out of `config.yaml`, source control, and ad-hoc backups of just the entity directory. It does not protect against an attacker with root on the deploy host: the master key sits next to the encrypted files, and decrypted values are inlined into the generated `run.sh` and the built image.
+The encryption keeps plaintext out of `config.yaml`, source control, and ad-hoc backups of just the unit directory. It does not protect against an attacker with root on the deploy host: the master key sits next to the encrypted files, and decrypted values are inlined into the generated `run.sh` and the built image.
 
 ## Deploy
 

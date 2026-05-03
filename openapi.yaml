@@ -19,7 +19,7 @@ paths:
       summary: Start a deploy
       description: |
         Accepts a tar.gz archive with source code and starts a background
-        deploy for the named entity. The request returns immediately with
+        deploy for the named unit. The request returns immediately with
         `status` set to `building`; the image build continues
         in the background.
 
@@ -53,15 +53,15 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Another deploy for this entity is already building.
+          description: Another deploy for this unit is already building.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
               example:
-                error: entity busy
+                error: unit busy
         "405":
-          description: Deploy is not allowed for this entity type.
+          description: Deploy is not allowed for this unit type.
           content:
             application/json:
               schema:
@@ -159,7 +159,7 @@ components:
       scheme: bearer
       description: |
         Plain Bearer token from `{config.base}/auth.yaml`.
-        Each token has a list of allowed entity names (or `"*"` for all).
+        Each token has a list of allowed unit names (or `"*"` for all).
 
   parameters:
     name:
@@ -167,7 +167,7 @@ components:
       in: path
       required: true
       description: |
-        Entity name. Must be non-empty, lowercase ASCII alphanumerics
+        Unit name. Must be non-empty, lowercase ASCII alphanumerics
         and hyphens only, must not start or end with a hyphen, and must
         not contain consecutive hyphens.
       schema:
@@ -220,7 +220,7 @@ components:
           example:
             error: invalid token
     Forbidden:
-      description: Token is valid but not allowed for this entity.
+      description: Token is valid but not allowed for this unit.
       content:
         application/json:
           schema:
@@ -228,10 +228,10 @@ components:
           example:
             error: permission denied
     NotFound:
-      description: Entity config does not exist.
+      description: Unit config does not exist.
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
           example:
-            error: entity not found
+            error: unit not found

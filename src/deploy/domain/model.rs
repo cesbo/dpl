@@ -70,15 +70,15 @@ pub struct RouteConfig {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RouteTarget {
-    /// Proxy pass to an app entity socket
+    /// Proxy pass to an app unit socket
     App {
-        /// Name of the app entity
-        entity: String,
+        /// Name of the app unit
+        unit: String,
     },
     /// Serve static files from `{deploy_dir}/exports`
     Static {
-        /// Name of the app entity that exports the files
-        entity: String,
+        /// Name of the app unit that exports the files
+        unit: String,
         /// Single Page Application (SPA) flag
         #[serde(default)]
         spa: bool,
@@ -96,14 +96,14 @@ impl ValidateConfig for DomainConfig {
                 return Err(format!("invalid route path: '{}'", route.path));
             }
 
-            let entity = match &route.target {
-                RouteTarget::App { entity } | RouteTarget::Static { entity, .. } => entity,
+            let unit = match &route.target {
+                RouteTarget::App { unit } | RouteTarget::Static { unit, .. } => unit,
             };
 
-            if !resource_name(entity) {
+            if !resource_name(unit) {
                 return Err(format!(
-                    "invalid entity name '{}' in route '{}'",
-                    entity, route.path
+                    "invalid unit name '{}' in route '{}'",
+                    unit, route.path
                 ));
             }
         }
@@ -133,11 +133,11 @@ routes:
   - path: /api
     target:
       kind: app
-      entity: backend
+      unit: backend
   - path: /static
     target:
       kind: static
-      entity: backend
+      unit: backend
 "#,
         )
         .unwrap();
@@ -154,13 +154,13 @@ routes:
         assert_eq!(
             config.routes[0].target,
             RouteTarget::App {
-                entity: "backend".into()
+                unit: "backend".into()
             }
         );
         assert_eq!(
             config.routes[1].target,
             RouteTarget::Static {
-                entity: "backend".into(),
+                unit: "backend".into(),
                 spa: false,
             }
         );
@@ -193,7 +193,7 @@ routes:
   - path: /
     target:
       kind: app
-      entity: backend
+      unit: backend
 "#,
         )
         .unwrap();

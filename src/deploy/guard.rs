@@ -13,7 +13,7 @@ pub struct BusyGuard(Arc<AtomicBool>);
 impl BusyGuard {
     pub fn lock(busy: Arc<AtomicBool>) -> Result<Self, DeployError> {
         if busy.swap(true, Ordering::Acquire) {
-            Err(DeployError::EntityBusy)
+            Err(DeployError::UnitBusy)
         } else {
             Ok(BusyGuard(busy))
         }
