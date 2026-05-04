@@ -77,7 +77,19 @@ pub fn load_main_config(path: &Path) -> Result<(), config::ConfigError> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() {
+    if let Err(e) = run().await {
+        eprintln!("error: {e}");
+        let mut src = e.source();
+        while let Some(s) = src {
+            eprintln!("  caused by: {s}");
+            src = s.source();
+        }
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
     match cli.command {
