@@ -36,7 +36,10 @@ use tokio::{
     net::TcpListener,
     signal,
 };
-use tracing::info;
+use tracing::{
+    error,
+    info,
+};
 
 use crate::model::MainConfig;
 
@@ -78,30 +81,33 @@ pub fn load_main_config(path: &Path) -> Result<(), config::ConfigError> {
 
 #[tokio::main]
 async fn main() {
-    if let Err(e) = run().await {
-        eprintln!("error: {e}");
-        let mut src = e.source();
-        while let Some(s) = src {
-            eprintln!("  caused by: {s}");
-            src = s.source();
+    let cli = Cli::parse();
+
+    if let Some(cmd) = cli.command {
+        let result = match cmd {
+            Command::Init => cmd::init::run(),
+            Command::Secret(args) => cmd::secret::run(args, &cli.config),
+            Command::Unit(args) => cmd::unit::run(args, &cli.config),
+        };
+
+        if let Err(err) = result {
+            exit_with_stderr(err.as_ref());
         }
-        std::process::exit(1);
+
+        return;
+    }
+
+    if let Err(err) = load_main_config(&cli.config) {
+        exit_with_stderr(&err);
+    }
+
+    if let Err(err) = run().await {
+        exit_with_error(err.as_ref());
     }
 }
 
 async fn run() -> Result<(), Box<dyn Error>> {
-    let cli = Cli::parse();
-
-    match cli.command {
-        Some(Command::Init) => return cmd::init::run(),
-        Some(Command::Secret(args)) => return cmd::secret::run(args, &cli.config),
-        Some(Command::Unit(args)) => return cmd::unit::run(args, &cli.config),
-        None => {}
-    }
-
     log::init_tracing();
-
-    load_main_config(&cli.config)?;
 
     let service = Arc::new(DeployService::default());
     let deploy_routes = deploy_router().route_layer(middleware::from_fn_with_state(
@@ -129,4 +135,24 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
 async fn shutdown_signal() {
     signal::ctrl_c().await.unwrap();
+}
+
+fn exit_with_stderr(e: &(dyn Error + 'static)) -> ! {
+    eprintln!("error: {e}");
+    let mut src = e.source();
+    while let Some(s) = src {
+        eprintln!("  caused by: {s}");
+        src = s.source();
+    }
+    std::process::exit(1);
+}
+
+fn exit_with_error(e: &(dyn Error + 'static)) -> ! {
+    error!(error = %e, "server failed");
+    let mut src = e.source();
+    while let Some(s) = src {
+        error!(error = %s, "  caused by");
+        src = s.source();
+    }
+    std::process::exit(1);
 }

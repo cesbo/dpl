@@ -9,11 +9,16 @@ use tracing_subscriber::EnvFilter;
 pub fn init_tracing() {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-    tracing_subscriber::fmt()
+    let builder = tracing_subscriber::fmt()
         .with_env_filter(env_filter)
         .with_target(false)
-        .compact()
-        .init();
+        .compact();
+
+    if std::env::var_os("JOURNAL_STREAM").is_some() {
+        builder.without_time().init();
+    } else {
+        builder.init();
+    }
 }
 
 pub fn init_tracing_log(path: &Path) -> io::Result<impl tracing::Subscriber> {
