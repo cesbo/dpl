@@ -1,10 +1,7 @@
 use std::{
     fs,
     io,
-    path::{
-        Path,
-        PathBuf,
-    },
+    path::Path,
 };
 
 use serde::de::DeserializeOwned;
@@ -30,58 +27,38 @@ where
 {
     let content = match fs::read_to_string(path) {
         Ok(v) => v,
-        Err(source) => {
-            if source.kind() == io::ErrorKind::NotFound
+        Err(err) => {
+            if err.kind() == io::ErrorKind::NotFound
                 && let Some(v) = T::default_config()
             {
                 return Ok(v);
             }
 
-            return Err(ConfigError::Read {
-                path: path.into(),
-                source,
-            });
+            return Err(ConfigError::Read(err));
         }
     };
 
-    let config: T = serde_yaml::from_str(&content).map_err(|source| ConfigError::Parse {
-        path: path.into(),
-        source,
-    })?;
-
-    config
-        .validate_config()
-        .map_err(|info| ConfigError::Invalid {
-            path: path.into(),
-            info,
-        })?;
+    let config: T = serde_yaml::from_str(&content)?;
+    config.validate_config().map_err(ConfigError::Invalid)?;
 
     Ok(config)
 }
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    #[error("read config {path}: {source}")]
-    Read {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
+    #[error("read config: {0}")]
+    Read(#[from] io::Error),
 
-    #[error("parse config {path}: {source}")]
-    Parse {
-        path: PathBuf,
-        #[source]
-        source: serde_yaml::Error,
-    },
+    #[error("parse config: {0}")]
+    Parse(#[from] serde_yaml::Error),
 
-    #[error("invalid configuration {path}: {info}")]
-    Invalid { path: PathBuf, info: String },
+    #[error("invalid config: {0}")]
+    Invalid(String),
 }
 
 impl ConfigError {
     pub fn is_not_found(&self) -> bool {
-        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+        matches!(self, Self::Read(err) if err.kind() == io::ErrorKind::NotFound)
     }
 }
 
@@ -125,7 +102,7 @@ mod tests {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         file.write_all(b"value: -1\n").unwrap();
 
-        if let Err(ConfigError::Invalid { info, .. }) = load_config::<TestConfig>(file.path()) {
+        if let Err(ConfigError::Invalid(info)) = load_config::<TestConfig>(file.path()) {
             assert!(info.contains("non-negative"), "unexpected info: {info}");
         } else {
             panic!("unexpected result");

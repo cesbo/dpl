@@ -40,14 +40,8 @@ pub enum SecretError {
     #[error("master key: {0}")]
     KeyIo(io::Error),
 
-    #[error("master key not found")]
-    KeyNotFound,
-
     #[error("invalid master key")]
     InvalidKey,
-
-    #[error("secret not found '{name}'")]
-    SecretNotFound { name: String },
 
     #[error("decrypt secret '{name}'")]
     Decrypt { name: String },
@@ -82,10 +76,6 @@ pub fn get_master_key_path(base: &Path) -> PathBuf {
 
 pub fn secret_exists(base: &Path, name: &str) -> bool {
     get_secret_path(base, name).try_exists().unwrap_or(false)
-}
-
-pub fn master_key_exists(base: &Path) -> bool {
-    get_master_key_path(base).try_exists().unwrap_or(false)
 }
 
 impl MasterKey {

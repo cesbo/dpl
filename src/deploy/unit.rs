@@ -8,6 +8,7 @@ use super::{
 };
 use crate::{
     config::{
+        ConfigError,
         ValidateConfig,
         load_config,
     },
@@ -31,8 +32,12 @@ impl ValidateConfig for UnitConfig {
 }
 
 impl UnitConfig {
-    pub fn load(unit_dir: &Path) -> Result<Self, DeployError> {
-        let path = unit_dir.join("config.yaml");
+    pub fn load(base: &Path, name: &str) -> Result<Self, DeployError> {
+        if !crate::validate::resource_name(name) {
+            return Err(DeployError::InvalidUnitName);
+        }
+
+        let path = base.join(name).join("config.yaml");
         let unit = load_config(&path).map_err(|err| {
             if err.is_not_found() {
                 DeployError::UnitNotFound
@@ -40,6 +45,13 @@ impl UnitConfig {
                 DeployError::UnitConfig(err)
             }
         })?;
+
+        match &unit {
+            UnitConfig::App(config) => config
+                .validate_references(base)
+                .map_err(|info| ConfigError::Invalid(format!("app references: {info}")))?,
+            UnitConfig::Domain(_) => {}
+        }
 
         Ok(unit)
     }

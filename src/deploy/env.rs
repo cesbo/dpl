@@ -1,4 +1,7 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    path::Path,
+};
 
 use serde::{
     Deserialize,
@@ -68,6 +71,21 @@ impl ValidateConfig for EnvValue {
     }
 }
 
+impl EnvValue {
+    pub fn validate_references(&self, base: &Path) -> Result<(), String> {
+        match self {
+            EnvValue::Plain(_) => {}
+            EnvValue::Secret(name) => {
+                if !crate::secret::secret_exists(base, name) {
+                    return Err(format!("secret '{name}' does not exist"));
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 pub struct EnvList(BTreeMap<String, EnvValue>);
 
@@ -114,22 +132,9 @@ impl EnvList {
         Ok(result)
     }
 
-    pub fn validate_references(&self) -> Result<(), EnvError> {
-        let mut count = 0;
-
-        let base = crate::config().base.as_path();
-
+    pub fn validate_references(&self, base: &Path) -> Result<(), String> {
         for value in self.0.values() {
-            if let EnvValue::Secret(name) = value {
-                if !crate::secret::secret_exists(base, name) {
-                    return Err((SecretError::SecretNotFound { name: name.into() }).into());
-                }
-                count += 1;
-            }
-        }
-
-        if count > 0 && !crate::secret::master_key_exists(base) {
-            return Err(SecretError::KeyNotFound.into());
+            value.validate_references(base)?;
         }
 
         Ok(())
@@ -140,7 +145,7 @@ impl ValidateConfig for EnvList {
     fn validate_config(&self) -> Result<(), String> {
         for (key, value) in &self.0 {
             if !validate::env_name(key) {
-                return Err(format!("invalid env key: '{key}'"));
+                return Err(format!("invalid env name: '{key}'"));
             }
 
             value.validate_config()?;

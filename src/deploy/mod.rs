@@ -12,6 +12,7 @@ mod unit;
 
 use std::{
     collections::HashMap,
+    io,
     sync::{
         Arc,
         Mutex,
@@ -24,8 +25,7 @@ use env::{
     EnvError,
     EnvList,
 };
-use unit::UnitConfig;
-use error::DeployError;
+pub use error::DeployError;
 use guard::BusyGuard;
 pub use handlers::router as deploy_router;
 use state::DeployState;
@@ -37,6 +37,7 @@ use tokio::{
         AsyncSeekExt,
     },
 };
+pub use unit::UnitConfig;
 
 #[derive(Default)]
 pub struct DeployService {
@@ -62,12 +63,18 @@ impl DeployService {
     {
         let _guard = self.unit_lock(name)?;
 
-        let unit_dir = crate::config().base.join(name);
-        let unit = UnitConfig::load(&unit_dir)?;
+        let base = crate::config().base.as_path();
+        let unit = UnitConfig::load(base, name)?;
 
         match unit {
             UnitConfig::App(config) => {
-                AppUnit::new(name, &unit_dir, &config).deploy(archive).await
+                if let Err(err) = config.validate_references(base) {
+                    return Err(DeployError::UnitError {
+                        info: "app references".into(),
+                        source: io::Error::other(err),
+                    });
+                }
+                AppUnit::new(base, name, &config).deploy(archive).await
             }
             UnitConfig::Domain(_) => Err(DeployError::UnitNotAllowed),
         }
@@ -100,12 +107,13 @@ impl DeployService {
             .join("log")
             .join("build.log");
 
-        let mut file = fs::File::open(&log_path)
-            .await
-            .map_err(|source| DeployError::UnitError {
-                info: "read build log".into(),
-                source,
-            })?;
+        let mut file =
+            fs::File::open(&log_path)
+                .await
+                .map_err(|source| DeployError::UnitError {
+                    info: "read build log".into(),
+                    source,
+                })?;
 
         let metadata = file
             .metadata()

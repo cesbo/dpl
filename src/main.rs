@@ -10,7 +10,10 @@ mod validate;
 
 use std::{
     error::Error,
-    path::PathBuf,
+    path::{
+        Path,
+        PathBuf,
+    },
     sync::{
         Arc,
         OnceLock,
@@ -57,12 +60,20 @@ enum Command {
     Init,
     /// Manage encrypted runtime secrets
     Secret(cmd::secret::Args),
+    /// Manage units
+    Unit(cmd::unit::Args),
 }
 
 static CONFIG: OnceLock<MainConfig> = OnceLock::new();
 
 pub fn config() -> &'static MainConfig {
     CONFIG.get().expect("config not initialized")
+}
+
+pub fn load_main_config(path: &Path) -> Result<(), config::ConfigError> {
+    let main_config = config::load_config(path)?;
+    CONFIG.set(main_config).expect("config already initialized");
+    Ok(())
 }
 
 #[tokio::main]
@@ -72,14 +83,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     match cli.command {
         Some(Command::Init) => return cmd::init::run(),
         Some(Command::Secret(args)) => return cmd::secret::run(args, &cli.config),
+        Some(Command::Unit(args)) => return cmd::unit::run(args, &cli.config),
         None => {}
     }
 
     log::init_tracing();
 
-    CONFIG
-        .set(config::load_config::<MainConfig>(&cli.config)?)
-        .unwrap();
+    load_main_config(&cli.config)?;
 
     let service = Arc::new(DeployService::default());
     let deploy_routes = deploy_router().route_layer(middleware::from_fn_with_state(

@@ -45,10 +45,10 @@ pub struct AppUnit {
 }
 
 impl AppUnit {
-    pub fn new(name: &str, unit_dir: &Path, config: &AppConfig) -> Self {
+    pub fn new(base: &Path, name: &str, config: &AppConfig) -> Self {
         Self {
             name: name.into(),
-            unit_dir: unit_dir.into(),
+            unit_dir: base.join(name),
             config: config.clone(),
         }
     }
@@ -57,22 +57,6 @@ impl AppUnit {
     where
         R: AsyncRead + Unpin + Send,
     {
-        if let Err(err) = self.config.runtime.env.validate_references() {
-            return Err(DeployError::UnitError {
-                info: "runtime env references".into(),
-                source: io::Error::other(err),
-            });
-        }
-
-        for layer in &self.config.build {
-            if let Err(err) = layer.env.validate_references() {
-                return Err(DeployError::UnitError {
-                    info: "build env references".into(),
-                    source: io::Error::other(err),
-                });
-            }
-        }
-
         let mut state = DeployState::load(&self.unit_dir)?;
         if state.latest_build.status == DeployStatus::Building {
             return Err(DeployError::UnitBusy);
@@ -141,12 +125,13 @@ impl AppUnit {
                 source,
             })?;
 
-        let port = port::get_port(&self.unit_dir)
-            .await
-            .map_err(|source| DeployError::UnitError {
-                info: "failed to get port".to_string(),
-                source,
-            })?;
+        let port =
+            port::get_port(&self.unit_dir)
+                .await
+                .map_err(|source| DeployError::UnitError {
+                    info: "failed to get port".to_string(),
+                    source,
+                })?;
 
         let artifacts = ArtifactsContext {
             name: &self.name,

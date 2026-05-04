@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::path::Path;
 
 use serde::{
     Deserialize,
@@ -111,10 +111,24 @@ impl ValidateConfig for TimerConfig {
     }
 }
 
+impl AppConfig {
+    pub fn validate_references(&self, base: &Path) -> Result<(), String> {
+        if let Err(err) = self.runtime.env.validate_references(base) {
+            return Err(format!("runtime env: {err}"));
+        }
+
+        for layer in &self.build {
+            if let Err(err) = layer.env.validate_references(base) {
+                return Err(format!("build env: {err}"));
+            }
+        }
+
+        Ok(())
+    }
+}
+
 impl ValidateConfig for AppConfig {
     fn validate_config(&self) -> Result<(), String> {
-        let mut names = BTreeSet::new();
-
         self.runtime.env.validate_config()?;
         for layer in &self.build {
             layer.env.validate_config()?;
@@ -122,10 +136,6 @@ impl ValidateConfig for AppConfig {
 
         for timer in &self.timers {
             timer.validate_config()?;
-
-            if !names.insert(timer.name.as_str()) {
-                return Err(format!("duplicate timer name: {}", timer.name));
-            }
         }
 
         for export in &self.exports {
