@@ -82,4 +82,29 @@ routes:
         assert!(matches!(config, UnitConfig::Domain(_)));
         assert!(config.validate_config().is_ok());
     }
+
+    #[test]
+    fn parse_app_unit_config_with_secret_template() {
+        let config: UnitConfig = serde_yaml::from_str(
+            r#"
+type: app
+image: alpine
+port: 8080
+build: []
+runtime:
+  env:
+    PLAIN: "hello"
+    SECRET_KEY: "${secret:my-key}"
+    DATABASE_URL: "postgres://app:${secret:my-key}@db/app"
+  cmd: "./run"
+"#,
+        )
+        .unwrap();
+
+        let UnitConfig::App(app) = config else {
+            panic!("expected app variant");
+        };
+        assert_eq!(app.runtime.cmd, "./run");
+        assert_eq!(app.runtime.env.validate_config(), Ok(()));
+    }
 }

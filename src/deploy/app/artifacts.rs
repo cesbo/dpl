@@ -243,7 +243,7 @@ mod tests {
                     files: vec!["*".to_owned()],
                     env: {
                         let mut env = EnvList::new();
-                        env.insert_plain("SITE_ID".to_owned(), "hello-world".to_owned());
+                        env.insert_literal("SITE_ID".to_owned(), "hello-world".to_owned());
                         env
                     },
                     script: Some("npm run build".to_owned()),
@@ -252,8 +252,8 @@ mod tests {
             runtime: RuntimeConfig {
                 env: {
                     let mut env = EnvList::new();
-                    env.insert_plain("PORT".to_owned(), "8080".to_owned());
-                    env.insert_plain("NODE_ENV".to_owned(), "production".to_owned());
+                    env.insert_literal("PORT".to_owned(), "8080".to_owned());
+                    env.insert_literal("NODE_ENV".to_owned(), "production".to_owned());
                     env
                 },
                 init: Some("npm run static-generate\nnpm run migrate".to_owned()),
