@@ -6,14 +6,14 @@ use std::path::{
     PathBuf,
 };
 
-use artifacts::ArtifactsContext;
-pub use model::DomainConfig;
 use tokio::fs;
 use tracing::{
     error,
     info,
 };
 
+use self::artifacts::ArtifactsContext;
+pub use self::model::DomainConfig;
 use crate::deploy::{
     DeployError,
     state::{

@@ -202,12 +202,7 @@ mod tests {
     use super::*;
     use crate::deploy::{
         EnvList,
-        app::model::{
-            AppConfig,
-            BuildLayerConfig,
-            RuntimeConfig,
-            TimerConfig,
-        },
+        unit::app::model::*,
     };
 
     #[tokio::test]

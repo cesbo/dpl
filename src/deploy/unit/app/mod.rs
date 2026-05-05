@@ -13,8 +13,6 @@ use std::{
     },
 };
 
-use artifacts::ArtifactsContext;
-pub use model::AppConfig;
 use podman::PodmanContext;
 use systemd::SystemdContext;
 use tokio::{
@@ -29,6 +27,8 @@ use tracing::{
     info,
 };
 
+use self::artifacts::ArtifactsContext;
+pub use self::model::AppConfig;
 use crate::deploy::{
     DeployError,
     state::{

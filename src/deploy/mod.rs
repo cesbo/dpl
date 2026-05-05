@@ -1,8 +1,6 @@
 #![allow(dead_code)]
 
-mod app;
 mod artifacts;
-mod domain;
 mod env;
 mod error;
 mod guard;
@@ -20,7 +18,6 @@ use std::{
     },
 };
 
-use app::AppUnit;
 use env::{
     EnvError,
     EnvList,
@@ -38,6 +35,7 @@ use tokio::{
     },
 };
 pub use unit::UnitConfig;
+use unit::app::AppUnit;
 
 #[derive(Default)]
 pub struct DeployService {

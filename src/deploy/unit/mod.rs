@@ -1,11 +1,12 @@
+pub mod app;
+pub mod domain;
+
 use std::path::Path;
 
+use app::AppConfig;
+use domain::DomainConfig;
 use serde::Deserialize;
 
-use super::{
-    app::AppConfig,
-    domain::DomainConfig,
-};
 use crate::{
     config::{
         ConfigError,
