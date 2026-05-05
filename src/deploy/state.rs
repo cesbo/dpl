@@ -41,10 +41,10 @@ pub struct DeployState {
 
 #[derive(Debug, Error)]
 pub enum DeployStateError {
-    #[error("read state file: {0}")]
-    Read(io::Error),
-    #[error("write state file: {0}")]
-    Write(io::Error),
+    #[error("read state file")]
+    Read(#[source] io::Error),
+    #[error("write state file")]
+    Write(#[source] io::Error),
     #[error("unit version overflow")]
     VersionOverflow,
     #[error("unit has no active version")]

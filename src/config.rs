@@ -46,10 +46,10 @@ where
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    #[error("read config: {0}")]
+    #[error("read config")]
     Read(#[from] io::Error),
 
-    #[error("parse config: {0}")]
+    #[error("parse config")]
     Parse(#[from] serde_yaml::Error),
 
     #[error("invalid config: {0}")]

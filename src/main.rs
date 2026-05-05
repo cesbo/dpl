@@ -3,6 +3,7 @@ mod auth;
 mod cmd;
 mod config;
 mod deploy;
+mod error;
 mod log;
 mod model;
 mod secret;
@@ -28,19 +29,22 @@ use clap::{
     Parser,
     Subcommand,
 };
-use deploy::{
-    DeployService,
-    deploy_router,
-};
 use tokio::{
     net::TcpListener,
     signal,
 };
-use tracing::{
-    error,
-    info,
-};
+use tracing::info;
 
+use self::{
+    deploy::{
+        DeployService,
+        deploy_router,
+    },
+    error::{
+        exit_with_error,
+        exit_with_stderr,
+    },
+};
 use crate::model::MainConfig;
 
 #[derive(Parser)]
@@ -135,24 +139,4 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
 async fn shutdown_signal() {
     signal::ctrl_c().await.unwrap();
-}
-
-fn exit_with_stderr(e: &(dyn Error + 'static)) -> ! {
-    eprintln!("error: {e}");
-    let mut src = e.source();
-    while let Some(s) = src {
-        eprintln!("  caused by: {s}");
-        src = s.source();
-    }
-    std::process::exit(1);
-}
-
-fn exit_with_error(e: &(dyn Error + 'static)) -> ! {
-    error!(error = %e, "server failed");
-    let mut src = e.source();
-    while let Some(s) = src {
-        error!(error = %s, "  caused by");
-        src = s.source();
-    }
-    std::process::exit(1);
 }

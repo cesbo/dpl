@@ -1,7 +1,4 @@
-use std::{
-    io,
-    path::PathBuf,
-};
+use std::io;
 
 use minijinja::Environment;
 use serde::Serialize;
@@ -11,44 +8,25 @@ pub fn render<S>(env: &Environment, name: &str, ctx: S) -> Result<String, Artifa
 where
     S: Serialize,
 {
-    let template = env
-        .get_template(name)
-        .map_err(|source| ArtifactError::Render {
-            name: name.into(),
-            source,
-        })?;
-
-    template
+    env.get_template(name)?
         .render(ctx)
-        .map_err(|source| ArtifactError::Render {
-            name: name.into(),
-            source,
-        })
+        .map_err(ArtifactError::Render)
 }
 
 #[derive(Debug, Error)]
 pub enum ArtifactError {
-    #[error("create artifacts directory {path}: {source}")]
-    CreateDir {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
+    #[error("create artifacts directory")]
+    CreateDir(#[source] io::Error),
 
-    #[error("render template {name}: {source}")]
-    Render {
-        name: String,
-        #[source]
-        source: minijinja::Error,
-    },
+    #[error("render template")]
+    Render(#[from] minijinja::Error),
 
-    #[error("write artifact {path}: {source}")]
-    Write {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
+    #[error("write artifact")]
+    Write(#[source] io::Error),
 
-    #[error("resolve env: {0}")]
+    #[error("resolve env")]
     Env(#[from] super::EnvError),
+
+    #[error("resolve template data")]
+    Resolve(#[source] Box<dyn std::error::Error + Send + Sync>),
 }

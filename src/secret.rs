@@ -37,8 +37,8 @@ pub enum SecretError {
     #[error("invalid utf-8")]
     InvalidData,
 
-    #[error("master key: {0}")]
-    KeyIo(io::Error),
+    #[error("master key")]
+    KeyIo(#[source] io::Error),
 
     #[error("invalid master key")]
     InvalidKey,
@@ -49,11 +49,11 @@ pub enum SecretError {
     #[error("encrypt secret '{name}'")]
     Encrypt { name: String },
 
-    #[error("read secret: {0}")]
-    ReadSecret(io::Error),
+    #[error("read secret")]
+    ReadSecret(#[source] io::Error),
 
-    #[error("write secret: {0}")]
-    WriteSecret(io::Error),
+    #[error("write secret")]
+    WriteSecret(#[source] io::Error),
 }
 
 pub fn get_secrets_dir(base: &Path) -> PathBuf {

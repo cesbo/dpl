@@ -73,12 +73,9 @@ impl<'a> ArtifactsContext<'a> {
     pub async fn save(&self, deploy_dir: &Path) -> Result<(), ArtifactError> {
         let artifacts_dir = deploy_dir.join("artifacts");
 
-        if let Err(source) = fs::create_dir_all(&artifacts_dir).await {
-            return Err(ArtifactError::CreateDir {
-                path: artifacts_dir,
-                source,
-            });
-        }
+        fs::create_dir_all(&artifacts_dir)
+            .await
+            .map_err(ArtifactError::CreateDir)?;
 
         #[derive(Serialize)]
         struct BuildContext<'a> {
@@ -192,7 +189,7 @@ where
 
     fs::write(&path, content)
         .await
-        .map_err(|source| ArtifactError::Write { path, source })
+        .map_err(ArtifactError::Write)
 }
 
 #[cfg(test)]

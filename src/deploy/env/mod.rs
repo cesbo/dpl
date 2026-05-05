@@ -24,7 +24,7 @@ use value::{
 
 #[derive(Debug, Error)]
 pub enum EnvError {
-    #[error("secret: {0}")]
+    #[error("secret")]
     Secret(#[from] SecretError),
 }
 

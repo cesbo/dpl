@@ -17,15 +17,16 @@ use super::{
 use crate::{
     archive::ArchiveError,
     config::ConfigError,
+    error::format_error_chain,
 };
 
 #[derive(Debug, Error)]
 pub enum DeployError {
-    #[error("{0}")]
+    #[error(transparent)]
     UnitConfig(#[from] ConfigError),
     #[error("unit not found")]
     UnitNotFound,
-    #[error("{0}")]
+    #[error(transparent)]
     Status(#[from] DeployStateError),
     #[error("invalid unit name")]
     InvalidUnitName,
@@ -33,11 +34,11 @@ pub enum DeployError {
     UnitBusy,
     #[error("not allowed")]
     UnitNotAllowed,
-    #[error("save artifacts: {0}")]
+    #[error("save artifacts")]
     ArtifactError(#[from] ArtifactError),
-    #[error("extract archive: {0}")]
+    #[error("extract archive")]
     ArchiveError(#[from] ArchiveError),
-    #[error("{info}: {source}")]
+    #[error("{info}")]
     UnitError {
         info: String,
         #[source]
@@ -54,7 +55,7 @@ impl IntoResponse for DeployError {
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
 
-        let body = serde_json::json!({ "error": self.to_string() });
+        let body = serde_json::json!({ "error": format_error_chain(&self) });
         (status, Json(body)).into_response()
     }
 }

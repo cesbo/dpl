@@ -14,12 +14,15 @@ use tracing::{
 
 use self::artifacts::ArtifactsContext;
 pub use self::model::DomainConfig;
-use crate::deploy::{
-    DeployError,
-    state::{
-        DeployState,
-        DeployStatus,
+use crate::{
+    deploy::{
+        DeployError,
+        state::{
+            DeployState,
+            DeployStatus,
+        },
     },
+    error::format_error_chain,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,8 +53,9 @@ impl DomainUnit {
         info!(unit = %self.name, %version, "domain deploy started");
 
         if let Err(err) = self.render(version).await {
-            error!(unit = %self.name, error = %err, "render nginx config");
-            state.set_error(format!("render nginx config failed: {err}"));
+            let chain = format_error_chain(&err);
+            error!(unit = %self.name, error = %chain, "render nginx config");
+            state.set_error(format!("render nginx config failed: {chain}"));
             let _ = state.save(&self.unit_dir);
             return Err(err);
         }

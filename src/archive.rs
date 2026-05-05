@@ -18,16 +18,16 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ArchiveError {
-    #[error("open archive: {0}")]
-    Open(io::Error),
-    #[error("create directory: {0}")]
-    CreateDir(io::Error),
-    #[error("create file: {0}")]
-    CreateFile(io::Error),
-    #[error("flatten directory: {0}")]
-    Flatten(io::Error),
-    #[error("read entry: {0}")]
-    ReadEntry(io::Error),
+    #[error("open archive")]
+    Open(#[source] io::Error),
+    #[error("create directory")]
+    CreateDir(#[source] io::Error),
+    #[error("create file")]
+    CreateFile(#[source] io::Error),
+    #[error("flatten directory")]
+    Flatten(#[source] io::Error),
+    #[error("read entry")]
+    ReadEntry(#[source] io::Error),
     #[error("empty archive")]
     EmptyArchive,
 }

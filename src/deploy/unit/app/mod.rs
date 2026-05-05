@@ -29,12 +29,15 @@ use tracing::{
 
 use self::artifacts::ArtifactsContext;
 pub use self::model::AppConfig;
-use crate::deploy::{
-    DeployError,
-    state::{
-        DeployState,
-        DeployStatus,
+use crate::{
+    deploy::{
+        DeployError,
+        state::{
+            DeployState,
+            DeployStatus,
+        },
     },
+    error::format_error_chain,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -68,8 +71,9 @@ impl AppUnit {
         info!(unit = %self.name, version = %version, "deploy started");
 
         if let Err(err) = self.prepare(version, archive).await {
-            error!(unit = %self.name, error = %err, "prepare app deploy");
-            state.set_error(format!("prepare app deploy failed: {err}"));
+            let chain = format_error_chain(&err);
+            error!(unit = %self.name, error = %chain, "prepare app deploy");
+            state.set_error(format!("prepare app deploy failed: {chain}"));
             let _ = state.save(&self.unit_dir);
             return Err(err);
         }
@@ -148,8 +152,9 @@ impl AppUnit {
         let version = state.latest_build.version;
 
         if let Err(err) = self.build_inner(deploy_dir, version) {
-            error!(%version, %err, "failed to build app image");
-            state.set_error(format!("failed to build app image: {err}"));
+            let chain = format_error_chain(&err);
+            error!(%version, error = %chain, "failed to build app image");
+            state.set_error(format!("failed to build app image: {chain}"));
             let _ = state.save(&self.unit_dir);
             return;
         }
@@ -164,10 +169,11 @@ impl AppUnit {
 
         // Install new version
         if let Err(err) = self.install_inner(version) {
-            error!(%version, %err, "failed to install app");
+            let chain = format_error_chain(&err);
+            error!(%version, error = %chain, "failed to install app");
             self.uninstall_inner(version);
             state.active_version = None;
-            state.set_error(format!("failed to install app: {err}"));
+            state.set_error(format!("failed to install app: {chain}"));
             let _ = state.save(&self.unit_dir);
             return;
         }

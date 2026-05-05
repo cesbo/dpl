@@ -80,15 +80,11 @@ struct RenderRoute {
 }
 
 impl<'a> ArtifactsContext<'a> {
-    pub async fn save(&self, deploy_dir: &Path) -> Result<(), DeployError> {
+    pub async fn save(&self, deploy_dir: &Path) -> Result<(), ArtifactError> {
         let artifacts_dir = deploy_dir.join("artifacts");
-        if let Err(source) = fs::create_dir_all(&artifacts_dir).await {
-            return Err(ArtifactError::CreateDir {
-                path: artifacts_dir,
-                source,
-            }
-            .into());
-        }
+        fs::create_dir_all(&artifacts_dir)
+            .await
+            .map_err(ArtifactError::CreateDir)?;
 
         let proxy = match &self.config.proxy {
             Some(proxy) => Some(render_proxy(proxy).await),
@@ -97,7 +93,11 @@ impl<'a> ArtifactsContext<'a> {
 
         let mut routes = Vec::new();
         for route in &self.config.routes {
-            routes.push(resolve_route(route).await?);
+            routes.push(
+                resolve_route(route)
+                    .await
+                    .map_err(|err| ArtifactError::Resolve(err.into()))?,
+            );
         }
 
         let path = artifacts_dir.join(format!("{}.conf", self.name));
@@ -114,7 +114,7 @@ impl<'a> ArtifactsContext<'a> {
 
         fs::write(&path, content)
             .await
-            .map_err(|source| ArtifactError::Write { path, source })?;
+            .map_err(ArtifactError::Write)?;
 
         Ok(())
     }
