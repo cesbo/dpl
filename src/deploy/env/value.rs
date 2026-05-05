@@ -164,8 +164,43 @@ impl<'de> Deserialize<'de> for Value {
     where
         D: Deserializer<'de>,
     {
-        let raw = String::deserialize(deserializer)?;
-        Self::parse(&raw).map_err(serde::de::Error::custom)
+        struct ValueVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for ValueVisitor {
+            type Value = Value;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a string, integer, float, or boolean")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Value, E> {
+                Value::parse(v).map_err(E::custom)
+            }
+
+            fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Value, E> {
+                Value::parse(&v).map_err(E::custom)
+            }
+
+            fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Value, E> {
+                Ok(Value(vec![Segment::Literal(v.to_string())]))
+            }
+
+            fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Value, E> {
+                Ok(Value(vec![Segment::Literal(v.to_string())]))
+            }
+
+            fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Value, E> {
+                Ok(Value(vec![Segment::Literal(v.to_string())]))
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Value, E> {
+                Ok(Value(vec![Segment::Literal(
+                    if v { "true" } else { "false" }.to_owned(),
+                )]))
+            }
+        }
+
+        deserializer.deserialize_any(ValueVisitor)
     }
 }
 

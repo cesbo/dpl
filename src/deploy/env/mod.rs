@@ -132,6 +132,21 @@ TOKEN: "${secret:api-token}"
     }
 
     #[test]
+    fn deserialize_unquoted_integer() {
+        let list = list_from_yaml("DB_PORT: 5432\n");
+        let resolved = list.resolve().unwrap();
+        assert_eq!(resolved.get("DB_PORT").map(String::as_str), Some("5432"));
+    }
+
+    #[test]
+    fn deserialize_unquoted_bool_and_float() {
+        let list = list_from_yaml("DEBUG: true\nRATIO: 0.5\n");
+        let resolved = list.resolve().unwrap();
+        assert_eq!(resolved.get("DEBUG").map(String::as_str), Some("true"));
+        assert_eq!(resolved.get("RATIO").map(String::as_str), Some("0.5"));
+    }
+
+    #[test]
     fn deserialize_rejects_template_syntax_error() {
         let err = serde_yaml::from_str::<EnvList>("BAD: \"${secret:}\"").unwrap_err();
         assert!(err.to_string().contains("malformed reference"));
