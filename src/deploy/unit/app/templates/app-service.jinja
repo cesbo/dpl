@@ -12,7 +12,19 @@ NotifyAccess=all
 Delegate=yes
 KillMode=mixed
 TimeoutStopFailureMode=abort
-ExecStart=/usr/bin/podman run --name {{ container_name }} --cidfile=%t/%N.cid --replace --rm --cgroups=split --sdnotify=conmon -p 127.0.0.1:{{ host_port }}:{{ container_port }}{% for volume in volumes %} -v {{ volume.source }}:{{ volume.path }}{% endfor %} --log-driver=k8s-file --log-opt=path=/var/log/podman/{{ container_name }}.log {{ image_name }}
+ExecStart=/usr/bin/podman run \
+  --name {{ container_name }} \
+  --cidfile=%t/%N.cid \
+  --replace --rm \
+  --cgroups=split \
+  --sdnotify=conmon \
+  --network=dpl \
+  -p 127.0.0.1:{{ host_port }}:{{ container_port }} \
+{% for volume in volumes %}
+  -v {{ volume.source }}:{{ volume.path }} \
+{% endfor %}
+  --log-driver=k8s-file --log-opt=path=/var/log/podman/{{ container_name }}.log \
+  {{ image_name }}
 ExecStop=/usr/bin/podman stop --cidfile=%t/%N.cid
 ExecStopPost=-/usr/bin/podman rm -v -f -i --cidfile=%t/%N.cid
 ExecStopPost=-/usr/bin/rm -f %t/%N.cid
