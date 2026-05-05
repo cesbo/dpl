@@ -9,6 +9,7 @@ use minijinja::{
     context,
 };
 use serde::Serialize;
+use thiserror::Error;
 use tokio::fs;
 
 use super::model::{
@@ -18,7 +19,6 @@ use super::model::{
     RouteTarget,
 };
 use crate::deploy::{
-    DeployError,
     artifacts::{
         ArtifactError,
         render,
@@ -137,7 +137,17 @@ async fn render_proxy(proxy: &ProxyConfig) -> RenderProxy<'_> {
     }
 }
 
-async fn resolve_route(route: &RouteConfig) -> Result<RenderRoute, DeployError> {
+#[derive(Debug, Error)]
+enum ResolveError {
+    #[error("unit state")]
+    UnitState(DeployStateError),
+    #[error("read unit port")]
+    ReadUnitPort(#[source] io::Error),
+    #[error("parse unit port")]
+    ParseUnitPort(#[source] std::num::ParseIntError),
+}
+
+async fn resolve_route(route: &RouteConfig) -> Result<RenderRoute, ResolveError> {
     let target = match &route.target {
         RouteTarget::App { unit } => resolve_route_app(unit).await?,
         RouteTarget::Static { unit, spa } => resolve_route_static(unit, *spa).await?,
@@ -149,34 +159,24 @@ async fn resolve_route(route: &RouteConfig) -> Result<RenderRoute, DeployError> 
     })
 }
 
-async fn resolve_route_app(unit: &str) -> Result<RenderTarget, DeployError> {
+async fn resolve_route_app(unit: &str) -> Result<RenderTarget, ResolveError> {
     let unit_dir = crate::config().base.join(unit);
+    let _version = DeployState::get_active_version(&unit_dir).map_err(ResolveError::UnitState)?;
+
     let path = unit_dir.join("port.txt");
-
-    let content = fs::read_to_string(&path)
+    let port = fs::read_to_string(&path)
         .await
-        .map_err(|source| DeployError::UnitError {
-            info: "read app unit port".into(),
-            source,
-        })?;
-
-    let port = content
+        .map_err(ResolveError::ReadUnitPort)?
         .trim()
         .parse::<u16>()
-        .map_err(|_| DeployError::UnitError {
-            info: "invalid app unit port".into(),
-            source: io::ErrorKind::InvalidData.into(),
-        })?;
+        .map_err(ResolveError::ParseUnitPort)?;
 
     Ok(RenderTarget::App { port })
 }
 
-async fn resolve_route_static(unit: &str, spa: bool) -> Result<RenderTarget, DeployError> {
+async fn resolve_route_static(unit: &str, spa: bool) -> Result<RenderTarget, ResolveError> {
     let unit_dir = crate::config().base.join(unit);
-    let state = DeployState::load(&unit_dir)?;
-    let version = state
-        .active_version
-        .ok_or(DeployStateError::NoActiveVersion)?;
+    let version = DeployState::get_active_version(&unit_dir).map_err(ResolveError::UnitState)?;
 
     Ok(RenderTarget::Static {
         root: unit_dir

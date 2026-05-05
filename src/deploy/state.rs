@@ -75,6 +75,13 @@ impl DeployState {
         fs::write(path, content).map_err(DeployStateError::Write)
     }
 
+    pub fn get_active_version(unit_dir: &Path) -> Result<u32, DeployStateError> {
+        let state = Self::load(unit_dir)?;
+        state
+            .active_version
+            .ok_or(DeployStateError::NoActiveVersion)
+    }
+
     /// Checked version addition.
     /// Sets the latest build status to `Building` and clears previous error.
     pub fn bump_version(&mut self) -> Result<u32, DeployStateError> {
