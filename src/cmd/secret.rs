@@ -147,14 +147,13 @@ fn rm(base: &Path, name: &str) -> Result<(), Box<dyn Error>> {
         return Err(secret::SecretError::InvalidName.into());
     }
 
-    let target = secret::get_secret_path(base, name);
-    match fs::remove_file(&target) {
+    match secret::secret_rm(base, name) {
         Ok(_) => {
-            println!("removed {}", target.display());
+            println!("secret '{}' removed", name);
             Ok(())
         }
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
-            println!("{} not found", target.display());
+            println!("secret '{}' not found", name);
             Ok(())
         }
         Err(err) => Err(err.into()),
@@ -166,7 +165,7 @@ fn list(base: &Path) -> Result<(), Box<dyn Error>> {
     let secrets_dir = secret::get_secrets_dir(base);
     walk_secrets(&secrets_dir, &secrets_dir, &mut names)?;
     if names.is_empty() {
-        println!("no secrets");
+        println!("No secrets found");
     } else {
         names.sort();
         for name in names {

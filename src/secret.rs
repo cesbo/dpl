@@ -19,13 +19,14 @@ use aes_gcm::{
 use rand::RngCore;
 use thiserror::Error;
 
+const KEY_NAME: &str = "master.key";
 const KEY_LEN: usize = 32;
 const NONCE_LEN: usize = 12;
 const TAG_LEN: usize = 16;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct MasterKey {
-    path: PathBuf,
+    secrets_dir: PathBuf,
     key: [u8; KEY_LEN],
 }
 
@@ -60,8 +61,8 @@ pub fn get_secrets_dir(base: &Path) -> PathBuf {
     base.join(".secrets")
 }
 
-pub fn get_secret_path(base: &Path, name: &str) -> PathBuf {
-    let mut dir = get_secrets_dir(base);
+fn get_secret_path(secrets_dir: &Path, name: &str) -> PathBuf {
+    let mut dir = secrets_dir.to_path_buf();
     let parts = name.split('/').collect::<Vec<&str>>();
     let (last, rest) = parts.split_last().unwrap();
     for item in rest {
@@ -70,12 +71,17 @@ pub fn get_secret_path(base: &Path, name: &str) -> PathBuf {
     dir.join(format!("{last}.bin"))
 }
 
-pub fn get_master_key_path(base: &Path) -> PathBuf {
-    get_secrets_dir(base).join("master.key")
+pub fn secret_exists(base: &Path, name: &str) -> bool {
+    let secrets_dir = get_secrets_dir(base);
+    get_secret_path(&secrets_dir, name)
+        .try_exists()
+        .unwrap_or(false)
 }
 
-pub fn secret_exists(base: &Path, name: &str) -> bool {
-    get_secret_path(base, name).try_exists().unwrap_or(false)
+pub fn secret_rm(base: &Path, name: &str) -> io::Result<()> {
+    let secrets_dir = get_secrets_dir(base);
+    let path = get_secret_path(&secrets_dir, name);
+    fs::remove_file(&path)
 }
 
 impl MasterKey {
@@ -83,13 +89,14 @@ impl MasterKey {
         let mut key = [0u8; KEY_LEN];
         rand::thread_rng().fill_bytes(&mut key);
         Self {
-            path: get_master_key_path(base),
+            secrets_dir: get_secrets_dir(base),
             key,
         }
     }
 
     pub fn load(base: &Path) -> Result<Self, SecretError> {
-        let path = get_master_key_path(base);
+        let secrets_dir = get_secrets_dir(base);
+        let path = secrets_dir.join(KEY_NAME);
         let bytes = fs::read(&path).map_err(SecretError::KeyIo)?;
         if bytes.len() != KEY_LEN {
             return Err(SecretError::InvalidKey);
@@ -97,20 +104,19 @@ impl MasterKey {
 
         let mut key = [0u8; KEY_LEN];
         key.copy_from_slice(&bytes);
-        Ok(Self { path, key })
+        Ok(Self { secrets_dir, key })
     }
 
     pub fn save(&self) -> Result<(), SecretError> {
         use std::io::Write;
 
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(SecretError::KeyIo)?;
-        }
+        fs::create_dir_all(&self.secrets_dir).map_err(SecretError::KeyIo)?;
 
+        let path = self.secrets_dir.join(KEY_NAME);
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&self.path)
+            .open(&path)
             .map_err(SecretError::KeyIo)?;
 
         file.write_all(&self.key).map_err(SecretError::KeyIo)?;
@@ -120,8 +126,7 @@ impl MasterKey {
     }
 
     pub fn encrypt_to_file(&self, name: &str, text: &str) -> Result<(), SecretError> {
-        let base = self.path.parent().unwrap();
-        let path = get_secret_path(base, name);
+        let path = get_secret_path(&self.secrets_dir, name);
         let blob = self.encrypt(name, text)?;
 
         if let Some(parent) = path.parent() {
@@ -155,8 +160,7 @@ impl MasterKey {
     }
 
     pub fn decrypt_from_file(&self, name: &str) -> Result<String, SecretError> {
-        let base = self.path.parent().unwrap();
-        let path = get_secret_path(base, name);
+        let path = get_secret_path(&self.secrets_dir, name);
         let blob = std::fs::read(&path).map_err(SecretError::ReadSecret)?;
         self.decrypt(name, &blob)
     }
@@ -256,9 +260,13 @@ mod tests {
     fn load_master_key_malformed() {
         let tmp = tempdir().unwrap();
         let base = tmp.path();
-        let master_key_path = get_master_key_path(base);
-        fs::create_dir_all(master_key_path.parent().unwrap()).unwrap();
+
+        let secrets_dir = get_secrets_dir(base);
+        fs::create_dir_all(&secrets_dir).unwrap();
+
+        let master_key_path = secrets_dir.join(KEY_NAME);
         fs::write(&master_key_path, b"too short").unwrap();
+
         let err = MasterKey::load(base).unwrap_err();
         assert!(matches!(err, SecretError::InvalidKey));
     }
