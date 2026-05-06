@@ -113,14 +113,14 @@ build:
   - files: ["*"]
     env:
       NODE_ENV: production
-      NPM_TOKEN: !secret npm-token
+      NPM_TOKEN: ${secret:npm-token}
     script: |
       npm run build
 
 runtime:
   env:
     NODE_ENV: production
-    DB_PASS: !secret db/prod-password
+    DB_PASS: ${secret:db/prod-password}
   init: |
     test -d /app/dist
   cmd: node server.js
@@ -186,14 +186,14 @@ Storage layout:
 - `{base_dir}/.secrets/master.key` - 32-byte AES-256-GCM master key, mode `0600`
 - `{base_dir}/.secrets/<name>.bin` - encrypted secret, mode `0600`. Subdirectories are allowed (`db/prod-password.bin`)
 
-Reference a secret from a unit config with the `!secret` YAML tag inside any `env` map (build layer or runtime):
+Reference a secret from a unit config with the `${secret:<name>}` template:
 
 ```yaml
 runtime:
   env:
     ALLOWED_HOSTS: app.example.com
-    SECRET_KEY: !secret secret_name
-    DB_PASS: !secret db/prod-password
+    SECRET_KEY: ${secret:secret_name}
+    DB_URL: ${secret:db/prod-password}
 ```
 
 The tag value is the secret name (matching the `<name>` used with `dpl secret set`). Plain strings and tagged secrets can be mixed freely in the same `env` map. At deploy time `dpl` decrypts each tagged value and inlines the plaintext into the generated `run.sh` (or `build-N.sh` for build-layer envs).
@@ -216,11 +216,7 @@ dpl secret rm db/prod-password                           # delete
 - `-` - reads stdin to EOF; a single trailing `\n` is stripped
 - any other value - treated as a file path
 
-The first `dpl secret set` creates `{base_dir}/secrets.key` automatically.
-
-### Backup
-
-`{base_dir}/secrets.key` and `{base_dir}/secrets/` live together inside `{base_dir}`. `rsync -a {base_dir}/ host2:{base_dir}/` is sufficient to restore secrets on a new host - no host- or TPM-bound material is involved.
+The first `dpl secret set` creates `{base_dir}/.secrets/master.key` automatically.
 
 ### Threat model
 
