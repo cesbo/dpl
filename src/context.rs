@@ -23,6 +23,7 @@ pub enum ContextError {
     Secret(#[from] SecretError),
 }
 
+#[derive(Debug)]
 pub struct MainContext {
     pub config: MainConfig,
     pub master_key: Option<MasterKey>,

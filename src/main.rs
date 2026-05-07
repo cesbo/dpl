@@ -73,15 +73,20 @@ enum Command {
     Unit(cmd::unit::Args),
 }
 
-static CONFIG: OnceLock<MainConfig> = OnceLock::new();
+// Temporary variables, will be removed when MainContext will be finished
+static CONTEXT: OnceLock<MainContext> = OnceLock::new();
 
-pub fn config() -> &'static MainConfig {
-    CONFIG.get().expect("config not initialized")
+pub fn context() -> &'static MainContext {
+    CONTEXT.get().expect("context not initialized")
 }
 
-pub fn load_main_config(path: &Path) -> Result<(), config::ConfigError> {
-    let main_config = config::load_config(path)?;
-    CONFIG.set(main_config).expect("config already initialized");
+pub fn config() -> &'static MainConfig {
+    &context().config
+}
+
+fn load_main_context(path: &Path) -> Result<(), context::ContextError> {
+    let ctx = MainContext::load(path)?;
+    CONTEXT.set(ctx).expect("context already initialized");
     Ok(())
 }
 
@@ -109,7 +114,7 @@ async fn main() {
         return;
     }
 
-    if let Err(err) = load_main_config(&cli.config) {
+    if let Err(err) = load_main_context(&cli.config) {
         exit_with_stderr(&err);
     }
 
