@@ -38,11 +38,11 @@ pub enum SecretError {
     #[error("invalid utf-8")]
     InvalidData,
 
-    #[error("master key")]
-    KeyIo(#[source] io::Error),
+    #[error("load master key")]
+    LoadKey(#[source] io::Error),
 
-    #[error("invalid master key")]
-    InvalidKey,
+    #[error("save master key")]
+    SaveKey(#[source] io::Error),
 
     #[error("decrypt secret '{name}'")]
     Decrypt { name: String },
@@ -97,9 +97,12 @@ impl MasterKey {
     pub fn load(base: &Path) -> Result<Self, SecretError> {
         let secrets_dir = get_secrets_dir(base);
         let path = secrets_dir.join(KEY_NAME);
-        let bytes = fs::read(&path).map_err(SecretError::KeyIo)?;
+        let bytes = fs::read(&path).map_err(SecretError::LoadKey)?;
         if bytes.len() != KEY_LEN {
-            return Err(SecretError::InvalidKey);
+            return Err(SecretError::LoadKey(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid key length",
+            )));
         }
 
         let mut key = [0u8; KEY_LEN];
@@ -110,17 +113,17 @@ impl MasterKey {
     pub fn save(&self) -> Result<(), SecretError> {
         use std::io::Write;
 
-        fs::create_dir_all(&self.secrets_dir).map_err(SecretError::KeyIo)?;
+        fs::create_dir_all(&self.secrets_dir).map_err(SecretError::SaveKey)?;
 
         let path = self.secrets_dir.join(KEY_NAME);
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&path)
-            .map_err(SecretError::KeyIo)?;
+            .map_err(SecretError::SaveKey)?;
 
-        file.write_all(&self.key).map_err(SecretError::KeyIo)?;
-        file.sync_all().map_err(SecretError::KeyIo)?;
+        file.write_all(&self.key).map_err(SecretError::SaveKey)?;
+        file.sync_all().map_err(SecretError::SaveKey)?;
 
         Ok(())
     }
@@ -232,7 +235,7 @@ mod tests {
         key.save().unwrap();
         let err = key.save().unwrap_err();
         assert!(
-            matches!(err, SecretError::KeyIo(ref err) if err.kind() == io::ErrorKind::AlreadyExists)
+            matches!(err, SecretError::SaveKey(ref err) if err.kind() == io::ErrorKind::AlreadyExists)
         );
     }
 
@@ -252,7 +255,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         let err = MasterKey::load(tmp.path()).unwrap_err();
         assert!(
-            matches!(err, SecretError::KeyIo(ref err) if err.kind() == std::io::ErrorKind::NotFound)
+            matches!(err, SecretError::LoadKey(ref err) if err.kind() == std::io::ErrorKind::NotFound)
         );
     }
 
@@ -268,6 +271,8 @@ mod tests {
         fs::write(&master_key_path, b"too short").unwrap();
 
         let err = MasterKey::load(base).unwrap_err();
-        assert!(matches!(err, SecretError::InvalidKey));
+        assert!(
+            matches!(err, SecretError::LoadKey(ref err) if err.kind() == io::ErrorKind::InvalidData)
+        );
     }
 }

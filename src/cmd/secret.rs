@@ -79,7 +79,7 @@ fn set(base: &Path, name: &str, source: Option<&str>) -> Result<(), Box<dyn Erro
 
     let key = match secret::MasterKey::load(base) {
         Ok(key) => key,
-        Err(secret::SecretError::KeyIo(ref e)) if e.kind() == io::ErrorKind::NotFound => {
+        Err(secret::SecretError::LoadKey(ref err)) if err.kind() == io::ErrorKind::NotFound => {
             let key = secret::MasterKey::generate(base);
             key.save()?;
             key
