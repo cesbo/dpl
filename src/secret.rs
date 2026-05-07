@@ -38,6 +38,9 @@ pub enum SecretError {
     #[error("invalid utf-8")]
     InvalidData,
 
+    #[error("master key not found")]
+    KeyNotFound,
+
     #[error("load master key")]
     LoadKey(#[source] io::Error),
 
@@ -51,10 +54,18 @@ pub enum SecretError {
     Encrypt { name: String },
 
     #[error("read secret")]
-    ReadSecret(#[source] io::Error),
+    ReadSecret {
+        name: String,
+        #[source]
+        source: io::Error,
+    },
 
     #[error("write secret")]
-    WriteSecret(#[source] io::Error),
+    WriteSecret {
+        name: String,
+        #[source]
+        source: io::Error,
+    },
 }
 
 pub fn get_secrets_dir(base: &Path) -> PathBuf {
@@ -97,7 +108,13 @@ impl MasterKey {
     pub fn load(base: &Path) -> Result<Self, SecretError> {
         let secrets_dir = get_secrets_dir(base);
         let path = secrets_dir.join(KEY_NAME);
-        let bytes = fs::read(&path).map_err(SecretError::LoadKey)?;
+        let bytes = match fs::read(&path) {
+            Ok(v) => v,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                return Err(SecretError::KeyNotFound);
+            }
+            Err(err) => return Err(SecretError::LoadKey(err)),
+        };
         if bytes.len() != KEY_LEN {
             return Err(SecretError::LoadKey(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -133,9 +150,15 @@ impl MasterKey {
         let blob = self.encrypt(name, text)?;
 
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(SecretError::WriteSecret)?;
+            fs::create_dir_all(parent).map_err(|source| SecretError::WriteSecret {
+                name: name.into(),
+                source,
+            })?;
         }
-        fs::write(&path, blob).map_err(SecretError::WriteSecret)?;
+        fs::write(&path, blob).map_err(|source| SecretError::WriteSecret {
+            name: name.into(),
+            source,
+        })?;
 
         Ok(())
     }
@@ -164,7 +187,10 @@ impl MasterKey {
 
     pub fn decrypt_from_file(&self, name: &str) -> Result<String, SecretError> {
         let path = get_secret_path(&self.secrets_dir, name);
-        let blob = std::fs::read(&path).map_err(SecretError::ReadSecret)?;
+        let blob = std::fs::read(&path).map_err(|source| SecretError::ReadSecret {
+            name: name.into(),
+            source,
+        })?;
         self.decrypt(name, &blob)
     }
 
@@ -254,9 +280,7 @@ mod tests {
     fn load_master_key_missing() {
         let tmp = tempdir().unwrap();
         let err = MasterKey::load(tmp.path()).unwrap_err();
-        assert!(
-            matches!(err, SecretError::LoadKey(ref err) if err.kind() == std::io::ErrorKind::NotFound)
-        );
+        assert!(matches!(err, SecretError::KeyNotFound));
     }
 
     #[test]

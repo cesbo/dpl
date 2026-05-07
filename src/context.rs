@@ -23,7 +23,7 @@ pub enum ContextError {
     Secret(#[from] SecretError),
 }
 
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct MainContext {
     pub config: MainConfig,
     pub master_key: Option<MasterKey>,
@@ -42,5 +42,13 @@ impl MainContext {
 
     pub fn base(&self) -> &Path {
         &self.config.base
+    }
+
+    pub fn resolve_secret(&self, name: &str) -> Result<String, SecretError> {
+        let Some(master_key) = &self.master_key else {
+            return Err(SecretError::KeyNotFound);
+        };
+
+        master_key.decrypt_from_file(name)
     }
 }
