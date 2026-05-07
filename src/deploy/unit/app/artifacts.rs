@@ -14,9 +14,12 @@ use serde::Serialize;
 use tokio::fs;
 
 use super::AppConfig;
-use crate::deploy::artifacts::{
-    ArtifactError,
-    render,
+use crate::{
+    MainContext,
+    deploy::artifacts::{
+        ArtifactError,
+        render,
+    },
 };
 
 const CONTAINERFILE_TEMPLATE: &str = "containerfile";
@@ -63,6 +66,7 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
 });
 
 pub struct ArtifactsContext<'a> {
+    pub ctx: &'a MainContext,
     pub name: &'a str,
     pub config: &'a AppConfig,
     pub version: u32,
@@ -110,7 +114,7 @@ impl<'a> ArtifactsContext<'a> {
             path,
             RUN_SH_TEMPLATE,
             context! {
-                env => self.config.runtime.env.resolve()?,
+                env => self.config.runtime.env.resolve(self.ctx)?,
                 init => &self.config.runtime.init,
                 cmd => &self.config.runtime.cmd,
                 timers => &self.config.timers,
@@ -128,7 +132,7 @@ impl<'a> ArtifactsContext<'a> {
                 path,
                 BUILD_SH_TEMPLATE,
                 context! {
-                    env => layer.env.resolve()?,
+                    env => layer.env.resolve(self.ctx)?,
                     script => script,
                 },
             )
@@ -274,7 +278,9 @@ mod tests {
         let deploy_dir = temp_dir.path().join(name);
         fs::create_dir_all(&deploy_dir).await.unwrap();
 
+        let ctx = MainContext::default();
         let artifacts = ArtifactsContext {
+            ctx: &ctx,
             name,
             config: &config,
             version: 1,

@@ -1,32 +1,18 @@
+mod error;
 mod value;
 
-use std::{
-    collections::{
-        BTreeMap,
-        BTreeSet,
-    },
-    path::Path,
-};
+use std::collections::BTreeMap;
 
 use serde::Deserialize;
-use thiserror::Error;
 
 use crate::{
+    MainContext,
     config::ValidateConfig,
-    secret::SecretError,
     validate,
 };
 
-use value::{
-    Ns,
-    Value,
-};
-
-#[derive(Debug, Error)]
-pub enum EnvError {
-    #[error("secret")]
-    Secret(#[from] SecretError),
-}
+pub use self::error::EnvError;
+use self::value::Value;
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 pub struct EnvList(BTreeMap<String, Value>);
@@ -36,48 +22,18 @@ impl EnvList {
         Self::default()
     }
 
-    pub fn resolve(&self) -> Result<BTreeMap<String, String>, EnvError> {
-        let refs = self.collect_references();
-
-        let mut resolved: BTreeMap<Ns, BTreeMap<String, String>> = BTreeMap::new();
-        for (ns, names) in refs {
-            let entry = match ns {
-                Ns::Secret => resolve_secrets(&names)?,
-            };
-            resolved.insert(ns, entry);
-        }
-
-        Ok(self
-            .0
+    pub fn resolve(&self, ctx: &MainContext) -> Result<BTreeMap<String, String>, EnvError> {
+        self.0
             .iter()
-            .map(|(k, v)| (k.clone(), v.render(&resolved)))
-            .collect())
+            .map(|(k, v)| Ok((k.clone(), v.render(ctx)?)))
+            .collect()
     }
 
-    pub fn validate_references(&self, base: &Path) -> Result<(), String> {
-        for (ns, names) in self.collect_references() {
-            match ns {
-                Ns::Secret => {
-                    for name in names {
-                        if !crate::secret::secret_exists(base, name) {
-                            return Err(format!("secret '{name}' does not exist"));
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn collect_references(&self) -> BTreeMap<Ns, BTreeSet<&str>> {
-        let mut refs: BTreeMap<Ns, BTreeSet<&str>> = BTreeMap::new();
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), EnvError> {
         for value in self.0.values() {
-            for (ns, name) in value.references() {
-                refs.entry(ns.clone()).or_default().insert(name);
-            }
+            value.validate(ctx)?;
         }
-        refs
+        Ok(())
     }
 }
 
@@ -87,14 +43,6 @@ impl EnvList {
         self.0
             .insert(key, Value::parse(&value).expect("literal must not contain '$'"));
     }
-}
-
-fn resolve_secrets(names: &BTreeSet<&str>) -> Result<BTreeMap<String, String>, EnvError> {
-    let master_key = crate::secret::MasterKey::load(crate::config().base.as_path())?;
-    names
-        .iter()
-        .map(|name| Ok(((*name).to_owned(), master_key.decrypt_from_file(name)?)))
-        .collect()
 }
 
 impl ValidateConfig for EnvList {
@@ -111,8 +59,6 @@ impl ValidateConfig for EnvList {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
 
     fn list_from_yaml(yaml: &str) -> EnvList {
@@ -134,14 +80,14 @@ TOKEN: "${secret:api-token}"
     #[test]
     fn deserialize_unquoted_integer() {
         let list = list_from_yaml("DB_PORT: 5432\n");
-        let resolved = list.resolve().unwrap();
+        let resolved = list.resolve(&MainContext::default()).unwrap();
         assert_eq!(resolved.get("DB_PORT").map(String::as_str), Some("5432"));
     }
 
     #[test]
     fn deserialize_unquoted_bool_and_float() {
         let list = list_from_yaml("DEBUG: true\nRATIO: 0.5\n");
-        let resolved = list.resolve().unwrap();
+        let resolved = list.resolve(&MainContext::default()).unwrap();
         assert_eq!(resolved.get("DEBUG").map(String::as_str), Some("true"));
         assert_eq!(resolved.get("RATIO").map(String::as_str), Some("0.5"));
     }
@@ -162,7 +108,7 @@ TOKEN: "${secret:api-token}"
     #[test]
     fn validate_references_reports_missing_secret() {
         let list = list_from_yaml(r#"X: "${secret:nope}""#);
-        let err = list.validate_references(&PathBuf::from("/nonexistent")).unwrap_err();
-        assert!(err.contains("nope"));
+        let err = list.validate_references(&MainContext::default()).unwrap_err();
+        assert!(matches!(err, EnvError::MissingSecret { ref name } if name == "nope"));
     }
 }

@@ -49,7 +49,7 @@ impl UnitConfig {
 
         match &unit {
             UnitConfig::App(config) => config
-                .validate_references(base)
+                .validate_references(crate::context())
                 .map_err(|info| ConfigError::Invalid(format!("app references: {info}")))?,
             UnitConfig::Domain(_) => {}
         }

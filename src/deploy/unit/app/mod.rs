@@ -138,6 +138,7 @@ impl AppUnit {
                 })?;
 
         let artifacts = ArtifactsContext {
+            ctx: crate::context(),
             name: &self.name,
             config: &self.config,
             version,

@@ -51,4 +51,8 @@ impl MainContext {
 
         master_key.decrypt_from_file(name)
     }
+
+    pub fn secret_exists(&self, name: &str) -> bool {
+        crate::secret::secret_exists(&self.config.base, name)
+    }
 }

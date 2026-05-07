@@ -1,12 +1,14 @@
-use std::collections::BTreeMap;
-
 use serde::{
     Deserialize,
     Deserializer,
 };
 use thiserror::Error;
 
-use crate::validate;
+use super::error::EnvError;
+use crate::{
+    MainContext,
+    validate,
+};
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ValueError {
@@ -118,19 +120,33 @@ impl Value {
         })
     }
 
-    pub fn render(&self, values: &BTreeMap<Ns, BTreeMap<String, String>>) -> String {
+    pub fn render(&self, ctx: &MainContext) -> Result<String, EnvError> {
         let mut out = String::new();
         for seg in &self.0 {
             match seg {
                 Segment::Literal(s) => out.push_str(s),
-                Segment::Ref { ns, name } => {
-                    if let Some(v) = values.get(ns).and_then(|m| m.get(name)) {
-                        out.push_str(v);
+                Segment::Ref { ns, name } => match ns {
+                    Ns::Secret => out.push_str(&ctx.resolve_secret(name)?),
+                },
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn validate(&self, ctx: &MainContext) -> Result<(), EnvError> {
+        for seg in &self.0 {
+            let Segment::Ref { ns, name } = seg else {
+                continue;
+            };
+            match ns {
+                Ns::Secret => {
+                    if !ctx.secret_exists(name) {
+                        return Err(EnvError::MissingSecret { name: name.clone() });
                     }
                 }
             }
         }
-        out
+        Ok(())
     }
 }
 
@@ -330,18 +346,7 @@ mod tests {
     #[test]
     fn render_literal() {
         let v = Value::parse("hello").unwrap();
-        assert_eq!(v.render(&BTreeMap::new()), "hello");
-    }
-
-    #[test]
-    fn render_with_secrets() {
-        let v = Value::parse("u:${secret:user};p:${secret:pass}").unwrap();
-        let mut secrets = BTreeMap::new();
-        secrets.insert("user".to_owned(), "alice".to_owned());
-        secrets.insert("pass".to_owned(), "s3cr3t".to_owned());
-        let mut values = BTreeMap::new();
-        values.insert(Ns::Secret, secrets);
-        assert_eq!(v.render(&values), "u:alice;p:s3cr3t");
+        assert_eq!(v.render(&MainContext::default()).unwrap(), "hello");
     }
 
     #[test]

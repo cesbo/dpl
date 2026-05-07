@@ -1,11 +1,10 @@
-use std::path::Path;
-
 use serde::{
     Deserialize,
     Serialize,
 };
 
 use crate::{
+    MainContext,
     config::ValidateConfig,
     deploy::EnvList,
     validate,
@@ -112,13 +111,13 @@ impl ValidateConfig for TimerConfig {
 }
 
 impl AppConfig {
-    pub fn validate_references(&self, base: &Path) -> Result<(), String> {
-        if let Err(err) = self.runtime.env.validate_references(base) {
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
+        if let Err(err) = self.runtime.env.validate_references(ctx) {
             return Err(format!("runtime env: {err}"));
         }
 
         for layer in &self.build {
-            if let Err(err) = layer.env.validate_references(base) {
+            if let Err(err) = layer.env.validate_references(ctx) {
                 return Err(format!("build env: {err}"));
             }
         }

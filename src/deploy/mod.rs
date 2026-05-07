@@ -66,7 +66,7 @@ impl DeployService {
 
         match unit {
             UnitConfig::App(config) => {
-                if let Err(err) = config.validate_references(base) {
+                if let Err(err) = config.validate_references(crate::context()) {
                     return Err(DeployError::UnitError {
                         info: "app references".into(),
                         source: io::Error::other(err),
