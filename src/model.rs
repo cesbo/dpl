@@ -1,11 +1,18 @@
-use std::path::PathBuf;
+use std::path::{
+    Path,
+    PathBuf,
+};
 
 use serde::{
     Deserialize,
     Serialize,
 };
 
-use crate::config::ValidateConfig;
+use crate::config::{
+    ConfigError,
+    ValidateConfig,
+    load_config,
+};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
@@ -20,6 +27,12 @@ impl Default for MainConfig {
             base: PathBuf::from("/opt/dpl"),
             server: ServerConfig::default(),
         }
+    }
+}
+
+impl MainConfig {
+    pub fn load(path: &Path) -> Result<Self, ConfigError> {
+        load_config(path)
     }
 }
 
