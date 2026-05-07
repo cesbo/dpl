@@ -22,8 +22,7 @@ use rand::{
 };
 
 use crate::{
-    config::load_config,
-    model::MainConfig,
+    MainContext,
     secret,
     validate,
 };
@@ -57,26 +56,24 @@ enum Cmd {
         name: String,
     },
     /// List existing secret names
-    #[command(alias = "ls")]
-    List,
+    Ls,
 }
 
-pub fn run(args: Args, config_path: &Path) -> Result<(), Box<dyn Error>> {
-    let config: MainConfig = load_config(config_path)?;
-
+pub fn run(ctx: &MainContext, args: Args) -> Result<(), Box<dyn Error>> {
     match args.cmd {
-        Cmd::Set { name, source } => set(&config.base, &name, source.as_deref()),
-        Cmd::Cat { name } => cat(&config.base, &name),
-        Cmd::Rm { name } => rm(&config.base, &name),
-        Cmd::List => list(&config.base),
+        Cmd::Set { name, source } => set(ctx, &name, source.as_deref()),
+        Cmd::Cat { name } => cat(ctx, &name),
+        Cmd::Rm { name } => rm(ctx, &name),
+        Cmd::Ls => ls(ctx),
     }
 }
 
-fn set(base: &Path, name: &str, source: Option<&str>) -> Result<(), Box<dyn Error>> {
+fn set(ctx: &MainContext, name: &str, source: Option<&str>) -> Result<(), Box<dyn Error>> {
     if !validate::secret_name(name) {
         return Err(secret::SecretError::InvalidName.into());
     }
 
+    let base = ctx.base();
     let key = match secret::MasterKey::load(base) {
         Ok(key) => key,
         Err(secret::SecretError::LoadKey(ref err)) if err.kind() == io::ErrorKind::NotFound => {
@@ -130,24 +127,24 @@ fn read_plaintext(source: Option<&str>) -> Result<String, Box<dyn Error>> {
     Ok(value)
 }
 
-fn cat(base: &Path, name: &str) -> Result<(), Box<dyn Error>> {
+fn cat(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {
     if !validate::secret_name(name) {
         return Err(secret::SecretError::InvalidName.into());
     }
 
-    let key = secret::MasterKey::load(base)?;
+    let key = secret::MasterKey::load(ctx.base())?;
     let plaintext = key.decrypt_from_file(name)?;
     println!("{plaintext}");
 
     Ok(())
 }
 
-fn rm(base: &Path, name: &str) -> Result<(), Box<dyn Error>> {
+fn rm(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {
     if !validate::secret_name(name) {
         return Err(secret::SecretError::InvalidName.into());
     }
 
-    match secret::secret_rm(base, name) {
+    match secret::secret_rm(ctx.base(), name) {
         Ok(_) => {
             println!("secret '{}' removed", name);
             Ok(())
@@ -160,9 +157,9 @@ fn rm(base: &Path, name: &str) -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn list(base: &Path) -> Result<(), Box<dyn Error>> {
+fn ls(ctx: &MainContext) -> Result<(), Box<dyn Error>> {
     let mut names = Vec::new();
-    let secrets_dir = secret::get_secrets_dir(base);
+    let secrets_dir = secret::get_secrets_dir(ctx.base());
     walk_secrets(&secrets_dir, &secrets_dir, &mut names)?;
     if names.is_empty() {
         println!("No secrets found");

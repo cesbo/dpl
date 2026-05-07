@@ -2,6 +2,7 @@ mod archive;
 mod auth;
 mod cmd;
 mod config;
+mod context;
 mod deploy;
 mod error;
 mod log;
@@ -35,6 +36,7 @@ use tokio::{
 };
 use tracing::info;
 
+pub use self::context::MainContext;
 use self::{
     deploy::{
         DeployService,
@@ -90,8 +92,14 @@ async fn main() {
     if let Some(cmd) = cli.command {
         let result = match cmd {
             Command::Init => cmd::init::run(),
-            Command::Secret(args) => cmd::secret::run(args, &cli.config),
-            Command::Unit(args) => cmd::unit::run(args, &cli.config),
+            Command::Secret(args) => match MainContext::load(&cli.config) {
+                Ok(ctx) => cmd::secret::run(&ctx, args),
+                Err(err) => Err(err.into()),
+            },
+            Command::Unit(args) => match MainContext::load(&cli.config) {
+                Ok(ctx) => cmd::unit::run(&ctx, args),
+                Err(err) => Err(err.into()),
+            },
         };
 
         if let Err(err) = result {

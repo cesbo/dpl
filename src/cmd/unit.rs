@@ -1,11 +1,11 @@
-use std::{
-    error::Error,
-    path::Path,
-};
+use std::error::Error;
 
 use clap::Subcommand;
 
-use crate::deploy::UnitConfig;
+use crate::{
+    MainContext,
+    deploy::UnitConfig,
+};
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -22,17 +22,14 @@ enum Cmd {
     },
 }
 
-pub fn run(args: Args, config_path: &Path) -> Result<(), Box<dyn Error>> {
-    crate::load_main_config(config_path)?;
-
+pub fn run(ctx: &MainContext, args: Args) -> Result<(), Box<dyn Error>> {
     match args.cmd {
-        Cmd::Check { name } => check(&name),
+        Cmd::Check { name } => check(ctx, &name),
     }
 }
 
-fn check(name: &str) -> Result<(), Box<dyn Error>> {
-    let base = crate::config().base.as_path();
-    UnitConfig::load(base, name)?;
+fn check(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {
+    UnitConfig::load(ctx.base(), name)?;
 
     println!("ok");
 
