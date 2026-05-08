@@ -34,6 +34,7 @@ use crate::{
     MainContext,
     deploy::{
         DeployError,
+        guard::BusyGuard,
         state::{
             DeployState,
             DeployStatus,
@@ -67,6 +68,8 @@ impl AppUnit {
     where
         R: AsyncRead + Unpin + Send,
     {
+        let _guard = BusyGuard::lock(&self.unit_dir)?;
+
         let mut state = DeployState::load(&self.unit_dir)?;
         if state.latest_build.status == DeployStatus::Building {
             return Err(DeployError::UnitBusy);

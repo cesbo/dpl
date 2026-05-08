@@ -19,10 +19,7 @@ use clap::{
 };
 
 pub use self::context::MainContext;
-use self::{
-    deploy::DeployService,
-    error::exit_with_stderr,
-};
+use self::error::exit_with_stderr;
 
 #[derive(Parser)]
 struct Cli {
@@ -45,7 +42,6 @@ enum Command {
 async fn main() {
     let cli = Cli::parse();
 
-    DeployService::init(cli.base.clone());
     log::init_tracing();
 
     let result: Result<(), Box<dyn Error>> = match MainContext::load(&cli.base) {

@@ -15,7 +15,7 @@ use tokio::{
 use crate::{
     MainContext,
     deploy::{
-        DeployService,
+        self,
         UnitConfig,
     },
 };
@@ -50,8 +50,8 @@ enum Cmd {
 pub async fn run(ctx: &MainContext, args: Args) -> Result<(), Box<dyn Error>> {
     match args.cmd {
         Cmd::Check { name } => check(ctx, &name),
-        Cmd::Deploy { name, path } => deploy(&name, path.as_deref()).await,
-        Cmd::State { name } => state(&name).await,
+        Cmd::Deploy { name, path } => deploy(ctx, &name, path.as_deref()).await,
+        Cmd::State { name } => state(ctx, &name).await,
     }
 }
 
@@ -61,15 +61,17 @@ fn check(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn deploy(name: &str, path: Option<&Path>) -> Result<(), Box<dyn Error>> {
-    let service = DeployService::global();
-
+async fn deploy(
+    ctx: &MainContext,
+    name: &str,
+    path: Option<&Path>,
+) -> Result<(), Box<dyn Error>> {
     let (state, handle) = match path {
         Some(path) => {
             let file = fs::File::open(path).await?;
-            service.deploy(name, file).await?
+            deploy::deploy_unit(ctx.base(), name, file).await?
         }
-        None => service.deploy(name, io::stdin()).await?,
+        None => deploy::deploy_unit(ctx.base(), name, io::stdin()).await?,
     };
 
     println!("started version {}", state.latest_build.version);
@@ -78,8 +80,8 @@ async fn deploy(name: &str, path: Option<&Path>) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn state(name: &str) -> Result<(), Box<dyn Error>> {
-    let state = DeployService::global().state(name).await?;
+async fn state(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {
+    let state = deploy::unit_state(ctx.base(), name).await?;
     let build = &state.latest_build;
     let status = format!("{:?}", build.status).to_lowercase();
 

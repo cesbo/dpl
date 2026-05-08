@@ -1,6 +1,9 @@
 use std::{
     fs,
-    io,
+    io::{
+        self,
+        Write,
+    },
     path::Path,
 };
 
@@ -72,7 +75,16 @@ impl DeployState {
         let content = serde_yaml::to_string(self).map_err(|err| {
             DeployStateError::Write(io::Error::new(io::ErrorKind::InvalidData, err))
         })?;
-        fs::write(path, content).map_err(DeployStateError::Write)
+
+        let mut tmp = tempfile::NamedTempFile::new_in(unit_dir).map_err(DeployStateError::Write)?;
+        tmp.write_all(content.as_bytes())
+            .map_err(DeployStateError::Write)?;
+        tmp.as_file_mut()
+            .sync_all()
+            .map_err(DeployStateError::Write)?;
+        tmp.persist(&path)
+            .map_err(|err| DeployStateError::Write(err.error))?;
+        Ok(())
     }
 
     pub fn get_active_version(unit_dir: &Path) -> Result<u32, DeployStateError> {
