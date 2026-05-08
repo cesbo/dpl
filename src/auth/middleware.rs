@@ -1,10 +1,5 @@
-use std::sync::Arc;
-
 use axum::{
-    extract::{
-        Request,
-        State,
-    },
+    extract::Request,
     http::header,
     middleware::Next,
     response::{
@@ -16,11 +11,7 @@ use axum::{
 use super::error::AuthServiceError;
 use crate::deploy::DeployService;
 
-pub async fn authorize_request(
-    State(service): State<Arc<DeployService>>,
-    request: Request,
-    next: Next,
-) -> Response {
+pub async fn authorize_request(request: Request, next: Next) -> Response {
     let target = match resolve_access_target(&request) {
         Ok(route) => route,
         Err(err) => return err.into_response(),
@@ -31,7 +22,7 @@ pub async fn authorize_request(
         Err(err) => return err.into_response(),
     };
 
-    if let Err(err) = super::authorize(service.base(), name, token, &target) {
+    if let Err(err) = super::authorize(DeployService::global().base(), name, token, &target) {
         return err.into_response();
     }
 

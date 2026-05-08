@@ -1,7 +1,4 @@
-use std::{
-    io,
-    sync::Arc,
-};
+use std::io;
 
 use axum::{
     Json,
@@ -10,7 +7,6 @@ use axum::{
     extract::{
         Path,
         Query,
-        State,
     },
     http::StatusCode,
     response::IntoResponse,
@@ -28,27 +24,23 @@ use super::{
     DeployService,
 };
 
-pub fn router() -> Router<Arc<DeployService>> {
+pub fn router() -> Router {
     Router::new()
         .route("/{name}", post(deploy_handler))
         .route("/{name}/state", get(state_handler))
         .route("/{name}/log", get(log_handler))
 }
 
-async fn state_handler(
-    State(service): State<Arc<DeployService>>,
-    Path(name): Path<String>,
-) -> Result<impl IntoResponse, DeployError> {
+async fn state_handler(Path(name): Path<String>) -> Result<impl IntoResponse, DeployError> {
     if !crate::validate::resource_name(&name) {
         return Err(DeployError::InvalidUnitName);
     }
 
-    let state = service.state(&name).await?;
+    let state = DeployService::global().state(&name).await?;
     Ok((StatusCode::OK, Json(state.latest_build)))
 }
 
 async fn deploy_handler(
-    State(service): State<Arc<DeployService>>,
     Path(name): Path<String>,
     body: Body,
 ) -> Result<impl IntoResponse, DeployError> {
@@ -59,7 +51,7 @@ async fn deploy_handler(
     let stream = body.into_data_stream().map_err(io::Error::other);
     let reader = StreamReader::new(stream);
 
-    let state = service.deploy(&name, reader).await?;
+    let state = DeployService::global().deploy(&name, reader).await?;
     Ok((StatusCode::ACCEPTED, Json(state.latest_build)))
 }
 
@@ -69,7 +61,6 @@ struct LogQuery {
 }
 
 async fn log_handler(
-    State(service): State<Arc<DeployService>>,
     Path(name): Path<String>,
     Query(query): Query<LogQuery>,
 ) -> Result<impl IntoResponse, DeployError> {
@@ -78,7 +69,7 @@ async fn log_handler(
     }
 
     let offset = query.offset.unwrap_or(0);
-    let (data, total_size) = service.build_log(&name, offset).await?;
+    let (data, total_size) = DeployService::global().build_log(&name, offset).await?;
 
     Ok((
         [

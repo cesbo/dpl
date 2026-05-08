@@ -18,6 +18,7 @@ use std::{
     sync::{
         Arc,
         Mutex,
+        OnceLock,
         atomic::AtomicBool,
     },
 };
@@ -43,6 +44,8 @@ use unit::app::AppUnit;
 
 use crate::MainContext;
 
+static DEPLOY_SERVICE: OnceLock<DeployService> = OnceLock::new();
+
 pub struct DeployService {
     base: PathBuf,
     locks: Mutex<HashMap<String, Arc<AtomicBool>>>,
@@ -54,6 +57,20 @@ impl DeployService {
             base: base.into(),
             locks: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub fn init(base: impl Into<PathBuf>) -> &'static DeployService {
+        DEPLOY_SERVICE
+            .set(DeployService::new(base))
+            .ok()
+            .expect("DeployService already initialized");
+        DEPLOY_SERVICE.get().unwrap()
+    }
+
+    pub fn global() -> &'static DeployService {
+        DEPLOY_SERVICE
+            .get()
+            .expect("DeployService not initialized")
     }
 
     pub fn base(&self) -> &Path {

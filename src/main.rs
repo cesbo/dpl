@@ -13,7 +13,6 @@ mod validate;
 use std::{
     error::Error,
     path::PathBuf,
-    sync::Arc,
 };
 
 use axum::{
@@ -70,6 +69,8 @@ enum Command {
 async fn main() {
     let cli = Cli::parse();
 
+    DeployService::init(cli.base.clone());
+
     if let Some(cmd) = cli.command {
         let result = match cmd {
             Command::Init => cmd::init::run(),
@@ -99,31 +100,25 @@ async fn main() {
         Err(err) => exit_with_stderr(&err),
     };
 
-    let service = DeployService::new(cli.base);
     let addr = format!("{}:{}", ctx.config.server.addr, ctx.config.server.port);
 
-    if let Err(err) = run(service, addr).await {
+    if let Err(err) = run(addr).await {
         exit_with_error(err.as_ref());
     }
 }
 
-async fn run<A>(service: DeployService, addr: A) -> Result<(), Box<dyn Error>>
+async fn run<A>(addr: A) -> Result<(), Box<dyn Error>>
 where
     A: ToSocketAddrs,
 {
     log::init_tracing();
 
-    let service = Arc::new(service);
-    let deploy_routes = deploy_router().route_layer(middleware::from_fn_with_state(
-        service.clone(),
-        auth::authorize_request,
-    ));
+    let deploy_routes =
+        deploy_router().route_layer(middleware::from_fn(auth::authorize_request));
 
     let listener = TcpListener::bind(addr).await?;
     let addr = listener.local_addr()?;
-    let app = Router::new()
-        .nest("/deploy", deploy_routes)
-        .with_state(service);
+    let app = Router::new().nest("/deploy", deploy_routes);
 
     info!(%addr, "server started");
 
