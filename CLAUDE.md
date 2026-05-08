@@ -6,7 +6,7 @@ Deploy server: accepts deploy archives over HTTP, generates build artifacts from
 
 ```bash
 cargo build          # Build
-cargo run -- -c config.yaml  # Run server with config file
+cargo run -- --base /path/to/base  # Run server using base directory
 cargo test           # Run all tests
 cargo test <name>    # Single test (e.g. cargo test render_templates)
 cargo clippy         # Lint
@@ -44,7 +44,7 @@ Keep this split when adding functionality.
 ### Current Limitations
 
 - Unit types implemented: `app`, `domain`.
-- Auth: plain Bearer tokens from `{config.base}/auth.yaml`.
+- Auth: plain Bearer tokens from `{base}/auth.yaml`.
 - API: `POST /deploy/{name}`, `GET /deploy/{name}/state`, `GET /deploy/{name}/log`.
 - Systemd service file is generated but not installed or restarted.
 

@@ -11,7 +11,7 @@
 
 ### Directory Structure
 
-- `{base_dir}` - base directory for all `dpl` files (default: `/opt/dpl`), set via `base` in config
+- `{base_dir}` - base directory for all `dpl` files (default: `/opt/dpl`), set via `--base`
 - `{unit_dir}` - unit directory: `{base_dir}/{unit_name}/`
 - `{deploy_dir}` - deploy directory for one version: `{unit_dir}/deploy_{version}/`
 
@@ -32,16 +32,15 @@ token (name + value), then:
 
 ## Main Config
 
-The server reads its config from a YAML file. The path is set with `--config` / `-c` (default: `/opt/dpl/config.yaml`).
+The server reads its config from `{base_dir}/config.yaml`. The base directory is set with `--base` (default: `/opt/dpl`).
 
 ```bash
-dpl -c /opt/dpl/config.yaml
+dpl --base /opt/dpl
 ```
 
-Example:
+Example `config.yaml`:
 
 ```yaml
-base: /opt/dpl
 server:
   addr: 0.0.0.0
   port: 3000
@@ -49,7 +48,6 @@ server:
 
 Fields:
 
-- `base` - base directory for all `dpl` files (default: `/opt/dpl`). Referred to as `{base_dir}`
 - `server.addr` - bind address (default: `0.0.0.0`)
 - `server.port` - port (default: `3000`)
 
@@ -321,5 +319,5 @@ cargo test
 Run the server:
 
 ```bash
-cargo run -- --config config.yaml
+cargo run -- --base /opt/dpl
 ```

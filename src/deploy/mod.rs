@@ -41,14 +41,14 @@ use unit::app::AppUnit;
 use crate::MainContext;
 
 pub struct DeployService {
-    config_path: PathBuf,
+    base: PathBuf,
     locks: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 impl DeployService {
-    pub fn new(config_path: impl Into<PathBuf>) -> Self {
+    pub fn new(base: impl Into<PathBuf>) -> Self {
         DeployService {
-            config_path: config_path.into(),
+            base: base.into(),
             locks: Mutex::new(HashMap::new()),
         }
     }
@@ -69,7 +69,7 @@ impl DeployService {
     where
         R: AsyncRead + Unpin + Send,
     {
-        let ctx = MainContext::load(&self.config_path)?;
+        let ctx = MainContext::load(&self.base)?;
         let _guard = self.unit_lock(name)?;
 
         let unit = UnitConfig::load(&ctx, name)?;
@@ -89,7 +89,7 @@ impl DeployService {
     }
 
     pub async fn state(&self, name: &str) -> Result<DeployState, DeployError> {
-        let ctx = MainContext::load(&self.config_path)?;
+        let ctx = MainContext::load(&self.base)?;
         let unit_dir = ctx.base().join(name);
 
         let config_path = unit_dir.join("config.yaml");
@@ -102,7 +102,7 @@ impl DeployService {
     }
 
     pub async fn build_log(&self, name: &str, offset: u64) -> Result<(Vec<u8>, u64), DeployError> {
-        let ctx = MainContext::load(&self.config_path)?;
+        let ctx = MainContext::load(&self.base)?;
         let unit_dir = ctx.base().join(name);
 
         let config_path = unit_dir.join("config.yaml");

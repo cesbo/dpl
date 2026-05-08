@@ -58,16 +58,16 @@ impl<'a> RunContext<'a> {
 
         let mut config = MainConfig::default();
 
-        config.base = Input::with_theme(self.theme)
+        let base: PathBuf = Input::with_theme(self.theme)
             .with_prompt("Base directory")
-            .default(config.base.to_string_lossy().to_string())
+            .default("/opt/dpl".to_string())
             .interact_text()
             .map(PathBuf::from)?;
 
-        let config_path = config.base.join("config.yaml");
-        let auth_path = config.base.join("auth.yaml");
+        let config_path = base.join("config.yaml");
+        let auth_path = base.join("auth.yaml");
 
-        if config.base.is_dir() {
+        if base.is_dir() {
             println!("Base directory already exists");
 
             let mut ask_overwrite = false;
@@ -92,7 +92,7 @@ impl<'a> RunContext<'a> {
             }
         }
 
-        fs::create_dir_all(&config.base)?;
+        fs::create_dir_all(&base)?;
 
         config.server.addr = Input::with_theme(self.theme)
             .with_prompt("Bind address")
@@ -138,7 +138,7 @@ impl<'a> RunContext<'a> {
 
         self.write_yaml(&auth_path, &auth_config)?;
 
-        self.install_service(&config.base)?;
+        self.install_service(&base)?;
 
         let autostart: bool = Confirm::with_theme(self.theme)
             .with_prompt("Enable autostart?")
@@ -169,7 +169,6 @@ impl<'a> RunContext<'a> {
         }
 
         let exe = std::env::current_exe()?;
-        let config_path = base.join("config.yaml");
         let service = format!(
             r#"[Unit]
 Description=dpl deploy server
@@ -178,7 +177,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart={} -c {}
+ExecStart={} --base {}
 Restart=on-failure
 RestartSec=2
 
@@ -186,7 +185,7 @@ RestartSec=2
 WantedBy=multi-user.target
 "#,
             exe.display(),
-            config_path.display(),
+            base.display(),
         );
 
         let path = Path::new(SERVICE_PATH);

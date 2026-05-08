@@ -47,14 +47,9 @@ use self::{
 
 #[derive(Parser)]
 struct Cli {
-    /// Configuration file
-    #[arg(
-        long = "config",
-        short = 'c',
-        default_value = "/opt/dpl/config.yaml",
-        global = true
-    )]
-    config: PathBuf,
+    /// Base directory (contains config.yaml, auth.yaml, .secrets/, unit dirs)
+    #[arg(long = "base", default_value = "/opt/dpl", global = true)]
+    base: PathBuf,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -76,11 +71,11 @@ async fn main() {
     if let Some(cmd) = cli.command {
         let result = match cmd {
             Command::Init => cmd::init::run(),
-            Command::Secret(args) => match MainContext::load(&cli.config) {
+            Command::Secret(args) => match MainContext::load(&cli.base) {
                 Ok(ctx) => cmd::secret::run(&ctx, args),
                 Err(err) => Err(err.into()),
             },
-            Command::Unit(args) => match MainContext::load(&cli.config) {
+            Command::Unit(args) => match MainContext::load(&cli.base) {
                 Ok(ctx) => cmd::unit::run(&ctx, args),
                 Err(err) => Err(err.into()),
             },
@@ -93,12 +88,12 @@ async fn main() {
         return;
     }
 
-    let ctx = match MainContext::load(&cli.config) {
+    let ctx = match MainContext::load(&cli.base) {
         Ok(v) => v,
         Err(err) => exit_with_stderr(&err),
     };
 
-    let service = DeployService::new(cli.config);
+    let service = DeployService::new(cli.base);
     let addr = format!("{}:{}", ctx.config.server.addr, ctx.config.server.port);
 
     if let Err(err) = run(service, addr).await {
