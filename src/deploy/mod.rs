@@ -11,7 +11,10 @@ mod unit;
 use std::{
     collections::HashMap,
     io,
-    path::PathBuf,
+    path::{
+        Path,
+        PathBuf,
+    },
     sync::{
         Arc,
         Mutex,
@@ -51,6 +54,10 @@ impl DeployService {
             base: base.into(),
             locks: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub fn base(&self) -> &Path {
+        &self.base
     }
 
     fn unit_lock(&self, name: &str) -> Result<BusyGuard, DeployError> {

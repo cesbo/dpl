@@ -26,7 +26,7 @@ sudo dpl init
 The wizard asks for the base directory, bind address, port, and one access
 token (name + value), then:
 
-- creates main config in `{base_dir}/config.yaml` and auth config in `{base_dir}/auth.yaml`
+- creates main config in `{base_dir}/config.yaml` and the first access token in `{base_dir}/.auth/{name}.yaml`
 - writes `/etc/systemd/system/dpl.service`
 - optionally runs `systemctl enable --now dpl`
 
@@ -54,28 +54,36 @@ Fields:
 
 ## Auth Config
 
-All `/deploy` routes need a Bearer token. Tokens are stored in:
+All `/deploy` routes require a Bearer credential of the form `name:token`:
 
 ```text
-{base_dir}/auth.yaml
+Authorization: Bearer {name}:{token}
 ```
 
-Example:
+Each token is stored in its own file:
+
+```text
+{base_dir}/.auth/{name}.yaml
+```
+
+`{name}` is taken from the file name (without the `.yaml` suffix) and must
+consist of lowercase letters, digits, and hyphens (no leading, trailing, or
+double hyphens).
+
+Example `{base_dir}/.auth/deploy-key.yaml`:
 
 ```yaml
-keys:
-  - name: deploy-key
-    token: secret-token
-    apps: ["myapp"]
-    disabled: false
+token: secret-token
+apps: ["myapp"]
 ```
 
 Fields:
 
-- `name` - must be unique inside `auth.yaml`
 - `token` - plain-text Bearer token
 - `apps` - list of allowed app names. Use `"*"` to allow all apps
-- `disabled` - if `true`, the key is rejected
+
+To disable a token, remove or rename its file. The auth files are read on
+every request, so changes take effect without restarting `dpl`.
 
 ## Unit Config
 
@@ -227,7 +235,7 @@ The encryption keeps plaintext out of `config.yaml`, source control, and ad-hoc 
 ```bash
 git archive --format=tar.gz HEAD | curl \
   -X POST \
-  -H "Authorization: Bearer secret-token" \
+  -H "Authorization: Bearer deploy-key:secret-token" \
   --data-binary @- \
   http://127.0.0.1:3000/deploy/myapp
 ```
@@ -248,7 +256,7 @@ The image build continues in the background.
 
 ```bash
 curl \
-  -H "Authorization: Bearer secret-token" \
+  -H "Authorization: Bearer deploy-key:secret-token" \
   http://127.0.0.1:3000/deploy/myapp/state
 ```
 
@@ -284,7 +292,7 @@ Possible `latest_build.status` values:
 
 ```bash
 curl \
-  -H "Authorization: Bearer secret-token" \
+  -H "Authorization: Bearer deploy-key:secret-token" \
   http://127.0.0.1:3000/deploy/myapp/log
 ```
 
@@ -298,7 +306,7 @@ See [`openapi.yaml`](openapi.yaml) for the full API specification.
 ## Notes
 
 - The app config is read fresh on each deploy request.
-- The auth config is loaded once on the first protected request. Restart `dpl` after changing `auth.yaml`.
+- Auth tokens are read fresh on every request from `{base_dir}/.auth/{name}.yaml`; no restart is needed after adding, changing, or removing a token file.
 - Deploy state is stored on disk, not in memory.
 - If the archive has a single top-level folder, `dpl` flattens it after extraction.
 

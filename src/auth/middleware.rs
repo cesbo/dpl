@@ -17,21 +17,21 @@ use super::error::AuthServiceError;
 use crate::deploy::DeployService;
 
 pub async fn authorize_request(
-    State(_service): State<Arc<DeployService>>,
+    State(service): State<Arc<DeployService>>,
     request: Request,
     next: Next,
 ) -> Response {
-    let name = match resolve_access_target(&request) {
+    let target = match resolve_access_target(&request) {
         Ok(route) => route,
         Err(err) => return err.into_response(),
     };
 
-    let token = match bearer_token(&request) {
-        Ok(token) => token,
+    let (name, token) = match bearer_credentials(&request) {
+        Ok(creds) => creds,
         Err(err) => return err.into_response(),
     };
 
-    if let Err(err) = super::SERVICE.authorize(token, &name) {
+    if let Err(err) = super::authorize(service.base(), name, token, &target) {
         return err.into_response();
     }
 
@@ -56,7 +56,7 @@ fn resolve_access_target(request: &Request) -> Result<String, AuthServiceError> 
     }
 }
 
-fn bearer_token(request: &Request) -> Result<&str, AuthServiceError> {
+fn bearer_credentials(request: &Request) -> Result<(&str, &str), AuthServiceError> {
     let header = request
         .headers()
         .get(header::AUTHORIZATION)
@@ -66,10 +66,16 @@ fn bearer_token(request: &Request) -> Result<&str, AuthServiceError> {
         .to_str()
         .map_err(|_| AuthServiceError::InvalidToken)?;
 
-    value
+    let raw = value
         .strip_prefix("Bearer ")
-        .filter(|token| !token.is_empty())
-        .ok_or(AuthServiceError::InvalidToken)
+        .ok_or(AuthServiceError::InvalidToken)?;
+
+    let (name, token) = raw.split_once(':').ok_or(AuthServiceError::InvalidToken)?;
+    if name.is_empty() || token.is_empty() {
+        return Err(AuthServiceError::InvalidToken);
+    }
+
+    Ok((name, token))
 }
 
 #[cfg(test)]
@@ -122,5 +128,58 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         assert_eq!(resolve_access_target(&request).unwrap(), "myapp");
+    }
+
+    #[test]
+    fn bearer_credentials_ok() {
+        let request = Request::builder()
+            .header(header::AUTHORIZATION, "Bearer admin:secret")
+            .body(Body::empty())
+            .unwrap();
+        let (name, token) = bearer_credentials(&request).unwrap();
+        assert_eq!(name, "admin");
+        assert_eq!(token, "secret");
+    }
+
+    #[test]
+    fn bearer_credentials_no_separator() {
+        let request = Request::builder()
+            .header(header::AUTHORIZATION, "Bearer adminsecret")
+            .body(Body::empty())
+            .unwrap();
+        assert!(matches!(
+            bearer_credentials(&request),
+            Err(AuthServiceError::InvalidToken)
+        ));
+    }
+
+    #[test]
+    fn bearer_credentials_missing_header() {
+        let request = Request::builder().body(Body::empty()).unwrap();
+        assert!(matches!(
+            bearer_credentials(&request),
+            Err(AuthServiceError::InvalidToken)
+        ));
+    }
+
+    #[test]
+    fn bearer_credentials_empty_parts() {
+        let request = Request::builder()
+            .header(header::AUTHORIZATION, "Bearer :secret")
+            .body(Body::empty())
+            .unwrap();
+        assert!(matches!(
+            bearer_credentials(&request),
+            Err(AuthServiceError::InvalidToken)
+        ));
+
+        let request = Request::builder()
+            .header(header::AUTHORIZATION, "Bearer admin:")
+            .body(Body::empty())
+            .unwrap();
+        assert!(matches!(
+            bearer_credentials(&request),
+            Err(AuthServiceError::InvalidToken)
+        ));
     }
 }

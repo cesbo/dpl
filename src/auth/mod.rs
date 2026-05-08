@@ -2,133 +2,133 @@ mod error;
 mod middleware;
 pub mod model;
 
-use std::sync::LazyLock;
+use std::path::Path;
 
 pub use error::AuthServiceError;
 pub use middleware::authorize_request;
-use model::AuthConfig;
 use tracing::error;
 
-use crate::config::load_config;
+use crate::{
+    config::load_config,
+    validate,
+};
 
-pub static SERVICE: LazyLock<AuthService> = LazyLock::new(AuthService::load);
-
-pub struct AuthService {
-    config: Option<AuthConfig>,
-}
-
-impl AuthService {
-    fn load() -> Self {
-        // TODO: fix this
-        let path = std::path::Path::new("/opt/dpl").join("auth.yaml");
-        let config = match load_config(&path) {
-            Ok(config) => Some(config),
-            Err(err) => {
-                error!("load auth config: {}", err);
-                None
-            }
-        };
-
-        AuthService { config }
+pub fn authorize(
+    base: &Path,
+    name: &str,
+    token: &str,
+    app: &str,
+) -> Result<(), AuthServiceError> {
+    if !validate::resource_name(name) {
+        return Err(AuthServiceError::InvalidToken);
     }
 
-    pub fn authorize(&self, token: &str, app: &str) -> Result<(), AuthServiceError> {
-        let config = self.config.as_ref().ok_or(AuthServiceError::ServiceError)?;
-
-        let key = config
-            .keys
-            .iter()
-            .find(|key| key.token == token)
-            .ok_or(AuthServiceError::PermissionDenied)?;
-
-        if key.disabled {
-            return Err(AuthServiceError::PermissionDenied);
+    let path = base.join(".auth").join(format!("{name}.yaml"));
+    let entry: model::AuthEntry = match load_config(&path) {
+        Ok(entry) => entry,
+        Err(err) if err.is_not_found() => return Err(AuthServiceError::PermissionDenied),
+        Err(err) => {
+            error!("load auth entry '{name}': {}", err);
+            return Err(AuthServiceError::ServiceError);
         }
+    };
 
-        let allow_app = key
-            .apps
-            .iter()
-            .any(|allowed_app| allowed_app == app || allowed_app == "*");
-
-        if !allow_app {
-            return Err(AuthServiceError::PermissionDenied);
-        }
-
-        Ok(())
+    if entry.token != token {
+        return Err(AuthServiceError::PermissionDenied);
     }
+
+    let allow_app = entry
+        .apps
+        .iter()
+        .any(|allowed| allowed == app || allowed == "*");
+
+    if !allow_app {
+        return Err(AuthServiceError::PermissionDenied);
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
     use super::{
-        AuthService,
         AuthServiceError,
-        model::{
-            AuthConfig,
-            AuthKey,
-        },
+        authorize,
     };
-    use crate::config::ValidateConfig;
 
-    #[test]
-    fn rejects_duplicate_key_ids() {
-        let config = AuthConfig {
-            keys: vec![
-                AuthKey {
-                    name: "user-1".to_string(),
-                    token: "token-1".to_string(),
-                    apps: Vec::new(),
-                    disabled: false,
-                },
-                AuthKey {
-                    name: "user-1".to_string(),
-                    token: "token-2".to_string(),
-                    apps: Vec::new(),
-                    disabled: false,
-                },
-            ],
-        };
-
-        let err = config.validate_config().unwrap_err();
-        assert_eq!(err, "duplicate key name: user-1");
+    fn write_entry(base: &std::path::Path, name: &str, contents: &str) {
+        let dir = base.join(".auth");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(format!("{name}.yaml")), contents).unwrap();
     }
 
     #[test]
-    fn authorize_with_no_config() {
-        let service = AuthService { config: None };
+    fn authorize_ok_wildcard() {
+        let tmp = tempdir().unwrap();
+        write_entry(tmp.path(), "user-1", "token: t1\napps: [\"*\"]\n");
+        assert!(authorize(tmp.path(), "user-1", "t1", "frontend").is_ok());
+        assert!(authorize(tmp.path(), "user-1", "t1", "backend").is_ok());
+    }
+
+    #[test]
+    fn authorize_ok_explicit_app() {
+        let tmp = tempdir().unwrap();
+        write_entry(
+            tmp.path(),
+            "user-1",
+            "token: t1\napps: [frontend, backend]\n",
+        );
+        assert!(authorize(tmp.path(), "user-1", "t1", "frontend").is_ok());
+        assert!(authorize(tmp.path(), "user-1", "t1", "backend").is_ok());
+    }
+
+    #[test]
+    fn authorize_app_not_listed() {
+        let tmp = tempdir().unwrap();
+        write_entry(tmp.path(), "user-1", "token: t1\napps: [frontend]\n");
         assert!(matches!(
-            service.authorize("token-1", "frontend"),
-            Err(AuthServiceError::ServiceError)
+            authorize(tmp.path(), "user-1", "t1", "backend"),
+            Err(AuthServiceError::PermissionDenied)
         ));
     }
 
     #[test]
-    fn authorize_all() {
-        let config = AuthConfig {
-            keys: vec![
-                AuthKey {
-                    name: "user-1".to_string(),
-                    token: "token-1".to_string(),
-                    apps: vec!["frontend".to_string(), "backend".to_string()],
-                    disabled: false,
-                },
-                AuthKey {
-                    name: "user-2".to_string(),
-                    token: "token-2".to_string(),
-                    apps: vec!["frontend".to_string()],
-                    disabled: false,
-                },
-            ],
-        };
-
-        let service = AuthService {
-            config: Some(config),
-        };
-        assert!(service.authorize("token-1", "frontend").is_ok());
-        assert!(service.authorize("token-1", "backend").is_ok());
+    fn authorize_wrong_token() {
+        let tmp = tempdir().unwrap();
+        write_entry(tmp.path(), "user-1", "token: t1\napps: [\"*\"]\n");
         assert!(matches!(
-            service.authorize("token-2", "backend"),
+            authorize(tmp.path(), "user-1", "wrong", "frontend"),
             Err(AuthServiceError::PermissionDenied)
+        ));
+    }
+
+    #[test]
+    fn authorize_missing_file() {
+        let tmp = tempdir().unwrap();
+        assert!(matches!(
+            authorize(tmp.path(), "ghost", "t", "frontend"),
+            Err(AuthServiceError::PermissionDenied)
+        ));
+    }
+
+    #[test]
+    fn authorize_invalid_name() {
+        let tmp = tempdir().unwrap();
+        assert!(matches!(
+            authorize(tmp.path(), "Bad_Name", "t", "frontend"),
+            Err(AuthServiceError::InvalidToken)
+        ));
+        assert!(matches!(
+            authorize(tmp.path(), "../etc", "t", "frontend"),
+            Err(AuthServiceError::InvalidToken)
+        ));
+        assert!(matches!(
+            authorize(tmp.path(), "", "t", "frontend"),
+            Err(AuthServiceError::InvalidToken)
         ));
     }
 }

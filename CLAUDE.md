@@ -44,7 +44,7 @@ Keep this split when adding functionality.
 ### Current Limitations
 
 - Unit types implemented: `app`, `domain`.
-- Auth: plain Bearer tokens from `{base}/auth.yaml`.
+- Auth: plain Bearer tokens (`Authorization: Bearer name:token`) stored per-token in `{base}/.auth/{name}.yaml`.
 - API: `POST /deploy/{name}`, `GET /deploy/{name}/state`, `GET /deploy/{name}/log`.
 - Systemd service file is generated but not installed or restarted.
 

@@ -19,10 +19,7 @@ use dialoguer::{
 };
 
 use crate::{
-    auth::model::{
-        AuthConfig,
-        AuthKey,
-    },
+    auth::model::AuthEntry,
     model::MainConfig,
     validate,
 };
@@ -65,7 +62,7 @@ impl<'a> RunContext<'a> {
             .map(PathBuf::from)?;
 
         let config_path = base.join("config.yaml");
-        let auth_path = base.join("auth.yaml");
+        let auth_dir = base.join(".auth");
 
         if base.is_dir() {
             println!("Base directory already exists");
@@ -75,8 +72,8 @@ impl<'a> RunContext<'a> {
                 println!("  - config.yaml will be overwritten");
                 ask_overwrite = true;
             }
-            if auth_path.is_file() {
-                println!("  - auth.yaml (access tokens) will be overwritten");
+            if auth_dir.is_dir() {
+                println!("  - .auth/ (access tokens) may be overwritten");
                 ask_overwrite = true;
             }
 
@@ -93,6 +90,7 @@ impl<'a> RunContext<'a> {
         }
 
         fs::create_dir_all(&base)?;
+        fs::create_dir_all(&auth_dir)?;
 
         config.server.addr = Input::with_theme(self.theme)
             .with_prompt("Bind address")
@@ -107,8 +105,8 @@ impl<'a> RunContext<'a> {
         self.write_yaml(&config_path, &config)?;
 
         println!();
-        println!("Access token is bearer credential for the HTTP API.");
-        println!("The name is just a label for identification in auth.yaml.");
+        println!("Access token is the bearer credential for the HTTP API.");
+        println!("Send it as `Authorization: Bearer {{name}}:{{token}}`.");
         println!();
 
         let token_name: String = Input::with_theme(self.theme)
@@ -127,16 +125,13 @@ impl<'a> RunContext<'a> {
             .with_prompt("Token value")
             .interact()?;
 
-        let auth_config = AuthConfig {
-            keys: vec![AuthKey {
-                name: token_name,
-                token,
-                apps: vec!["*".into()],
-                disabled: false,
-            }],
+        let auth_entry = AuthEntry {
+            token,
+            apps: vec!["*".into()],
         };
 
-        self.write_yaml(&auth_path, &auth_config)?;
+        let token_path = auth_dir.join(format!("{token_name}.yaml"));
+        self.write_yaml(&token_path, &auth_entry)?;
 
         self.install_service(&base)?;
 
