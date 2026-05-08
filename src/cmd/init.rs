@@ -62,7 +62,7 @@ impl<'a> RunContext<'a> {
             .map(PathBuf::from)?;
 
         let config_path = base.join("config.yaml");
-        let auth_dir = base.join(".auth");
+        let tokens_dir = base.join(".tokens");
 
         if base.is_dir() {
             println!("Base directory already exists");
@@ -72,8 +72,8 @@ impl<'a> RunContext<'a> {
                 println!("  - config.yaml will be overwritten");
                 ask_overwrite = true;
             }
-            if auth_dir.is_dir() {
-                println!("  - .auth/ (access tokens) may be overwritten");
+            if tokens_dir.is_dir() {
+                println!("  - .tokens/ (access tokens) may be overwritten");
                 ask_overwrite = true;
             }
 
@@ -90,7 +90,7 @@ impl<'a> RunContext<'a> {
         }
 
         fs::create_dir_all(&base)?;
-        fs::create_dir_all(&auth_dir)?;
+        fs::create_dir_all(&tokens_dir)?;
 
         config.server.addr = Input::with_theme(self.theme)
             .with_prompt("Bind address")
@@ -130,7 +130,7 @@ impl<'a> RunContext<'a> {
             apps: vec!["*".into()],
         };
 
-        let token_path = auth_dir.join(format!("{token_name}.yaml"));
+        let token_path = tokens_dir.join(format!("{token_name}.yaml"));
         self.write_yaml(&token_path, &auth_entry)?;
 
         self.install_service(&base)?;

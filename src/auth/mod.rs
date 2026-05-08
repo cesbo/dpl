@@ -13,17 +13,12 @@ use crate::{
     validate,
 };
 
-pub fn authorize(
-    base: &Path,
-    name: &str,
-    token: &str,
-    app: &str,
-) -> Result<(), AuthServiceError> {
+pub fn authorize(base: &Path, name: &str, token: &str, app: &str) -> Result<(), AuthServiceError> {
     if !validate::resource_name(name) {
         return Err(AuthServiceError::InvalidToken);
     }
 
-    let path = base.join(".auth").join(format!("{name}.yaml"));
+    let path = base.join(".tokens").join(format!("{name}.yaml"));
     let entry: model::AuthEntry = match load_config(&path) {
         Ok(entry) => entry,
         Err(err) if err.is_not_found() => return Err(AuthServiceError::PermissionDenied),
@@ -61,7 +56,7 @@ mod tests {
     };
 
     fn write_entry(base: &std::path::Path, name: &str, contents: &str) {
-        let dir = base.join(".auth");
+        let dir = base.join(".tokens");
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(format!("{name}.yaml")), contents).unwrap();
     }

@@ -26,7 +26,7 @@ sudo dpl init
 The wizard asks for the base directory, bind address, port, and one access
 token (name + value), then:
 
-- creates main config in `{base_dir}/config.yaml` and the first access token in `{base_dir}/.auth/{name}.yaml`
+- creates main config in `{base_dir}/config.yaml` and the first access token in `{base_dir}/.tokens/{name}.yaml`
 - writes `/etc/systemd/system/dpl.service`
 - optionally runs `systemctl enable --now dpl`
 
@@ -63,14 +63,14 @@ Authorization: Bearer {name}:{token}
 Each token is stored in its own file:
 
 ```text
-{base_dir}/.auth/{name}.yaml
+{base_dir}/.tokens/{name}.yaml
 ```
 
 `{name}` is taken from the file name (without the `.yaml` suffix) and must
 consist of lowercase letters, digits, and hyphens (no leading, trailing, or
 double hyphens).
 
-Example `{base_dir}/.auth/deploy-key.yaml`:
+Example `{base_dir}/.tokens/deploy-key.yaml`:
 
 ```yaml
 token: secret-token
@@ -82,8 +82,25 @@ Fields:
 - `token` - plain-text Bearer token
 - `apps` - list of allowed app names. Use `"*"` to allow all apps
 
-To disable a token, remove or rename its file. The auth files are read on
-every request, so changes take effect without restarting `dpl`.
+Token files are read on every request, so changes take effect without
+restarting `dpl`.
+
+### CLI
+
+```bash
+dpl token add deploy-key                              # interactive prompt; Enter to generate
+dpl token add deploy-key --apps myapp,other-app       # restrict to specific apps
+dpl token ls                                          # print token names
+dpl token rm deploy-key                               # delete
+```
+
+`token add` prompts for the value with terminal echo off. An empty input
+generates a random 32-character alphanumeric token and prints it once.
+Re-running `add` with an existing name overwrites the file.
+
+`--apps` is a comma-separated list of app names; each name is validated the
+same way as token names. When omitted, `apps` defaults to `["*"]` (all apps
+allowed).
 
 ## Unit Config
 
@@ -306,7 +323,7 @@ See [`openapi.yaml`](openapi.yaml) for the full API specification.
 ## Notes
 
 - The app config is read fresh on each deploy request.
-- Auth tokens are read fresh on every request from `{base_dir}/.auth/{name}.yaml`; no restart is needed after adding, changing, or removing a token file.
+- Auth tokens are read fresh on every request from `{base_dir}/.tokens/{name}.yaml`; no restart is needed after adding, changing, or removing a token file.
 - Deploy state is stored on disk, not in memory.
 - If the archive has a single top-level folder, `dpl` flattens it after extraction.
 

@@ -47,7 +47,7 @@ use self::{
 
 #[derive(Parser)]
 struct Cli {
-    /// Base directory (contains config.yaml, auth.yaml, .secrets/, unit dirs)
+    /// Base directory (contains config.yaml, .tokens/, .secrets/, unit dirs)
     #[arg(long = "base", default_value = "/opt/dpl", global = true)]
     base: PathBuf,
     #[command(subcommand)]
@@ -60,6 +60,8 @@ enum Command {
     Init,
     /// Manage encrypted runtime secrets
     Secret(cmd::secret::Args),
+    /// Manage HTTP API access tokens
+    Token(cmd::token::Args),
     /// Manage units
     Unit(cmd::unit::Args),
 }
@@ -73,6 +75,10 @@ async fn main() {
             Command::Init => cmd::init::run(),
             Command::Secret(args) => match MainContext::load(&cli.base) {
                 Ok(ctx) => cmd::secret::run(&ctx, args),
+                Err(err) => Err(err.into()),
+            },
+            Command::Token(args) => match MainContext::load(&cli.base) {
+                Ok(ctx) => cmd::token::run(&ctx, args),
                 Err(err) => Err(err.into()),
             },
             Command::Unit(args) => match MainContext::load(&cli.base) {
