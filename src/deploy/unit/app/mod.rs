@@ -23,10 +23,6 @@ use tokio::{
     },
     task::JoinHandle,
 };
-use tracing::{
-    error,
-    info,
-};
 
 use self::artifacts::ArtifactsContext;
 pub use self::model::AppConfig;
@@ -41,6 +37,7 @@ use crate::{
         },
     },
     error::format_error_chain,
+    log::DeployLog,
 };
 
 #[derive(Debug)]
@@ -64,7 +61,13 @@ impl AppUnit {
         }
     }
 
-    pub async fn deploy<R>(self, archive: R) -> Result<(DeployState, JoinHandle<()>), DeployError>
+    /// Acquire the busy lock, bump version, persist state, then prepare the
+    /// deploy workspace (extract archive, allocate port, render artifacts).
+    /// Returns the new state (status `Building`) and the deploy directory path.
+    pub async fn prepare_deploy<R>(
+        &self,
+        archive: R,
+    ) -> Result<(DeployState, PathBuf), DeployError>
     where
         R: AsyncRead + Unpin + Send,
     {
@@ -78,28 +81,30 @@ impl AppUnit {
         let version = state.bump_version()?;
         state.save(&self.unit_dir)?;
 
-        info!(unit = %self.name, version = %version, "deploy started");
-
         if let Err(err) = self.prepare(version, archive).await {
             let chain = format_error_chain(&err);
-            error!(unit = %self.name, error = %chain, "prepare app deploy");
+            eprintln!("prepare failed: {chain}");
             state.set_error(format!("prepare app deploy failed: {chain}"));
             let _ = state.save(&self.unit_dir);
             return Err(err);
         }
 
-        let result = state.clone();
+        let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
+        Ok((state, deploy_dir))
+    }
 
-        let handle = tokio::task::spawn_blocking(move || {
-            let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
-            let log_path = deploy_dir.join("log").join("build.log");
-            let subscriber = crate::log::init_tracing_log(&log_path).unwrap();
-            tracing::subscriber::with_default(subscriber, || {
-                self.deploy_worker(&deploy_dir, state);
-            });
-        });
-
-        Ok((result, handle))
+    /// Spawn the blocking worker that runs build → install → uninstall-old.
+    /// Consumes `self`; the returned handle drives the deploy to completion
+    /// and finalizes the log file.
+    pub fn start_worker(
+        self,
+        deploy_dir: PathBuf,
+        state: DeployState,
+        log: DeployLog,
+    ) -> JoinHandle<()> {
+        tokio::task::spawn_blocking(move || {
+            self.deploy_worker(&deploy_dir, state, &log);
+        })
     }
 
     async fn prepare<R>(&self, version: u32, archive: R) -> Result<(), DeployError>
@@ -159,33 +164,31 @@ impl AppUnit {
         Ok(())
     }
 
-    fn deploy_worker(&self, deploy_dir: &Path, mut state: DeployState) {
+    fn deploy_worker(&self, deploy_dir: &Path, mut state: DeployState, log: &DeployLog) {
         let version = state.latest_build.version;
 
-        if let Err(err) = self.build_inner(deploy_dir, version) {
+        if let Err(err) = self.build_inner(deploy_dir, version, log) {
             let chain = format_error_chain(&err);
-            error!(%version, error = %chain, "failed to build app image");
+            log.error(&format!("failed to build app image: {chain}"));
             state.set_error(format!("failed to build app image: {chain}"));
             let _ = state.save(&self.unit_dir);
+            log.finish_err(&chain);
             return;
         }
 
-        info!(%version, "app image build completed");
-
-        // Uninstall active version
         if let Some(active_version) = state.active_version {
-            info!(version = %active_version, "uninstalling active version");
-            self.uninstall_inner(active_version);
+            log.phase(&format!("uninstalling v{active_version}"));
+            self.uninstall_inner(active_version, log);
         }
 
-        // Install new version
-        if let Err(err) = self.install_inner(version) {
+        if let Err(err) = self.install_inner(version, log) {
             let chain = format_error_chain(&err);
-            error!(%version, error = %chain, "failed to install app");
-            self.uninstall_inner(version);
+            log.error(&format!("failed to install app: {chain}"));
+            self.uninstall_inner(version, log);
             state.active_version = None;
             state.set_error(format!("failed to install app: {chain}"));
             let _ = state.save(&self.unit_dir);
+            log.finish_err(&chain);
             return;
         }
 
@@ -193,57 +196,68 @@ impl AppUnit {
         state.set_ready();
         let _ = state.save(&self.unit_dir);
 
-        info!(%version, "app deploy completed");
+        log.finish_ok();
     }
 
-    fn build_inner(&self, deploy_dir: &Path, version: u32) -> Result<(), DeployError> {
-        info!("build started for {}", self.name);
+    fn build_inner(
+        &self,
+        deploy_dir: &Path,
+        version: u32,
+        log: &DeployLog,
+    ) -> Result<(), DeployError> {
+        log.phase("extracting archive");
 
         let archive_path = deploy_dir.join("app.tar.gz");
         let app_dir = deploy_dir.join("app");
 
         crate::archive::extract(&archive_path, &app_dir)?;
-        info!("archive extracted");
 
         let ctx = PodmanContext::new(&self.name, version);
 
-        ctx.build(deploy_dir)
+        log.phase("building image");
+        ctx.build(deploy_dir, log)
             .map_err(|source| DeployError::UnitError {
                 info: "failed to build image".to_string(),
                 source,
             })?;
 
-        ctx.export(deploy_dir, &self.config.exports)
-            .map_err(|source| DeployError::UnitError {
-                info: "failed to export static files".to_string(),
-                source,
-            })?;
+        if !self.config.exports.is_empty() {
+            log.phase("exporting files");
+            ctx.export(deploy_dir, &self.config.exports, log)
+                .map_err(|source| DeployError::UnitError {
+                    info: "failed to export static files".to_string(),
+                    source,
+                })?;
+        }
 
         Ok(())
     }
 
-    fn install_inner(&self, version: u32) -> io::Result<()> {
+    fn install_inner(&self, version: u32, log: &DeployLog) -> io::Result<()> {
         let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
 
         let systemd_ctx = SystemdContext::new(&self.name);
-        systemd_ctx.install_app(&deploy_dir)?;
 
-        info!(%version, "checking app health");
+        log.phase("installing service");
+        systemd_ctx.install_app(&deploy_dir, log)?;
+
+        log.phase("health check");
         health::check(&self.name, self.config.port)?;
         systemd_ctx.set_restart_value("always")?;
 
-        systemd_ctx.install_timers(&deploy_dir);
+        log.phase("installing timers");
+        systemd_ctx.install_timers(&deploy_dir, log);
 
         Ok(())
     }
 
-    fn uninstall_inner(&self, version: u32) {
+    fn uninstall_inner(&self, version: u32, log: &DeployLog) {
         let systemd_ctx = SystemdContext::new(&self.name);
-        systemd_ctx.uninstall_timers();
-        systemd_ctx.uninstall_app();
+        systemd_ctx.uninstall_timers(log);
+        systemd_ctx.uninstall_app(log);
 
         let podman_ctx = PodmanContext::new(&self.name, version);
-        podman_ctx.remove();
+        podman_ctx.remove(log);
     }
 }
 

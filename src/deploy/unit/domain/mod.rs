@@ -4,10 +4,6 @@ mod model;
 use std::path::PathBuf;
 
 use tokio::fs;
-use tracing::{
-    error,
-    info,
-};
 
 use self::artifacts::ArtifactsContext;
 pub use self::model::DomainConfig;
@@ -56,11 +52,9 @@ impl DomainUnit {
         let version = state.bump_version()?;
         state.save(&self.unit_dir)?;
 
-        info!(unit = %self.name, %version, "domain deploy started");
-
         if let Err(err) = self.render(version).await {
             let chain = format_error_chain(&err);
-            error!(unit = %self.name, error = %chain, "render nginx config");
+            eprintln!("render nginx config failed for {}: {chain}", self.name);
             state.set_error(format!("render nginx config failed: {chain}"));
             let _ = state.save(&self.unit_dir);
             return Err(err);
@@ -69,8 +63,6 @@ impl DomainUnit {
         state.active_version = Some(version);
         state.set_ready();
         state.save(&self.unit_dir)?;
-
-        info!(unit = %self.name, %version, "domain deploy completed");
 
         Ok(state)
     }

@@ -23,13 +23,16 @@ use tokio::{
 pub use unit::UnitConfig;
 use unit::app::AppUnit;
 
-use crate::MainContext;
+use crate::{
+    MainContext,
+    log::DeployLog,
+};
 
 pub async fn deploy_unit<R>(
     base: &Path,
     name: &str,
     archive: R,
-) -> Result<(DeployState, JoinHandle<()>), DeployError>
+) -> Result<(DeployState, DeployLog, JoinHandle<()>), DeployError>
 where
     R: AsyncRead + Unpin + Send,
 {
@@ -37,7 +40,28 @@ where
     let unit = UnitConfig::load(&ctx, name)?;
 
     match unit {
-        UnitConfig::App(config) => AppUnit::new(ctx, name, config).deploy(archive).await,
+        UnitConfig::App(config) => {
+            let app = AppUnit::new(ctx, name, config);
+            let (state, deploy_dir) = app.prepare_deploy(archive).await?;
+            let version = state.latest_build.version;
+            let log_path = deploy_dir.join("log").join("build.log");
+
+            let log = match DeployLog::open(&log_path, &app.name, version) {
+                Ok(log) => log,
+                Err(source) => {
+                    let mut state = state;
+                    state.set_error(format!("open deploy log: {source}"));
+                    let _ = state.save(&app.unit_dir);
+                    return Err(DeployError::UnitError {
+                        info: "open deploy log".to_string(),
+                        source,
+                    });
+                }
+            };
+
+            let handle = app.start_worker(deploy_dir, state.clone(), log.clone());
+            Ok((state, log, handle))
+        }
         UnitConfig::Domain(_) => Err(DeployError::UnitNotAllowed),
     }
 }

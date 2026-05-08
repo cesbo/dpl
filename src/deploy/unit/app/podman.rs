@@ -10,12 +10,8 @@ use std::{
     },
 };
 
-use tracing::{
-    error,
-    info,
-};
-
 use super::model::ExportConfig;
+use crate::log::DeployLog;
 
 pub struct PodmanContext<'a> {
     name: &'a str,
@@ -34,10 +30,9 @@ impl<'a> PodmanContext<'a> {
     }
 
     /// Build podman image, streams output into the build log.
-    pub fn build(&self, deploy_dir: &Path) -> io::Result<()> {
+    pub fn build(&self, deploy_dir: &Path, log: &DeployLog) -> io::Result<()> {
         let artifacts_dir = deploy_dir.join("artifacts");
         let containerfile = artifacts_dir.join("containerfile");
-        let dispatch = tracing::dispatcher::get_default(|dispatch| dispatch.clone());
 
         let mut cmd = Command::new("podman");
         cmd.arg("build")
@@ -74,24 +69,20 @@ impl<'a> PodmanContext<'a> {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        info!("running: podman build --tag {}", &self.image_tag);
+        log.detail(&format!("running: podman build --tag {}", &self.image_tag));
 
         let mut child = cmd.spawn()?;
 
         let stdout = child.stdout.take().unwrap();
-        let stdout_dispatch = dispatch.clone();
+        let stdout_log = log.clone();
         let stdout_handle = std::thread::spawn(move || {
-            tracing::dispatcher::with_default(&stdout_dispatch, || {
-                log_podman_output(stdout, "stdout");
-            });
+            log_podman_output(stdout, &stdout_log);
         });
 
         let stderr = child.stderr.take().unwrap();
-        let stderr_dispatch = dispatch.clone();
+        let stderr_log = log.clone();
         let stderr_handle = std::thread::spawn(move || {
-            tracing::dispatcher::with_default(&stderr_dispatch, || {
-                log_podman_output(stderr, "stderr");
-            });
+            log_podman_output(stderr, &stderr_log);
         });
 
         let _ = stdout_handle.join();
@@ -108,7 +99,12 @@ impl<'a> PodmanContext<'a> {
     }
 
     /// Export files from podman image into deploy directory
-    pub fn export(&self, deploy_dir: &Path, exports: &[ExportConfig]) -> io::Result<()> {
+    pub fn export(
+        &self,
+        deploy_dir: &Path,
+        exports: &[ExportConfig],
+        log: &DeployLog,
+    ) -> io::Result<()> {
         if exports.is_empty() {
             return Ok(());
         }
@@ -139,10 +135,10 @@ impl<'a> PodmanContext<'a> {
 
             match run_podman(&["cp", "-a", "--overwrite", &src, &dst.to_string_lossy()]) {
                 Ok(_) => {
-                    info!("export {src} completed");
+                    log.detail(&format!("export {src} completed"));
                 }
                 Err(err) => {
-                    error!("export {src} failed: {err}");
+                    log.warn(&format!("export {src} failed: {err}"));
                 }
             }
         }
@@ -153,18 +149,18 @@ impl<'a> PodmanContext<'a> {
         Ok(())
     }
 
-    pub fn remove(&self) {
+    pub fn remove(&self, log: &DeployLog) {
         let _ = run_podman(&["rmi", &self.image_tag]);
 
         // Remove dangling images from local storage
         let _ = run_podman(&["image", "prune", "-f"]);
         let _ = run_podman(&["image", "prune", "-f", "--external"]);
 
-        info!("removed app image");
+        log.detail("removed app image");
     }
 }
 
-fn log_podman_output<R>(reader: R, stream: &'static str)
+fn log_podman_output<R>(reader: R, log: &DeployLog)
 where
     R: io::Read,
 {
@@ -174,7 +170,7 @@ where
         let Ok(line) = line else {
             break;
         };
-        info!(target: "podman_build", stream, line);
+        log.podman_line(&line);
     }
 }
 

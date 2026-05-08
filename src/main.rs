@@ -42,8 +42,6 @@ enum Command {
 async fn main() {
     let cli = Cli::parse();
 
-    log::init_tracing();
-
     let result: Result<(), Box<dyn Error>> = match MainContext::load(&cli.base) {
         Ok(ctx) => match cli.command {
             Command::Secret(args) => cmd::secret::run(&ctx, args),

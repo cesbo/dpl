@@ -11,10 +11,7 @@ use std::{
     },
 };
 
-use tracing::{
-    error,
-    info,
-};
+use crate::log::DeployLog;
 
 pub struct SystemdContext<'a> {
     systemd_dir: &'a Path,
@@ -29,25 +26,25 @@ impl<'a> SystemdContext<'a> {
         }
     }
 
-    pub fn install_app(&self, deploy_dir: &Path) -> io::Result<()> {
+    pub fn install_app(&self, deploy_dir: &Path, log: &DeployLog) -> io::Result<()> {
         let service_name = format!("dpl--{}.service", self.name);
         let src = deploy_dir.join("artifacts").join(&service_name);
         let dst = self.systemd_dir.join(&service_name);
 
         fs::copy(&src, &dst)?;
 
-        reload_systemd();
+        reload_systemd(log);
 
         if let Err(err) = run_systemctl(&["-q", "enable", "--now", &service_name]) {
             let _ = fs::remove_file(&dst);
-            reload_systemd();
+            reload_systemd(log);
             Err(err)
         } else {
             Ok(())
         }
     }
 
-    pub fn uninstall_app(&self) {
+    pub fn uninstall_app(&self, log: &DeployLog) {
         let prefix = format!("dpl--{}", self.name);
 
         let app_service = format!("{prefix}.service");
@@ -61,52 +58,52 @@ impl<'a> SystemdContext<'a> {
 
         if let Err(err) = fs::remove_file(&app_service_path) {
             if err.kind() != io::ErrorKind::NotFound {
-                error!("failed to remove app service {prefix}: {err}");
+                log.error(&format!("failed to remove app service {prefix}: {err}"));
             }
         } else {
-            info!("app service {prefix} removed");
-            reload_systemd();
+            log.detail(&format!("app service {prefix} removed"));
+            reload_systemd(log);
         }
     }
 
-    pub fn install_timers(&self, deploy_dir: &Path) {
+    pub fn install_timers(&self, deploy_dir: &Path, log: &DeployLog) {
         let prefix = format!("dpl--{}--", self.name);
         let artifacts_dir = deploy_dir.join("artifacts");
 
-        let mut timers: Vec<String> = list_timers(&artifacts_dir, &prefix);
-        timers.retain(|p: &String| copy_timer(self.systemd_dir, &artifacts_dir, p));
+        let mut timers: Vec<String> = list_timers(&artifacts_dir, &prefix, log);
+        timers.retain(|p: &String| copy_timer(self.systemd_dir, &artifacts_dir, p, log));
         if timers.is_empty() {
             return;
         }
 
-        reload_systemd();
+        reload_systemd(log);
 
         for prefix in &timers {
             let timer_name = format!("{prefix}.timer");
             match run_systemctl(&["-q", "enable", "--now", &timer_name]) {
                 Ok(_) => {
-                    info!("timer {timer_name} installed")
+                    log.detail(&format!("timer {timer_name} installed"));
                 }
                 Err(err) => {
-                    remove_timer(self.systemd_dir, prefix);
-                    error!("failed to install timer {timer_name}: {err}");
+                    remove_timer(self.systemd_dir, prefix, log);
+                    log.error(&format!("failed to install timer {timer_name}: {err}"));
                 }
             }
         }
     }
 
-    pub fn uninstall_timers(&self) {
+    pub fn uninstall_timers(&self, log: &DeployLog) {
         let prefix = format!("dpl--{}--", self.name);
 
-        let timers = list_timers(self.systemd_dir, &prefix);
+        let timers = list_timers(self.systemd_dir, &prefix, log);
         if timers.is_empty() {
             return;
         }
 
         timers
             .iter()
-            .for_each(|t| remove_timer(self.systemd_dir, t));
-        reload_systemd();
+            .for_each(|t| remove_timer(self.systemd_dir, t, log));
+        reload_systemd(log);
     }
 
     /// Rewrites the installed service file
@@ -141,18 +138,20 @@ impl<'a> SystemdContext<'a> {
         tmp.flush()?;
         tmp.persist(&path)?;
 
-        reload_systemd();
+        // Reload without log access — only used internally during install_app,
+        // which already logs its own reload.
+        let _ = run_systemctl(&["-q", "daemon-reload"]);
 
         Ok(())
     }
 }
 
 /// Lists all timers in the specified directory with filenames starting with the given prefix
-fn list_timers(dir: &Path, prefix: &str) -> Vec<String> {
+fn list_timers(dir: &Path, prefix: &str, log: &DeployLog) -> Vec<String> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(err) => {
-            error!("failed to read directory {}: {err}", dir.display());
+            log.error(&format!("failed to read directory {}: {err}", dir.display()));
             return Vec::new();
         }
     };
@@ -172,32 +171,32 @@ fn list_timers(dir: &Path, prefix: &str) -> Vec<String> {
 }
 
 /// Removes a timer and its associated service from the systemd.
-fn remove_timer(systemd_dir: &Path, prefix: &str) {
+fn remove_timer(systemd_dir: &Path, prefix: &str, log: &DeployLog) {
     let timer_unit = format!("{prefix}.timer");
     let _ = run_systemctl(&["-q", "disable", "--now", &timer_unit]);
-    let removed = remove_timer_file(systemd_dir, &timer_unit);
+    let removed = remove_timer_file(systemd_dir, &timer_unit, log);
 
     let timer_service = format!("{prefix}.service");
     let _ = run_systemctl(&["-q", "stop", &timer_service]);
-    remove_timer_file(systemd_dir, &timer_service);
+    remove_timer_file(systemd_dir, &timer_service, log);
 
     if removed {
-        info!("timer {prefix} removed");
+        log.detail(&format!("timer {prefix} removed"));
     }
 }
 
 /// Removes a timer file from the systemd.
 /// Returns `true` if the file was successfully removed.
-fn remove_timer_file(systemd_dir: &Path, file_name: &str) -> bool {
+fn remove_timer_file(systemd_dir: &Path, file_name: &str, log: &DeployLog) -> bool {
     let path = systemd_dir.join(file_name);
     match fs::remove_file(&path) {
         Ok(_) => true,
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
-            info!("timer service file {file_name} not found");
+            log.detail(&format!("timer service file {file_name} not found"));
             false
         }
         Err(err) => {
-            error!("failed to remove timer service file {file_name}: {err}");
+            log.error(&format!("failed to remove timer service file {file_name}: {err}"));
             false
         }
     }
@@ -205,15 +204,15 @@ fn remove_timer_file(systemd_dir: &Path, file_name: &str) -> bool {
 
 /// Copies a timer and its associated service from the artifacts directory to systemd.
 /// Returns `true` if both were successfully copied.
-fn copy_timer(systemd_dir: &Path, artifacts_dir: &Path, prefix: &str) -> bool {
+fn copy_timer(systemd_dir: &Path, artifacts_dir: &Path, prefix: &str, log: &DeployLog) -> bool {
     let timer_service = format!("{prefix}.service");
-    if !copy_timer_file(systemd_dir, artifacts_dir, &timer_service) {
+    if !copy_timer_file(systemd_dir, artifacts_dir, &timer_service, log) {
         return false;
     }
 
     let timer_unit = format!("{prefix}.timer");
-    if !copy_timer_file(systemd_dir, artifacts_dir, &timer_unit) {
-        remove_timer_file(systemd_dir, &timer_service);
+    if !copy_timer_file(systemd_dir, artifacts_dir, &timer_unit, log) {
+        remove_timer_file(systemd_dir, &timer_service, log);
         return false;
     }
 
@@ -222,21 +221,26 @@ fn copy_timer(systemd_dir: &Path, artifacts_dir: &Path, prefix: &str) -> bool {
 
 /// Copies a timer file from the artifacts directory to systemd.
 /// Returns `true` if the file was successfully copied.
-fn copy_timer_file(systemd_dir: &Path, artifacts_dir: &Path, file_name: &str) -> bool {
+fn copy_timer_file(
+    systemd_dir: &Path,
+    artifacts_dir: &Path,
+    file_name: &str,
+    log: &DeployLog,
+) -> bool {
     let src = artifacts_dir.join(file_name);
     let dst = systemd_dir.join(file_name);
     match fs::copy(&src, &dst) {
         Ok(_) => true,
         Err(err) => {
-            error!("failed to copy timer service {file_name}: {err}");
+            log.error(&format!("failed to copy timer service {file_name}: {err}"));
             false
         }
     }
 }
 
-fn reload_systemd() {
+fn reload_systemd(log: &DeployLog) {
     if let Err(err) = run_systemctl(&["-q", "daemon-reload"]) {
-        error!("reload systemd: {}", err);
+        log.error(&format!("reload systemd: {err}"));
     }
 }
 

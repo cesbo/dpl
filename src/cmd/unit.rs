@@ -18,6 +18,7 @@ use crate::{
         self,
         UnitConfig,
     },
+    log::fmt_elapsed,
 };
 
 #[derive(clap::Args)]
@@ -66,7 +67,7 @@ async fn deploy(
     name: &str,
     path: Option<&Path>,
 ) -> Result<(), Box<dyn Error>> {
-    let (state, handle) = match path {
+    let (_state, log, handle) = match path {
         Some(path) => {
             let file = fs::File::open(path).await?;
             deploy::deploy_unit(ctx.base(), name, file).await?
@@ -74,9 +75,18 @@ async fn deploy(
         None => deploy::deploy_unit(ctx.base(), name, io::stdin()).await?,
     };
 
-    println!("started version {}", state.latest_build.version);
-
     let _ = handle.await;
+
+    let final_state = deploy::unit_state(ctx.base(), name).await?;
+    let elapsed = fmt_elapsed(log.elapsed());
+    let version = final_state.latest_build.version;
+
+    if let Some(err) = &final_state.latest_build.error {
+        println!("deploy failed (version {version}) after {elapsed}: {err}");
+        return Err(format!("deploy failed: {err}").into());
+    }
+
+    println!("deploy ok (version {version}) in {elapsed}");
     Ok(())
 }
 
