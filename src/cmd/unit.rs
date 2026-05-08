@@ -29,9 +29,7 @@ pub fn run(ctx: &MainContext, args: Args) -> Result<(), Box<dyn Error>> {
 }
 
 fn check(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {
-    UnitConfig::load(ctx.base(), name)?;
-
+    UnitConfig::load(ctx, name)?;
     println!("ok");
-
     Ok(())
 }

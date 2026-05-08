@@ -12,14 +12,8 @@ mod validate;
 
 use std::{
     error::Error,
-    path::{
-        Path,
-        PathBuf,
-    },
-    sync::{
-        Arc,
-        OnceLock,
-    },
+    path::PathBuf,
+    sync::Arc,
 };
 
 use axum::{
@@ -31,7 +25,10 @@ use clap::{
     Subcommand,
 };
 use tokio::{
-    net::TcpListener,
+    net::{
+        TcpListener,
+        ToSocketAddrs,
+    },
     signal,
 };
 use tracing::info;
@@ -47,7 +44,6 @@ use self::{
         exit_with_stderr,
     },
 };
-use crate::model::MainConfig;
 
 #[derive(Parser)]
 struct Cli {
@@ -71,23 +67,6 @@ enum Command {
     Secret(cmd::secret::Args),
     /// Manage units
     Unit(cmd::unit::Args),
-}
-
-// Temporary variables, will be removed when MainContext will be finished
-static CONTEXT: OnceLock<MainContext> = OnceLock::new();
-
-pub fn context() -> &'static MainContext {
-    CONTEXT.get().expect("context not initialized")
-}
-
-pub fn config() -> &'static MainConfig {
-    &context().config
-}
-
-fn load_main_context(path: &Path) -> Result<(), context::ContextError> {
-    let ctx = MainContext::load(path)?;
-    CONTEXT.set(ctx).expect("context already initialized");
-    Ok(())
 }
 
 #[tokio::main]
@@ -114,26 +93,32 @@ async fn main() {
         return;
     }
 
-    if let Err(err) = load_main_context(&cli.config) {
-        exit_with_stderr(&err);
-    }
+    let ctx = match MainContext::load(&cli.config) {
+        Ok(v) => v,
+        Err(err) => exit_with_stderr(&err),
+    };
 
-    if let Err(err) = run().await {
+    let service = DeployService::new(cli.config);
+    let addr = format!("{}:{}", ctx.config.server.addr, ctx.config.server.port);
+
+    if let Err(err) = run(service, addr).await {
         exit_with_error(err.as_ref());
     }
 }
 
-async fn run() -> Result<(), Box<dyn Error>> {
+async fn run<A>(service: DeployService, addr: A) -> Result<(), Box<dyn Error>>
+where
+    A: ToSocketAddrs,
+{
     log::init_tracing();
 
-    let service = Arc::new(DeployService::default());
+    let service = Arc::new(service);
     let deploy_routes = deploy_router().route_layer(middleware::from_fn_with_state(
         service.clone(),
         auth::authorize_request,
     ));
 
-    let bind_target = format!("{}:{}", config().server.addr, config().server.port);
-    let listener = TcpListener::bind(&bind_target).await?;
+    let listener = TcpListener::bind(addr).await?;
     let addr = listener.local_addr()?;
     let app = Router::new()
         .nest("/deploy", deploy_routes)

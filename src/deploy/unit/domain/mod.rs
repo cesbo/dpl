@@ -1,10 +1,7 @@
 mod artifacts;
 mod model;
 
-use std::path::{
-    Path,
-    PathBuf,
-};
+use std::path::PathBuf;
 
 use tokio::fs;
 use tracing::{
@@ -15,6 +12,7 @@ use tracing::{
 use self::artifacts::ArtifactsContext;
 pub use self::model::DomainConfig;
 use crate::{
+    MainContext,
     deploy::{
         DeployError,
         state::{
@@ -25,19 +23,24 @@ use crate::{
     error::format_error_chain,
 };
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct DomainUnit {
+    pub ctx: MainContext,
     pub name: String,
     pub unit_dir: PathBuf,
     pub config: DomainConfig,
 }
 
 impl DomainUnit {
-    pub fn new(name: &str, unit_dir: &Path, config: &DomainConfig) -> Self {
+    pub fn new(ctx: MainContext, name: impl Into<String>, config: DomainConfig) -> Self {
+        let name = name.into();
+        let unit_dir = ctx.base().join(&name);
+
         Self {
-            name: name.into(),
-            unit_dir: unit_dir.into(),
-            config: config.clone(),
+            ctx,
+            name,
+            unit_dir,
+            config,
         }
     }
 
@@ -79,6 +82,7 @@ impl DomainUnit {
             })?;
 
         let artifacts = ArtifactsContext {
+            ctx: &self.ctx,
             name: &self.name,
             config: &self.config,
             version,

@@ -11,6 +11,7 @@ mod unit;
 use std::{
     collections::HashMap,
     io,
+    path::PathBuf,
     sync::{
         Arc,
         Mutex,
@@ -37,12 +38,21 @@ use tokio::{
 pub use unit::UnitConfig;
 use unit::app::AppUnit;
 
-#[derive(Default)]
+use crate::MainContext;
+
 pub struct DeployService {
+    config_path: PathBuf,
     locks: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 impl DeployService {
+    pub fn new(config_path: impl Into<PathBuf>) -> Self {
+        DeployService {
+            config_path: config_path.into(),
+            locks: Mutex::new(HashMap::new()),
+        }
+    }
+
     fn unit_lock(&self, name: &str) -> Result<BusyGuard, DeployError> {
         let busy = self
             .locks
@@ -59,39 +69,41 @@ impl DeployService {
     where
         R: AsyncRead + Unpin + Send,
     {
+        let ctx = MainContext::load(&self.config_path)?;
         let _guard = self.unit_lock(name)?;
 
-        let base = crate::config().base.as_path();
-        let unit = UnitConfig::load(base, name)?;
+        let unit = UnitConfig::load(&ctx, name)?;
 
         match unit {
             UnitConfig::App(config) => {
-                if let Err(err) = config.validate_references(crate::context()) {
+                if let Err(err) = config.validate_references(&ctx) {
                     return Err(DeployError::UnitError {
                         info: "app references".into(),
                         source: io::Error::other(err),
                     });
                 }
-                AppUnit::new(base, name, &config).deploy(archive).await
+                AppUnit::new(ctx, name, config).deploy(archive).await
             }
             UnitConfig::Domain(_) => Err(DeployError::UnitNotAllowed),
         }
     }
 
     pub async fn state(&self, name: &str) -> Result<DeployState, DeployError> {
-        let dir = crate::config().base.join(name);
+        let ctx = MainContext::load(&self.config_path)?;
+        let unit_dir = ctx.base().join(name);
 
-        let config_path = dir.join("config.yaml");
+        let config_path = unit_dir.join("config.yaml");
         if fs::metadata(&config_path).await.is_err() {
             return Err(DeployError::UnitNotFound);
         }
 
-        let state = DeployState::load(&dir)?;
+        let state = DeployState::load(&unit_dir)?;
         Ok(state)
     }
 
     pub async fn build_log(&self, name: &str, offset: u64) -> Result<(Vec<u8>, u64), DeployError> {
-        let unit_dir = crate::config().base.join(name);
+        let ctx = MainContext::load(&self.config_path)?;
+        let unit_dir = ctx.base().join(name);
 
         let config_path = unit_dir.join("config.yaml");
         if fs::metadata(&config_path).await.is_err() {

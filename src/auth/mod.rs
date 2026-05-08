@@ -19,7 +19,8 @@ pub struct AuthService {
 
 impl AuthService {
     fn load() -> Self {
-        let path = crate::config().base.join("auth.yaml");
+        // TODO: fix this
+        let path = std::path::Path::new("/opt/dpl").join("auth.yaml");
         let config = match load_config(&path) {
             Ok(config) => Some(config),
             Err(err) => {

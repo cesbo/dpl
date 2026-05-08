@@ -1,13 +1,12 @@
 pub mod app;
 pub mod domain;
 
-use std::path::Path;
-
 use app::AppConfig;
 use domain::DomainConfig;
 use serde::Deserialize;
 
 use crate::{
+    MainContext,
     config::{
         ConfigError,
         ValidateConfig,
@@ -33,12 +32,12 @@ impl ValidateConfig for UnitConfig {
 }
 
 impl UnitConfig {
-    pub fn load(base: &Path, name: &str) -> Result<Self, DeployError> {
+    pub fn load(ctx: &MainContext, name: &str) -> Result<Self, DeployError> {
         if !crate::validate::resource_name(name) {
             return Err(DeployError::InvalidUnitName);
         }
 
-        let path = base.join(name).join("config.yaml");
+        let path = ctx.base().join(name).join("config.yaml");
         let unit = load_config(&path).map_err(|err| {
             if err.is_not_found() {
                 DeployError::UnitNotFound
@@ -49,7 +48,7 @@ impl UnitConfig {
 
         match &unit {
             UnitConfig::App(config) => config
-                .validate_references(crate::context())
+                .validate_references(ctx)
                 .map_err(|info| ConfigError::Invalid(format!("app references: {info}")))?,
             UnitConfig::Domain(_) => {}
         }

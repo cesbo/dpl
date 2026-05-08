@@ -18,14 +18,17 @@ use super::model::{
     RouteConfig,
     RouteTarget,
 };
-use crate::deploy::{
-    artifacts::{
-        ArtifactError,
-        render,
-    },
-    state::{
-        DeployState,
-        DeployStateError,
+use crate::{
+    MainContext,
+    deploy::{
+        artifacts::{
+            ArtifactError,
+            render,
+        },
+        state::{
+            DeployState,
+            DeployStateError,
+        },
     },
 };
 
@@ -47,6 +50,7 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
 });
 
 pub struct ArtifactsContext<'a> {
+    pub ctx: &'a MainContext,
     pub name: &'a str,
     pub config: &'a DomainConfig,
     pub version: u32,
@@ -94,7 +98,7 @@ impl<'a> ArtifactsContext<'a> {
         let mut routes = Vec::new();
         for route in &self.config.routes {
             routes.push(
-                resolve_route(route)
+                resolve_route(self.ctx, route)
                     .await
                     .map_err(|err| ArtifactError::Resolve(err.into()))?,
             );
@@ -147,10 +151,13 @@ enum ResolveError {
     ParseUnitPort(#[source] std::num::ParseIntError),
 }
 
-async fn resolve_route(route: &RouteConfig) -> Result<RenderRoute, ResolveError> {
+async fn resolve_route(
+    ctx: &MainContext,
+    route: &RouteConfig,
+) -> Result<RenderRoute, ResolveError> {
     let target = match &route.target {
-        RouteTarget::App { unit } => resolve_route_app(unit).await?,
-        RouteTarget::Static { unit, spa } => resolve_route_static(unit, *spa).await?,
+        RouteTarget::App { unit } => resolve_route_app(ctx, unit).await?,
+        RouteTarget::Static { unit, spa } => resolve_route_static(ctx, unit, *spa).await?,
     };
 
     Ok(RenderRoute {
@@ -159,8 +166,8 @@ async fn resolve_route(route: &RouteConfig) -> Result<RenderRoute, ResolveError>
     })
 }
 
-async fn resolve_route_app(unit: &str) -> Result<RenderTarget, ResolveError> {
-    let unit_dir = crate::config().base.join(unit);
+async fn resolve_route_app(ctx: &MainContext, unit: &str) -> Result<RenderTarget, ResolveError> {
+    let unit_dir = ctx.base().join(unit);
     let _version = DeployState::get_active_version(&unit_dir).map_err(ResolveError::UnitState)?;
 
     let path = unit_dir.join("port.txt");
@@ -174,8 +181,12 @@ async fn resolve_route_app(unit: &str) -> Result<RenderTarget, ResolveError> {
     Ok(RenderTarget::App { port })
 }
 
-async fn resolve_route_static(unit: &str, spa: bool) -> Result<RenderTarget, ResolveError> {
-    let unit_dir = crate::config().base.join(unit);
+async fn resolve_route_static(
+    ctx: &MainContext,
+    unit: &str,
+    spa: bool,
+) -> Result<RenderTarget, ResolveError> {
+    let unit_dir = ctx.base().join(unit);
     let version = DeployState::get_active_version(&unit_dir).map_err(ResolveError::UnitState)?;
 
     Ok(RenderTarget::Static {

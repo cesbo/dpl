@@ -30,6 +30,7 @@ use tracing::{
 use self::artifacts::ArtifactsContext;
 pub use self::model::AppConfig;
 use crate::{
+    MainContext,
     deploy::{
         DeployError,
         state::{
@@ -40,19 +41,24 @@ use crate::{
     error::format_error_chain,
 };
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct AppUnit {
+    pub ctx: MainContext,
     pub name: String,
     pub unit_dir: PathBuf,
     pub config: AppConfig,
 }
 
 impl AppUnit {
-    pub fn new(base: &Path, name: &str, config: &AppConfig) -> Self {
+    pub fn new(ctx: MainContext, name: impl Into<String>, config: AppConfig) -> Self {
+        let name = name.into();
+        let unit_dir = ctx.base().join(&name);
+
         Self {
-            name: name.into(),
-            unit_dir: base.join(name),
-            config: config.clone(),
+            ctx,
+            name,
+            unit_dir,
+            config,
         }
     }
 
@@ -138,7 +144,7 @@ impl AppUnit {
                 })?;
 
         let artifacts = ArtifactsContext {
-            ctx: crate::context(),
+            ctx: &self.ctx,
             name: &self.name,
             config: &self.config,
             version,
