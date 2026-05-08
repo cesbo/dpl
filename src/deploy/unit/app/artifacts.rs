@@ -237,21 +237,12 @@ mod tests {
                 BuildLayerConfig {
                     description: None,
                     files: vec!["*".to_owned()],
-                    env: {
-                        let mut env = EnvList::new();
-                        env.insert_literal("SITE_ID".to_owned(), "hello-world".to_owned());
-                        env
-                    },
+                    env: serde_yaml::from_str("SITE_ID: hello-world").unwrap(),
                     script: Some("npm run build".to_owned()),
                 },
             ],
             runtime: RuntimeConfig {
-                env: {
-                    let mut env = EnvList::new();
-                    env.insert_literal("PORT".to_owned(), "8080".to_owned());
-                    env.insert_literal("NODE_ENV".to_owned(), "production".to_owned());
-                    env
-                },
+                env: serde_yaml::from_str("PORT: 8080\nNODE_ENV: production\n").unwrap(),
                 init: Some("npm run static-generate\nnpm run migrate".to_owned()),
                 cmd: "demo-server".to_owned(),
             },

@@ -5,14 +5,13 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
+pub use self::error::EnvError;
+use self::value::Value;
 use crate::{
     MainContext,
     config::ValidateConfig,
     validate,
 };
-
-pub use self::error::EnvError;
-use self::value::Value;
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 pub struct EnvList(BTreeMap<String, Value>);
@@ -31,17 +30,9 @@ impl EnvList {
 
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), EnvError> {
         for value in self.0.values() {
-            value.validate(ctx)?;
+            value.validate_references(ctx)?;
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-impl EnvList {
-    pub fn insert_literal(&mut self, key: String, value: String) {
-        self.0
-            .insert(key, Value::parse(&value).expect("literal must not contain '$'"));
     }
 }
 
@@ -61,32 +52,29 @@ impl ValidateConfig for EnvList {
 mod tests {
     use super::*;
 
-    fn list_from_yaml(yaml: &str) -> EnvList {
-        serde_yaml::from_str(yaml).unwrap()
-    }
-
     #[test]
     fn deserialize_literal_and_template() {
-        let list = list_from_yaml(
+        let list: EnvList = serde_yaml::from_str(
             r#"
 PORT: "8080"
 DATABASE_URL: "postgres://app:${secret:db}@host/app"
 TOKEN: "${secret:api-token}"
 "#,
-        );
+        )
+        .unwrap();
         assert_eq!(list.0.len(), 3);
     }
 
     #[test]
     fn deserialize_unquoted_integer() {
-        let list = list_from_yaml("DB_PORT: 5432\n");
+        let list: EnvList = serde_yaml::from_str("DB_PORT: 5432").unwrap();
         let resolved = list.resolve(&MainContext::default()).unwrap();
         assert_eq!(resolved.get("DB_PORT").map(String::as_str), Some("5432"));
     }
 
     #[test]
     fn deserialize_unquoted_bool_and_float() {
-        let list = list_from_yaml("DEBUG: true\nRATIO: 0.5\n");
+        let list: EnvList = serde_yaml::from_str("DEBUG: true\nRATIO: 0.5\n").unwrap();
         let resolved = list.resolve(&MainContext::default()).unwrap();
         assert_eq!(resolved.get("DEBUG").map(String::as_str), Some("true"));
         assert_eq!(resolved.get("RATIO").map(String::as_str), Some("0.5"));
@@ -100,15 +88,16 @@ TOKEN: "${secret:api-token}"
 
     #[test]
     fn validate_config_rejects_invalid_env_name() {
-        let mut list = EnvList::new();
-        list.insert_literal("BAD-NAME".into(), "x".into());
+        let list: EnvList = serde_yaml::from_str("BAD-NAME: x").unwrap();
         assert!(list.validate_config().is_err());
     }
 
     #[test]
     fn validate_references_reports_missing_secret() {
-        let list = list_from_yaml(r#"X: "${secret:nope}""#);
-        let err = list.validate_references(&MainContext::default()).unwrap_err();
+        let list: EnvList = serde_yaml::from_str(r#"X: "${secret:nope}""#).unwrap();
+        let err = list
+            .validate_references(&MainContext::default())
+            .unwrap_err();
         assert!(matches!(err, EnvError::MissingSecret { ref name } if name == "nope"));
     }
 }

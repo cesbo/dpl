@@ -15,7 +15,9 @@ pub enum ValueError {
     #[error("unterminated reference at position {pos}: missing '}}'")]
     UnterminatedRef { pos: usize },
 
-    #[error("bare '$' at position {pos}: use '$$' for a literal '$' or '${{ns:name}}' for a reference")]
+    #[error(
+        "bare '$' at position {pos}: use '$$' for a literal '$' or '${{ns:name}}' for a reference"
+    )]
     BareDollar { pos: usize },
 
     #[error("malformed reference at position {pos}: expected '${{ns:name}}'")]
@@ -133,7 +135,7 @@ impl Value {
         Ok(out)
     }
 
-    pub fn validate(&self, ctx: &MainContext) -> Result<(), EnvError> {
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), EnvError> {
         for seg in &self.0 {
             let Segment::Ref { ns, name } = seg else {
                 continue;
@@ -172,7 +174,10 @@ fn parse_ref(body: &str, pos: usize) -> Result<Segment, ValueError> {
         });
     }
 
-    Ok(Segment::Ref { ns, name: name.to_owned() })
+    Ok(Segment::Ref {
+        ns,
+        name: name.to_owned(),
+    })
 }
 
 impl<'de> Deserialize<'de> for Value {
@@ -229,7 +234,10 @@ mod tests {
     }
 
     fn sref(name: &str) -> Segment {
-        Segment::Ref { ns: Ns::Secret, name: name.to_owned() }
+        Segment::Ref {
+            ns: Ns::Secret,
+            name: name.to_owned(),
+        }
     }
 
     #[test]
