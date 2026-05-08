@@ -8,20 +8,13 @@ use std::{
 
 use thiserror::Error;
 
-use crate::{
-    config::ConfigError,
-    model::MainConfig,
-    secret::{
-        MasterKey,
-        SecretError,
-    },
+use crate::secret::{
+    MasterKey,
+    SecretError,
 };
 
 #[derive(Debug, Error)]
 pub enum ContextError {
-    #[error(transparent)]
-    Config(#[from] ConfigError),
-
     #[error(transparent)]
     Secret(#[from] SecretError),
 }
@@ -29,7 +22,6 @@ pub enum ContextError {
 #[derive(Debug)]
 pub struct MainContext {
     pub base: PathBuf,
-    pub config: MainConfig,
     pub master_key: Option<MasterKey>,
 }
 
@@ -37,7 +29,6 @@ impl Default for MainContext {
     fn default() -> Self {
         MainContext {
             base: PathBuf::from("/opt/dpl"),
-            config: MainConfig::default(),
             master_key: None,
         }
     }
@@ -45,7 +36,6 @@ impl Default for MainContext {
 
 impl MainContext {
     pub fn load(base: &Path) -> Result<Self, ContextError> {
-        let config = MainConfig::load(&base.join("config.yaml"))?;
         let master_key = match MasterKey::load(base) {
             Ok(v) => Some(v),
             Err(SecretError::LoadKey(err)) if err.kind() == io::ErrorKind::NotFound => None,
@@ -53,7 +43,6 @@ impl MainContext {
         };
         Ok(MainContext {
             base: base.to_path_buf(),
-            config,
             master_key,
         })
     }

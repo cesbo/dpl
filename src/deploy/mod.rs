@@ -4,7 +4,6 @@ mod artifacts;
 mod env;
 mod error;
 mod guard;
-mod handlers;
 mod state;
 mod unit;
 
@@ -29,7 +28,6 @@ use env::{
 };
 pub use error::DeployError;
 use guard::BusyGuard;
-pub use handlers::router as deploy_router;
 use state::DeployState;
 use tokio::{
     fs,

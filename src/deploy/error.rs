@@ -1,13 +1,5 @@
 use std::io;
 
-use axum::{
-    Json,
-    http::StatusCode,
-    response::{
-        IntoResponse,
-        Response,
-    },
-};
 use thiserror::Error;
 
 use super::{
@@ -18,7 +10,6 @@ use crate::{
     archive::ArchiveError,
     config::ConfigError,
     context::ContextError,
-    error::format_error_chain,
 };
 
 #[derive(Debug, Error)]
@@ -56,18 +47,4 @@ pub enum DeployError {
         #[source]
         source: io::Error,
     },
-}
-
-impl IntoResponse for DeployError {
-    fn into_response(self) -> Response {
-        let status = match &self {
-            DeployError::UnitNotFound => StatusCode::NOT_FOUND,
-            DeployError::UnitBusy => StatusCode::CONFLICT,
-            DeployError::UnitNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        };
-
-        let body = serde_json::json!({ "error": format_error_chain(&self) });
-        (status, Json(body)).into_response()
-    }
 }
