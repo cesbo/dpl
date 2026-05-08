@@ -8,7 +8,7 @@ use crate::config::ValidateConfig;
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct AuthEntry {
-    pub token: String,
+    pub hash: String,
     pub apps: Vec<String>,
 }
 

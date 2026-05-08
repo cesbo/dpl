@@ -73,13 +73,13 @@ double hyphens).
 Example `{base_dir}/.tokens/deploy-key.yaml`:
 
 ```yaml
-token: secret-token
+hash: 9f1c... # 64-char SHA256 hex of "deploy-key:secret-token"
 apps: ["myapp"]
 ```
 
 Fields:
 
-- `token` - plain-text Bearer token
+- `hash` - lowercase hex SHA256 of the full Bearer credential `{name}:{token}`. The plaintext token is shown only once at creation time and is never stored on disk
 - `apps` - list of allowed app names. Use `"*"` to allow all apps
 
 Token files are read on every request, so changes take effect without

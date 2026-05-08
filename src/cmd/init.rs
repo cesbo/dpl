@@ -19,7 +19,10 @@ use dialoguer::{
 };
 
 use crate::{
-    auth::model::AuthEntry,
+    auth::{
+        bearer_hash,
+        model::AuthEntry,
+    },
     model::MainConfig,
     validate,
 };
@@ -126,7 +129,7 @@ impl<'a> RunContext<'a> {
             .interact()?;
 
         let auth_entry = AuthEntry {
-            token,
+            hash: bearer_hash(&token_name, &token),
             apps: vec!["*".into()],
         };
 

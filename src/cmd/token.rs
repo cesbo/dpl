@@ -16,7 +16,10 @@ use rand::{
 
 use crate::{
     MainContext,
-    auth::model::AuthEntry,
+    auth::{
+        bearer_hash,
+        model::AuthEntry,
+    },
     validate,
 };
 
@@ -74,7 +77,7 @@ fn add(ctx: &MainContext, name: &str, apps_arg: Option<&str>) -> Result<(), Box<
     };
 
     let entry = AuthEntry {
-        token: token.clone(),
+        hash: bearer_hash(name, &token),
         apps,
     };
 
