@@ -38,6 +38,7 @@ use tokio::{
         AsyncReadExt,
         AsyncSeekExt,
     },
+    task::JoinHandle,
 };
 pub use unit::UnitConfig;
 use unit::app::AppUnit;
@@ -68,9 +69,7 @@ impl DeployService {
     }
 
     pub fn global() -> &'static DeployService {
-        DEPLOY_SERVICE
-            .get()
-            .expect("DeployService not initialized")
+        DEPLOY_SERVICE.get().expect("DeployService not initialized")
     }
 
     pub fn base(&self) -> &Path {
@@ -89,7 +88,11 @@ impl DeployService {
         BusyGuard::lock(busy)
     }
 
-    pub async fn deploy<R>(&self, name: &str, archive: R) -> Result<DeployState, DeployError>
+    pub async fn deploy<R>(
+        &self,
+        name: &str,
+        archive: R,
+    ) -> Result<(DeployState, JoinHandle<()>), DeployError>
     where
         R: AsyncRead + Unpin + Send,
     {

@@ -83,7 +83,7 @@ async fn main() {
                 Err(err) => Err(err.into()),
             },
             Command::Unit(args) => match MainContext::load(&cli.base) {
-                Ok(ctx) => cmd::unit::run(&ctx, args),
+                Ok(ctx) => cmd::unit::run(&ctx, args).await,
                 Err(err) => Err(err.into()),
             },
         };
@@ -113,8 +113,7 @@ where
 {
     log::init_tracing();
 
-    let deploy_routes =
-        deploy_router().route_layer(middleware::from_fn(auth::authorize_request));
+    let deploy_routes = deploy_router().route_layer(middleware::from_fn(auth::authorize_request));
 
     let listener = TcpListener::bind(addr).await?;
     let addr = listener.local_addr()?;

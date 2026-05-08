@@ -21,6 +21,7 @@ use tokio::{
         AsyncRead,
         AsyncWriteExt,
     },
+    task::JoinHandle,
 };
 use tracing::{
     error,
@@ -62,7 +63,7 @@ impl AppUnit {
         }
     }
 
-    pub async fn deploy<R>(self, archive: R) -> Result<DeployState, DeployError>
+    pub async fn deploy<R>(self, archive: R) -> Result<(DeployState, JoinHandle<()>), DeployError>
     where
         R: AsyncRead + Unpin + Send,
     {
@@ -86,7 +87,7 @@ impl AppUnit {
 
         let result = state.clone();
 
-        tokio::task::spawn_blocking(move || {
+        let handle = tokio::task::spawn_blocking(move || {
             let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
             let log_path = deploy_dir.join("log").join("build.log");
             let subscriber = crate::log::init_tracing_log(&log_path).unwrap();
@@ -95,7 +96,7 @@ impl AppUnit {
             });
         });
 
-        Ok(result)
+        Ok((result, handle))
     }
 
     async fn prepare<R>(&self, version: u32, archive: R) -> Result<(), DeployError>

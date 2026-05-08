@@ -51,7 +51,7 @@ async fn deploy_handler(
     let stream = body.into_data_stream().map_err(io::Error::other);
     let reader = StreamReader::new(stream);
 
-    let state = DeployService::global().deploy(&name, reader).await?;
+    let (state, _handle) = DeployService::global().deploy(&name, reader).await?;
     Ok((StatusCode::ACCEPTED, Json(state.latest_build)))
 }
 
