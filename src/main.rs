@@ -38,14 +38,13 @@ enum Command {
     Unit(cmd::unit::Args),
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let cli = Cli::parse();
 
     let result: Result<(), Box<dyn Error>> = match MainContext::load(&cli.base) {
         Ok(ctx) => match cli.command {
             Command::Secret(args) => cmd::secret::run(&ctx, args),
-            Command::Unit(args) => cmd::unit::run(&ctx, args).await,
+            Command::Unit(args) => cmd::unit::run(&ctx, args),
         },
         Err(err) => Err(err.into()),
     };

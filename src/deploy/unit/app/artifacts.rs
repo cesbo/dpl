@@ -1,4 +1,5 @@
 use std::{
+    fs,
     path::{
         Path,
         PathBuf,
@@ -11,7 +12,6 @@ use minijinja::{
     context,
 };
 use serde::Serialize;
-use tokio::fs;
 
 use super::AppConfig;
 use crate::{
@@ -74,12 +74,10 @@ pub struct ArtifactsContext<'a> {
 }
 
 impl<'a> ArtifactsContext<'a> {
-    pub async fn save(&self, deploy_dir: &Path) -> Result<(), ArtifactError> {
+    pub fn save(&self, deploy_dir: &Path) -> Result<(), ArtifactError> {
         let artifacts_dir = deploy_dir.join("artifacts");
 
-        fs::create_dir_all(&artifacts_dir)
-            .await
-            .map_err(ArtifactError::CreateDir)?;
+        fs::create_dir_all(&artifacts_dir).map_err(ArtifactError::CreateDir)?;
 
         #[derive(Serialize)]
         struct BuildContext<'a> {
@@ -106,8 +104,7 @@ impl<'a> ArtifactsContext<'a> {
                 port => self.config.port,
                 layers => &layers,
             },
-        )
-        .await?;
+        )?;
 
         let path = artifacts_dir.join("run.sh");
         write_artifact(
@@ -119,8 +116,7 @@ impl<'a> ArtifactsContext<'a> {
                 cmd => &self.config.runtime.cmd,
                 timers => &self.config.timers,
             },
-        )
-        .await?;
+        )?;
 
         for (index, layer) in self.config.build.iter().enumerate() {
             let Some(script) = &layer.script else {
@@ -135,8 +131,7 @@ impl<'a> ArtifactsContext<'a> {
                     env => layer.env.resolve(self.ctx)?,
                     script => script,
                 },
-            )
-            .await?;
+            )?;
         }
 
         let file_name = format!("dpl--{}.service", &self.name);
@@ -151,8 +146,7 @@ impl<'a> ArtifactsContext<'a> {
                 container_port => &self.config.port,
                 volumes => &self.config.volumes,
             },
-        )
-        .await?;
+        )?;
 
         for timer in &self.config.timers {
             let file_name = format!("dpl--{}--{}.service", &self.name, &timer.name);
@@ -164,8 +158,7 @@ impl<'a> ArtifactsContext<'a> {
                     name => &self.name,
                     timer_name => &timer.name,
                 },
-            )
-            .await?;
+            )?;
 
             let file_name = format!("dpl--{}--{}.timer", &self.name, &timer.name);
             let path = artifacts_dir.join(&file_name);
@@ -177,23 +170,20 @@ impl<'a> ArtifactsContext<'a> {
                     timer_name => &timer.name,
                     schedule => &timer.schedule,
                 },
-            )
-            .await?;
+            )?;
         }
 
         Ok(())
     }
 }
 
-async fn write_artifact<S>(path: PathBuf, name: &str, ctx: S) -> Result<(), ArtifactError>
+fn write_artifact<S>(path: PathBuf, name: &str, ctx: S) -> Result<(), ArtifactError>
 where
     S: Serialize,
 {
     let content = render(&TEMPLATES, name, ctx)?;
 
-    fs::write(&path, content)
-        .await
-        .map_err(ArtifactError::Write)
+    fs::write(&path, content).map_err(ArtifactError::Write)
 }
 
 #[cfg(test)]
@@ -206,8 +196,8 @@ mod tests {
         unit::app::model::*,
     };
 
-    #[tokio::test]
-    async fn render_templates() {
+    #[test]
+    fn render_templates() {
         let config = AppConfig {
             image: "ghcr.io/example/demo:latest".into(),
             port: 8080,
@@ -267,7 +257,7 @@ mod tests {
         let name = "my-app";
         let temp_dir = tempdir().unwrap();
         let deploy_dir = temp_dir.path().join(name);
-        fs::create_dir_all(&deploy_dir).await.unwrap();
+        fs::create_dir_all(&deploy_dir).unwrap();
 
         let ctx = MainContext::default();
         let artifacts = ArtifactsContext {
@@ -278,7 +268,7 @@ mod tests {
             port: 32323,
         };
 
-        artifacts.save(&deploy_dir).await.unwrap();
+        artifacts.save(&deploy_dir).unwrap();
 
         let artifacts_dir = deploy_dir.join("artifacts");
         assert!(artifacts_dir.join("containerfile").exists());

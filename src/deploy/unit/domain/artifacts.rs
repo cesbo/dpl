@@ -1,4 +1,5 @@
 use std::{
+    fs,
     io,
     path::Path,
     sync::LazyLock,
@@ -10,7 +11,6 @@ use minijinja::{
 };
 use serde::Serialize;
 use thiserror::Error;
-use tokio::fs;
 
 use super::model::{
     DomainConfig,
@@ -84,22 +84,16 @@ struct RenderRoute {
 }
 
 impl<'a> ArtifactsContext<'a> {
-    pub async fn save(&self, deploy_dir: &Path) -> Result<(), ArtifactError> {
+    pub fn save(&self, deploy_dir: &Path) -> Result<(), ArtifactError> {
         let artifacts_dir = deploy_dir.join("artifacts");
-        fs::create_dir_all(&artifacts_dir)
-            .await
-            .map_err(ArtifactError::CreateDir)?;
+        fs::create_dir_all(&artifacts_dir).map_err(ArtifactError::CreateDir)?;
 
-        let proxy = match &self.config.proxy {
-            Some(proxy) => Some(render_proxy(proxy).await),
-            None => None,
-        };
+        let proxy = self.config.proxy.as_ref().map(render_proxy);
 
         let mut routes = Vec::new();
         for route in &self.config.routes {
             routes.push(
                 resolve_route(self.ctx, route)
-                    .await
                     .map_err(|err| ArtifactError::Resolve(err.into()))?,
             );
         }
@@ -116,15 +110,13 @@ impl<'a> ArtifactsContext<'a> {
             },
         )?;
 
-        fs::write(&path, content)
-            .await
-            .map_err(ArtifactError::Write)?;
+        fs::write(&path, content).map_err(ArtifactError::Write)?;
 
         Ok(())
     }
 }
 
-async fn render_proxy(proxy: &ProxyConfig) -> RenderProxy<'_> {
+fn render_proxy(proxy: &ProxyConfig) -> RenderProxy<'_> {
     match proxy {
         ProxyConfig::Cloudflare => RenderProxy {
             header: "",
@@ -151,13 +143,10 @@ enum ResolveError {
     ParseUnitPort(#[source] std::num::ParseIntError),
 }
 
-async fn resolve_route(
-    ctx: &MainContext,
-    route: &RouteConfig,
-) -> Result<RenderRoute, ResolveError> {
+fn resolve_route(ctx: &MainContext, route: &RouteConfig) -> Result<RenderRoute, ResolveError> {
     let target = match &route.target {
-        RouteTarget::App { unit } => resolve_route_app(ctx, unit).await?,
-        RouteTarget::Static { unit, spa } => resolve_route_static(ctx, unit, *spa).await?,
+        RouteTarget::App { unit } => resolve_route_app(ctx, unit)?,
+        RouteTarget::Static { unit, spa } => resolve_route_static(ctx, unit, *spa)?,
     };
 
     Ok(RenderRoute {
@@ -166,13 +155,12 @@ async fn resolve_route(
     })
 }
 
-async fn resolve_route_app(ctx: &MainContext, unit: &str) -> Result<RenderTarget, ResolveError> {
+fn resolve_route_app(ctx: &MainContext, unit: &str) -> Result<RenderTarget, ResolveError> {
     let unit_dir = ctx.base().join(unit);
     let _version = DeployState::get_active_version(&unit_dir).map_err(ResolveError::UnitState)?;
 
     let path = unit_dir.join("port.txt");
     let port = fs::read_to_string(&path)
-        .await
         .map_err(ResolveError::ReadUnitPort)?
         .trim()
         .parse::<u16>()
@@ -181,7 +169,7 @@ async fn resolve_route_app(ctx: &MainContext, unit: &str) -> Result<RenderTarget
     Ok(RenderTarget::App { port })
 }
 
-async fn resolve_route_static(
+fn resolve_route_static(
     ctx: &MainContext,
     unit: &str,
     spa: bool,

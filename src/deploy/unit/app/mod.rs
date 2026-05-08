@@ -6,7 +6,11 @@ mod port;
 mod systemd;
 
 use std::{
-    io,
+    fs,
+    io::{
+        self,
+        Read,
+    },
     path::{
         Path,
         PathBuf,
@@ -15,14 +19,6 @@ use std::{
 
 use podman::PodmanContext;
 use systemd::SystemdContext;
-use tokio::{
-    fs,
-    io::{
-        AsyncRead,
-        AsyncWriteExt,
-    },
-    task::JoinHandle,
-};
 
 use self::artifacts::ArtifactsContext;
 pub use self::model::AppConfig;
@@ -41,15 +37,15 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct AppUnit {
-    pub ctx: MainContext,
+pub struct AppUnit<'a> {
+    pub ctx: &'a MainContext,
     pub name: String,
     pub unit_dir: PathBuf,
     pub config: AppConfig,
 }
 
-impl AppUnit {
-    pub fn new(ctx: MainContext, name: impl Into<String>, config: AppConfig) -> Self {
+impl<'a> AppUnit<'a> {
+    pub fn new(ctx: &'a MainContext, name: impl Into<String>, config: AppConfig) -> Self {
         let name = name.into();
         let unit_dir = ctx.base().join(&name);
 
@@ -61,16 +57,9 @@ impl AppUnit {
         }
     }
 
-    /// Acquire the busy lock, bump version, persist state, then prepare the
-    /// deploy workspace (extract archive, allocate port, render artifacts).
-    /// Returns the new state (status `Building`) and the deploy directory path.
-    pub async fn prepare_deploy<R>(
-        &self,
-        archive: R,
-    ) -> Result<(DeployState, PathBuf), DeployError>
-    where
-        R: AsyncRead + Unpin + Send,
-    {
+    /// Run the full deploy synchronously: acquire busy lock, bump version,
+    /// extract archive, render artifacts, build image, install service.
+    pub fn deploy<R: Read>(self, archive: R) -> Result<(DeployState, DeployLog), DeployError> {
         let _guard = BusyGuard::lock(&self.unit_dir)?;
 
         let mut state = DeployState::load(&self.unit_dir)?;
@@ -81,7 +70,7 @@ impl AppUnit {
         let version = state.bump_version()?;
         state.save(&self.unit_dir)?;
 
-        if let Err(err) = self.prepare(version, archive).await {
+        if let Err(err) = self.prepare(version, archive) {
             let chain = format_error_chain(&err);
             eprintln!("prepare failed: {chain}");
             state.set_error(format!("prepare app deploy failed: {chain}"));
@@ -90,81 +79,68 @@ impl AppUnit {
         }
 
         let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
-        Ok((state, deploy_dir))
+        let log_path = deploy_dir.join("log").join("build.log");
+
+        let log = match DeployLog::open(&log_path, &self.name, version) {
+            Ok(log) => log,
+            Err(source) => {
+                state.set_error(format!("open deploy log: {source}"));
+                let _ = state.save(&self.unit_dir);
+                return Err(DeployError::UnitError {
+                    info: "open deploy log".to_string(),
+                    source,
+                });
+            }
+        };
+
+        self.deploy_worker(&deploy_dir, &mut state, &log);
+        Ok((state, log))
     }
 
-    /// Spawn the blocking worker that runs build → install → uninstall-old.
-    /// Consumes `self`; the returned handle drives the deploy to completion
-    /// and finalizes the log file.
-    pub fn start_worker(
-        self,
-        deploy_dir: PathBuf,
-        state: DeployState,
-        log: DeployLog,
-    ) -> JoinHandle<()> {
-        tokio::task::spawn_blocking(move || {
-            self.deploy_worker(&deploy_dir, state, &log);
-        })
-    }
-
-    async fn prepare<R>(&self, version: u32, archive: R) -> Result<(), DeployError>
-    where
-        R: AsyncRead + Unpin + Send,
-    {
+    fn prepare<R: Read>(&self, version: u32, archive: R) -> Result<(), DeployError> {
         let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
 
-        fs::create_dir(&deploy_dir)
-            .await
-            .map_err(|source| DeployError::UnitError {
-                info: "failed to create deploy directory".to_string(),
-                source,
-            })?;
+        fs::create_dir(&deploy_dir).map_err(|source| DeployError::UnitError {
+            info: "failed to create deploy directory".to_string(),
+            source,
+        })?;
 
         let log_dir = deploy_dir.join("log");
-        fs::create_dir(&log_dir)
-            .await
-            .map_err(|source| DeployError::UnitError {
-                info: "failed to create log directory".to_string(),
-                source,
-            })?;
+        fs::create_dir(&log_dir).map_err(|source| DeployError::UnitError {
+            info: "failed to create log directory".to_string(),
+            source,
+        })?;
 
         let build_log = log_dir.join("build.log");
-        fs::File::create(&build_log)
-            .await
-            .map_err(|source| DeployError::UnitError {
-                info: "failed to create build.log".to_string(),
-                source,
-            })?;
+        fs::File::create(&build_log).map_err(|source| DeployError::UnitError {
+            info: "failed to create build.log".to_string(),
+            source,
+        })?;
 
         let archive_path = deploy_dir.join("app.tar.gz");
-        save_archive(archive, &archive_path)
-            .await
-            .map_err(|source| DeployError::UnitError {
-                info: "failed to save archive".to_string(),
-                source,
-            })?;
+        save_archive(archive, &archive_path).map_err(|source| DeployError::UnitError {
+            info: "failed to save archive".to_string(),
+            source,
+        })?;
 
-        let port =
-            port::get_port(&self.unit_dir)
-                .await
-                .map_err(|source| DeployError::UnitError {
-                    info: "failed to get port".to_string(),
-                    source,
-                })?;
+        let port = port::get_port(&self.unit_dir).map_err(|source| DeployError::UnitError {
+            info: "failed to get port".to_string(),
+            source,
+        })?;
 
         let artifacts = ArtifactsContext {
-            ctx: &self.ctx,
+            ctx: self.ctx,
             name: &self.name,
             config: &self.config,
             version,
             port,
         };
-        artifacts.save(&deploy_dir).await?;
+        artifacts.save(&deploy_dir)?;
 
         Ok(())
     }
 
-    fn deploy_worker(&self, deploy_dir: &Path, mut state: DeployState, log: &DeployLog) {
+    fn deploy_worker(&self, deploy_dir: &Path, state: &mut DeployState, log: &DeployLog) {
         let version = state.latest_build.version;
 
         if let Err(err) = self.build_inner(deploy_dir, version, log) {
@@ -261,13 +237,9 @@ impl AppUnit {
     }
 }
 
-async fn save_archive<R>(archive: R, dst: &Path) -> io::Result<()>
-where
-    R: AsyncRead + Unpin + Send,
-{
+fn save_archive<R: Read>(archive: R, dst: &Path) -> io::Result<()> {
     let mut reader = archive;
-    let mut archive_file = fs::File::create(dst).await?;
-    tokio::io::copy(&mut reader, &mut archive_file).await?;
-    archive_file.flush().await?;
+    let mut archive_file = fs::File::create(dst)?;
+    io::copy(&mut reader, &mut archive_file)?;
     Ok(())
 }

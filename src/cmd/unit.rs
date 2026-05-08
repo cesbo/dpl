@@ -1,5 +1,7 @@
 use std::{
     error::Error,
+    fs,
+    io,
     path::{
         Path,
         PathBuf,
@@ -7,10 +9,6 @@ use std::{
 };
 
 use clap::Subcommand;
-use tokio::{
-    fs,
-    io,
-};
 
 use crate::{
     MainContext,
@@ -48,11 +46,11 @@ enum Cmd {
     },
 }
 
-pub async fn run(ctx: &MainContext, args: Args) -> Result<(), Box<dyn Error>> {
+pub fn run(ctx: &MainContext, args: Args) -> Result<(), Box<dyn Error>> {
     match args.cmd {
         Cmd::Check { name } => check(ctx, &name),
-        Cmd::Deploy { name, path } => deploy(ctx, &name, path.as_deref()).await,
-        Cmd::State { name } => state(ctx, &name).await,
+        Cmd::Deploy { name, path } => deploy(ctx, &name, path.as_deref()),
+        Cmd::State { name } => state(ctx, &name),
     }
 }
 
@@ -62,22 +60,18 @@ fn check(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn deploy(
-    ctx: &MainContext,
-    name: &str,
-    path: Option<&Path>,
-) -> Result<(), Box<dyn Error>> {
-    let (_state, log, handle) = match path {
+fn deploy(ctx: &MainContext, name: &str, path: Option<&Path>) -> Result<(), Box<dyn Error>> {
+    let (final_state, log) = match path {
         Some(path) => {
-            let file = fs::File::open(path).await?;
-            deploy::deploy_unit(ctx.base(), name, file).await?
+            let file = fs::File::open(path)?;
+            deploy::deploy_unit(ctx, name, file)?
         }
-        None => deploy::deploy_unit(ctx.base(), name, io::stdin()).await?,
+        None => {
+            let stdin = io::stdin();
+            deploy::deploy_unit(ctx, name, stdin.lock())?
+        }
     };
 
-    let _ = handle.await;
-
-    let final_state = deploy::unit_state(ctx.base(), name).await?;
     let elapsed = fmt_elapsed(log.elapsed());
     let version = final_state.latest_build.version;
 
@@ -90,8 +84,8 @@ async fn deploy(
     Ok(())
 }
 
-async fn state(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {
-    let state = deploy::unit_state(ctx.base(), name).await?;
+fn state(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {
+    let state = deploy::unit_state(ctx, name)?;
     let build = &state.latest_build;
     let status = format!("{:?}", build.status).to_lowercase();
 
