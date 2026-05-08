@@ -7,6 +7,24 @@ use std::{
 use serde::de::DeserializeOwned;
 use thiserror::Error;
 
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    #[error("read config")]
+    Read(#[from] io::Error),
+
+    #[error("parse config")]
+    Parse(#[from] serde_yaml::Error),
+
+    #[error("invalid config: {0}")]
+    Invalid(String),
+}
+
+impl ConfigError {
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read(err) if err.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 pub trait ValidateConfig {
     /// Config required by the default
     fn default_config() -> Option<Self>
@@ -42,24 +60,6 @@ where
     config.validate_config().map_err(ConfigError::Invalid)?;
 
     Ok(config)
-}
-
-#[derive(Debug, Error)]
-pub enum ConfigError {
-    #[error("read config")]
-    Read(#[from] io::Error),
-
-    #[error("parse config")]
-    Parse(#[from] serde_yaml::Error),
-
-    #[error("invalid config: {0}")]
-    Invalid(String),
-}
-
-impl ConfigError {
-    pub fn is_not_found(&self) -> bool {
-        matches!(self, Self::Read(err) if err.kind() == io::ErrorKind::NotFound)
-    }
 }
 
 #[cfg(test)]
