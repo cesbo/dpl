@@ -10,6 +10,7 @@ use std::{
 
 use clap::Subcommand;
 use dialoguer::{
+    Confirm,
     Input,
     Select,
     theme::ColorfulTheme,
@@ -18,6 +19,7 @@ use serde::Serialize;
 
 use crate::{
     MainContext,
+    cmd::secret as secret_cmd,
     deploy::{
         DbConfig,
         DbEngine,
@@ -223,12 +225,30 @@ fn check_image_exists(image: &str) -> Result<(), Box<dyn Error>> {
 fn prompt_secret(ctx: &MainContext) -> Result<String, Box<dyn Error>> {
     loop {
         let value: String = Input::with_theme(&ColorfulTheme::default())
-            .with_prompt("Secret name (existing dpl secret)")
+            .with_prompt("Secret name")
             .interact_text()?;
-        match validate_secret(ctx, &value) {
-            Ok(()) => return Ok(value),
-            Err(err) => eprintln!("{err}"),
+
+        if !validate::secret_name(&value) {
+            eprintln!("{}", secret::SecretError::InvalidName);
+            continue;
         }
+
+        if ctx.secret_exists(&value) {
+            return Ok(value);
+        }
+
+        let create = Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt(format!("secret '{value}' does not exist — create it now?"))
+            .default(true)
+            .interact()?;
+        if !create {
+            continue;
+        }
+
+        let key = secret_cmd::load_or_create_key(ctx)?;
+        let text = secret_cmd::prompt_value_or_random()?;
+        key.encrypt_to_file(&value, &text)?;
+        return Ok(value);
     }
 }
 

@@ -29,6 +29,37 @@ use crate::{
 
 const RANDOM_SECRET_LEN: usize = 32;
 
+/// Load the base's master key, generating and persisting one if absent.
+pub fn load_or_create_key(ctx: &MainContext) -> Result<secret::MasterKey, secret::SecretError> {
+    match secret::MasterKey::load(ctx.base()) {
+        Ok(key) => Ok(key),
+        Err(secret::SecretError::KeyNotFound) => {
+            let key = secret::MasterKey::generate(ctx.base());
+            key.save()?;
+            Ok(key)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+/// Interactive prompt for a secret value; empty input generates a random one.
+pub fn prompt_value_or_random() -> Result<String, Box<dyn Error>> {
+    let value = Password::with_theme(&ColorfulTheme::default())
+        .with_prompt("Secret value (empty = generate random)")
+        .allow_empty_password(true)
+        .interact()?;
+
+    Ok(if value.is_empty() {
+        rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(RANDOM_SECRET_LEN)
+            .map(char::from)
+            .collect()
+    } else {
+        value
+    })
+}
+
 #[derive(clap::Args)]
 pub struct Args {
     #[command(subcommand)]
@@ -73,63 +104,36 @@ fn create(ctx: &MainContext, name: &str, source: Option<&str>) -> Result<(), Box
         return Err(secret::SecretError::InvalidName.into());
     }
 
-    let base = ctx.base();
-
-    if secret::secret_exists(base, name) {
+    if secret::secret_exists(ctx.base(), name) {
         return Err(format!("secret '{name}' already exists").into());
     }
 
-    let key = match secret::MasterKey::load(base) {
-        Ok(key) => key,
-        Err(secret::SecretError::KeyNotFound) => {
-            let key = secret::MasterKey::generate(base);
-            key.save()?;
-            key
-        }
-        Err(err) => return Err(err.into()),
+    let key = load_or_create_key(ctx)?;
+    let text = match source {
+        Some(source) => read_external(source)?,
+        None => prompt_value_or_random()?,
     };
-    let text = read_plaintext(source)?;
     key.encrypt_to_file(name, &text)?;
 
     Ok(())
 }
 
-fn read_plaintext(source: Option<&str>) -> Result<String, Box<dyn Error>> {
-    let value = match source {
-        Some("-") => {
-            let mut buf = Vec::new();
-            io::stdin().read_to_end(&mut buf)?;
-            if buf.is_empty() {
-                return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty stdin").into());
-            }
-            String::from_utf8(buf)?
+fn read_external(source: &str) -> Result<String, Box<dyn Error>> {
+    let buf = if source == "-" {
+        let mut buf = Vec::new();
+        io::stdin().read_to_end(&mut buf)?;
+        if buf.is_empty() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty stdin").into());
         }
-        Some(path) => {
-            let buf = fs::read(path)?;
-            if buf.is_empty() {
-                return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty file").into());
-            }
-            String::from_utf8(buf)?
+        buf
+    } else {
+        let buf = fs::read(source)?;
+        if buf.is_empty() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty file").into());
         }
-        None => {
-            let value = Password::with_theme(&ColorfulTheme::default())
-                .with_prompt("Secret value (empty = generate random)")
-                .allow_empty_password(true)
-                .interact()?;
-
-            if value.is_empty() {
-                rand::thread_rng()
-                    .sample_iter(&Alphanumeric)
-                    .take(RANDOM_SECRET_LEN)
-                    .map(char::from)
-                    .collect()
-            } else {
-                value
-            }
-        }
+        buf
     };
-
-    Ok(value)
+    Ok(String::from_utf8(buf)?)
 }
 
 fn cat(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {
