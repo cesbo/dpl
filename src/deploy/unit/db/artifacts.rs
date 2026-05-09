@@ -59,7 +59,7 @@ impl<'a> ArtifactsContext<'a> {
             &TEMPLATES,
             DB_SERVICE_TEMPLATE,
             context! {
-                cluster => self.name,
+                name => self.name,
                 engine => engine.as_str(),
                 version => &self.config.version,
                 image => engine.image(&self.config.version),

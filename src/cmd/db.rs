@@ -45,9 +45,8 @@ enum Cmd {
     /// Bring up a containerized DBMS unit (renders artifacts, creates a podman
     /// secret, installs and starts the systemd service)
     Init {
-        /// Cluster name — also the unit name and the running container name
-        #[arg(long)]
-        cluster: Option<String>,
+        /// Unit name
+        name: Option<String>,
         /// Database engine
         #[arg(long)]
         engine: Option<String>,
@@ -63,35 +62,30 @@ enum Cmd {
 pub fn run(ctx: &MainContext, args: Args) -> Result<(), Box<dyn Error>> {
     match args.cmd {
         Cmd::Init {
-            cluster,
+            name,
             engine,
             version,
             secret,
-        } => init(ctx, cluster, engine, version, secret),
+        } => init(ctx, name, engine, version, secret),
     }
 }
 
 fn init(
     ctx: &MainContext,
-    cluster: Option<String>,
+    name: Option<String>,
     engine: Option<String>,
     version: Option<String>,
     secret_name: Option<String>,
 ) -> Result<(), Box<dyn Error>> {
-    let cluster = match cluster {
+    let name = match name {
         Some(value) => {
-            if !validate::resource_name(&value) {
-                return Err(format!("invalid cluster name '{value}'").into());
-            }
+            validate_unit_name(ctx, &value)?;
             value
         }
-        None => prompt_cluster()?,
+        None => prompt_name(ctx)?,
     };
 
-    let unit_dir = ctx.base().join(&cluster);
-    if unit_dir.exists() {
-        return Err(format!("unit directory already exists: {}", unit_dir.display()).into());
-    }
+    let unit_dir = ctx.base().join(&name);
 
     let engine = match engine {
         Some(value) => parse_engine(&value)?,
@@ -130,14 +124,27 @@ fn init(
         return Err(err);
     }
 
-    let unit = DbUnit::new(ctx, cluster.clone(), config.clone());
+    let unit = DbUnit::new(ctx, name.clone(), config.clone());
     unit.init()?;
 
     println!(
-        "started db unit '{cluster}' ({} {})",
+        "started db unit '{name}' ({} {})",
         config.engine.as_str(),
         config.version
     );
+    Ok(())
+}
+
+fn validate_unit_name(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {
+    if !validate::resource_name(name) {
+        return Err(format!("invalid unit name '{name}'").into());
+    }
+
+    let unit_dir = ctx.base().join(name);
+    if unit_dir.exists() {
+        return Err(format!("unit '{name}' already exists").into());
+    }
+
     Ok(())
 }
 
@@ -165,17 +172,15 @@ fn parse_engine(value: &str) -> Result<DbEngine, Box<dyn Error>> {
         .ok_or_else(|| format!("unsupported engine '{value}'").into())
 }
 
-fn prompt_cluster() -> Result<String, Box<dyn Error>> {
+fn prompt_name(ctx: &MainContext) -> Result<String, Box<dyn Error>> {
     loop {
         let value: String = Input::with_theme(&ColorfulTheme::default())
-            .with_prompt("Cluster name")
+            .with_prompt("Unit name")
             .interact_text()?;
-        if validate::resource_name(&value) {
-            return Ok(value);
+        match validate_unit_name(ctx, &value) {
+            Ok(()) => return Ok(value),
+            Err(err) => eprintln!("{err}"),
         }
-        eprintln!(
-            "invalid cluster name; use lowercase letters, digits and hyphens (no leading, trailing or doubled '-')"
-        );
     }
 }
 
