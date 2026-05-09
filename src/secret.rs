@@ -22,18 +22,43 @@ use aes_gcm::{
         Payload,
     },
 };
+use base64::{
+    Engine as _,
+    engine::general_purpose::STANDARD as B64,
+};
+use chrono::{
+    DateTime,
+    Utc,
+};
 use rand::RngCore;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 use thiserror::Error;
 
 const KEY_NAME: &str = "master.key";
 const KEY_LEN: usize = 32;
 const NONCE_LEN: usize = 12;
-const TAG_LEN: usize = 16;
+const FILE_VERSION: u32 = 1;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct MasterKey {
     secrets_dir: PathBuf,
     key: [u8; KEY_LEN],
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecretMetadata {
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SecretFile {
+    pub version: u32,
+    pub metadata: SecretMetadata,
+    pub nonce: String,
+    pub ciphertext: String,
 }
 
 #[derive(Debug, Error)]
@@ -72,6 +97,23 @@ pub enum SecretError {
         #[source]
         source: io::Error,
     },
+
+    #[error("serialize secret '{name}'")]
+    Serialize {
+        name: String,
+        #[source]
+        source: serde_yaml::Error,
+    },
+
+    #[error("deserialize secret '{name}'")]
+    Deserialize {
+        name: String,
+        #[source]
+        source: serde_yaml::Error,
+    },
+
+    #[error("unsupported secret file version {version} for '{name}'")]
+    UnsupportedVersion { name: String, version: u32 },
 }
 
 pub fn get_secrets_dir(base: &Path) -> PathBuf {
@@ -85,7 +127,7 @@ fn get_secret_path(secrets_dir: &Path, name: &str) -> PathBuf {
     for item in rest {
         dir = dir.join(item);
     }
-    dir.join(format!("{last}.bin"))
+    dir.join(format!("{last}.yaml"))
 }
 
 pub fn secret_exists(base: &Path, name: &str) -> bool {
@@ -99,6 +141,10 @@ pub fn secret_rm(base: &Path, name: &str) -> io::Result<()> {
     let secrets_dir = get_secrets_dir(base);
     let path = get_secret_path(&secrets_dir, name);
     remove_file(&path)
+}
+
+fn metadata_aad(metadata: &SecretMetadata) -> Vec<u8> {
+    format!("created_at={}", metadata.created_at.to_rfc3339()).into_bytes()
 }
 
 impl MasterKey {
@@ -151,7 +197,15 @@ impl MasterKey {
 
     pub fn encrypt_to_file(&self, name: &str, text: &str) -> Result<(), SecretError> {
         let path = get_secret_path(&self.secrets_dir, name);
-        let blob = self.encrypt(name, text)?;
+        let metadata = SecretMetadata {
+            created_at: Utc::now(),
+        };
+        let secret_file = self.encrypt(name, &metadata, text)?;
+        let yaml =
+            serde_yaml::to_string(&secret_file).map_err(|source| SecretError::Serialize {
+                name: name.into(),
+                source,
+            })?;
 
         if let Some(parent) = path.parent() {
             create_dir_all(parent).map_err(|source| SecretError::WriteSecret {
@@ -168,65 +222,97 @@ impl MasterKey {
                 name: name.into(),
                 source,
             })?;
-        file.write_all(&blob)
+        file.write_all(yaml.as_bytes())
             .map_err(|source| SecretError::WriteSecret {
                 name: name.into(),
                 source,
             })?;
+        file.sync_all().map_err(|source| SecretError::WriteSecret {
+            name: name.into(),
+            source,
+        })?;
 
         Ok(())
     }
 
-    pub fn encrypt(&self, name: &str, text: &str) -> Result<Vec<u8>, SecretError> {
+    pub fn encrypt(
+        &self,
+        name: &str,
+        metadata: &SecretMetadata,
+        text: &str,
+    ) -> Result<SecretFile, SecretError> {
         let cipher = Aes256Gcm::new(&self.key.into());
 
         let mut nonce_bytes = [0u8; NONCE_LEN];
         rand::thread_rng().fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
+        let aad = metadata_aad(metadata);
+
         let payload = Payload {
             msg: text.as_bytes(),
-            aad: name.as_bytes(),
+            aad: &aad,
         };
 
         let ciphertext = cipher
             .encrypt(nonce, payload)
             .map_err(|_| SecretError::Encrypt { name: name.into() })?;
 
-        let mut blob = Vec::with_capacity(NONCE_LEN + ciphertext.len());
-        blob.extend_from_slice(&nonce_bytes);
-        blob.extend_from_slice(&ciphertext);
-        Ok(blob)
+        Ok(SecretFile {
+            version: FILE_VERSION,
+            metadata: metadata.clone(),
+            nonce: B64.encode(nonce_bytes),
+            ciphertext: B64.encode(ciphertext),
+        })
     }
 
     pub fn decrypt_from_file(&self, name: &str) -> Result<String, SecretError> {
         let path = get_secret_path(&self.secrets_dir, name);
-        let blob = std::fs::read(&path).map_err(|source| SecretError::ReadSecret {
+        let content = fs::read_to_string(&path).map_err(|source| SecretError::ReadSecret {
             name: name.into(),
             source,
         })?;
-        self.decrypt(name, &blob)
+        let file: SecretFile =
+            serde_yaml::from_str(&content).map_err(|source| SecretError::Deserialize {
+                name: name.into(),
+                source,
+            })?;
+        self.decrypt(name, &file)
     }
 
-    pub fn decrypt(&self, name: &str, blob: &[u8]) -> Result<String, SecretError> {
-        if blob.len() < NONCE_LEN + TAG_LEN {
-            return Err(SecretError::Decrypt { name: name.into() });
+    pub fn decrypt(&self, name: &str, file: &SecretFile) -> Result<String, SecretError> {
+        if file.version != FILE_VERSION {
+            return Err(SecretError::UnsupportedVersion {
+                name: name.into(),
+                version: file.version,
+            });
         }
 
+        let nonce_bytes = B64
+            .decode(&file.nonce)
+            .map_err(|_| SecretError::Decrypt { name: name.into() })?;
+        if nonce_bytes.len() != NONCE_LEN {
+            return Err(SecretError::Decrypt { name: name.into() });
+        }
+        let ciphertext = B64
+            .decode(&file.ciphertext)
+            .map_err(|_| SecretError::Decrypt { name: name.into() })?;
+
         let cipher = Aes256Gcm::new(&self.key.into());
-        let (nonce_bytes, ciphertext) = blob.split_at(NONCE_LEN);
-        let nonce = Nonce::from_slice(nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let aad = metadata_aad(&file.metadata);
 
         let payload = Payload {
-            msg: ciphertext,
-            aad: name.as_bytes(),
+            msg: &ciphertext,
+            aad: &aad,
         };
 
-        let blob = cipher
+        let plain = cipher
             .decrypt(nonce, payload)
             .map_err(|_| SecretError::Decrypt { name: name.into() })?;
 
-        String::from_utf8(blob).map_err(|_| SecretError::InvalidData)
+        String::from_utf8(plain).map_err(|_| SecretError::InvalidData)
     }
 }
 
@@ -236,36 +322,96 @@ mod tests {
 
     use super::*;
 
+    fn sample_metadata() -> SecretMetadata {
+        SecretMetadata {
+            created_at: DateTime::parse_from_rfc3339("2026-05-09T12:34:56Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        }
+    }
+
     #[test]
     fn round_trip() {
         let key = MasterKey::generate(Path::new("/tmp"));
-        let blob = key.encrypt("name", "value").unwrap();
-        let plain = key.decrypt("name", &blob).unwrap();
+        let metadata = sample_metadata();
+        let file = key.encrypt("name", &metadata, "value").unwrap();
+        let plain = key.decrypt("name", &file).unwrap();
         assert_eq!(&plain, "value");
+        assert_eq!(file.version, 1);
     }
 
     #[test]
     fn aad_binding() {
         let key = MasterKey::generate(Path::new("/tmp"));
-        let blob = key.encrypt("alpha", "value").unwrap();
-        assert!(key.decrypt("beta", &blob).is_err());
+        let metadata = sample_metadata();
+        let mut file = key.encrypt("name", &metadata, "value").unwrap();
+        file.metadata.created_at = DateTime::parse_from_rfc3339("2026-05-10T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert!(key.decrypt("name", &file).is_err());
     }
 
     #[test]
     fn tamper_detected() {
         let key = MasterKey::generate(Path::new("/tmp"));
-        let mut blob = key.encrypt("name", "value").unwrap();
-        let last = blob.len() - 1;
-        blob[last] ^= 0x01;
-        assert!(key.decrypt("name", &blob).is_err());
+        let metadata = sample_metadata();
+        let mut file = key.encrypt("name", &metadata, "value").unwrap();
+        let mut bytes = B64.decode(&file.ciphertext).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 0x01;
+        file.ciphertext = B64.encode(bytes);
+        assert!(key.decrypt("name", &file).is_err());
     }
 
     #[test]
     fn wrong_key_fails() {
         let key1 = MasterKey::generate(Path::new("/tmp"));
         let key2 = MasterKey::generate(Path::new("/tmp"));
-        let blob = key1.encrypt("name", "value").unwrap();
-        assert!(key2.decrypt("name", &blob).is_err());
+        let metadata = sample_metadata();
+        let file = key1.encrypt("name", &metadata, "value").unwrap();
+        assert!(key2.decrypt("name", &file).is_err());
+    }
+
+    #[test]
+    fn unsupported_version_rejected() {
+        let key = MasterKey::generate(Path::new("/tmp"));
+        let metadata = sample_metadata();
+        let mut file = key.encrypt("name", &metadata, "value").unwrap();
+        file.version = 2;
+        assert!(matches!(
+            key.decrypt("name", &file),
+            Err(SecretError::UnsupportedVersion { version: 2, .. })
+        ));
+    }
+
+    #[test]
+    fn file_round_trip() {
+        let tmp = tempdir().unwrap();
+        let base = tmp.path();
+        let key = MasterKey::generate(base);
+        key.encrypt_to_file("group/foo", "secret-value").unwrap();
+
+        let path = get_secret_path(&get_secrets_dir(base), "group/foo");
+        assert!(path.extension().is_some_and(|ext| ext == "yaml"));
+        assert!(path.exists());
+
+        let plain = key.decrypt_from_file("group/foo").unwrap();
+        assert_eq!(plain, "secret-value");
+    }
+
+    #[test]
+    fn file_yaml_format() {
+        let tmp = tempdir().unwrap();
+        let base = tmp.path();
+        let key = MasterKey::generate(base);
+        key.encrypt_to_file("foo", "v").unwrap();
+
+        let path = get_secret_path(&get_secrets_dir(base), "foo");
+        let content = fs::read_to_string(&path).unwrap();
+        let file: SecretFile = serde_yaml::from_str(&content).unwrap();
+        assert_eq!(file.version, 1);
+        assert!(!file.nonce.is_empty());
+        assert!(!file.ciphertext.is_empty());
     }
 
     #[test]

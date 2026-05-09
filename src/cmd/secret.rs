@@ -202,7 +202,7 @@ fn walk_secrets(root: &Path, dir: &Path, out: &mut Vec<String>) -> io::Result<()
             continue;
         };
 
-        let Some(stem) = name.strip_suffix(".bin") else {
+        let Some(stem) = name.strip_suffix(".yaml") else {
             continue;
         };
 
