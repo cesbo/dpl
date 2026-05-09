@@ -20,36 +20,42 @@ pub struct DbConfig {
 #[serde(rename_all = "snake_case")]
 pub enum DbEngine {
     Postgresql,
+    Mariadb,
 }
 
 impl DbEngine {
     pub fn as_str(&self) -> &'static str {
         match self {
             DbEngine::Postgresql => "postgresql",
+            DbEngine::Mariadb => "mariadb",
         }
     }
 
     pub fn image(&self, version: &str) -> String {
         match self {
             DbEngine::Postgresql => format!("docker.io/library/postgres:{version}"),
+            DbEngine::Mariadb => format!("docker.io/library/mariadb:{version}"),
         }
     }
 
     pub fn data_path(&self) -> &'static str {
         match self {
             DbEngine::Postgresql => "/var/lib/postgresql",
+            DbEngine::Mariadb => "/var/lib/mysql",
         }
     }
 
     pub fn password_env(&self) -> &'static str {
         match self {
             DbEngine::Postgresql => "POSTGRES_PASSWORD",
+            DbEngine::Mariadb => "MARIADB_ROOT_PASSWORD",
         }
     }
 
     pub fn default_version(&self) -> &'static str {
         match self {
             DbEngine::Postgresql => "18-alpine",
+            DbEngine::Mariadb => "12",
         }
     }
 }
@@ -116,5 +122,13 @@ secret: pg-pass
         assert_eq!(engine.image("18-alpine"), "docker.io/library/postgres:18-alpine");
         assert_eq!(engine.data_path(), "/var/lib/postgresql");
         assert_eq!(engine.password_env(), "POSTGRES_PASSWORD");
+        assert_eq!(engine.default_version(), "18-alpine");
+
+        let engine = DbEngine::Mariadb;
+        assert_eq!(engine.as_str(), "mariadb");
+        assert_eq!(engine.image("12"), "docker.io/library/mariadb:12");
+        assert_eq!(engine.data_path(), "/var/lib/mysql");
+        assert_eq!(engine.password_env(), "MARIADB_ROOT_PASSWORD");
+        assert_eq!(engine.default_version(), "12");
     }
 }

@@ -27,7 +27,10 @@ use crate::{
     validate,
 };
 
-const ENGINES: &[(&str, DbEngine)] = &[("postgresql", DbEngine::Postgresql)];
+const ENGINES: &[(&str, DbEngine)] = &[
+    ("postgresql", DbEngine::Postgresql),
+    ("mariadb", DbEngine::Mariadb),
+];
 
 #[derive(clap::Args)]
 pub struct Args {
