@@ -20,6 +20,11 @@ pub use error::DeployError;
 use state::DeployState;
 pub use unit::UnitConfig;
 use unit::app::AppUnit;
+pub use unit::db::{
+    DbConfig,
+    DbEngine,
+    DbUnit,
+};
 
 use crate::{
     MainContext,
@@ -38,7 +43,7 @@ pub fn deploy_unit<R: Read>(
             let app = AppUnit::new(ctx, name, config);
             app.deploy(archive)
         }
-        UnitConfig::Domain(_) => Err(DeployError::UnitNotAllowed),
+        UnitConfig::Db(_) | UnitConfig::Domain(_) => Err(DeployError::UnitNotAllowed),
     }
 }
 

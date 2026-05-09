@@ -32,6 +32,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Manage database units
+    Db(cmd::db::Args),
     /// Manage encrypted runtime secrets
     Secret(cmd::secret::Args),
     /// Manage units
@@ -43,6 +45,7 @@ fn main() {
 
     let result: Result<(), Box<dyn Error>> = match MainContext::load(&cli.base) {
         Ok(ctx) => match cli.command {
+            Command::Db(args) => cmd::db::run(&ctx, args),
             Command::Secret(args) => cmd::secret::run(&ctx, args),
             Command::Unit(args) => cmd::unit::run(&ctx, args),
         },

@@ -1,0 +1,35 @@
+[Unit]
+Description=DPL Database for {{ cluster }} ({{ engine }} {{ version }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+NotifyAccess=all
+Delegate=yes
+KillMode=mixed
+TimeoutStopFailureMode=abort
+Environment="{{ env_var }}={{ password }}"
+ExecStartPre=/bin/mkdir -p /var/log/podman
+ExecStartPre=/usr/bin/podman network create --ignore dpl
+ExecStartPre=-/usr/bin/rm -f %t/%N.cid
+ExecStart=/usr/bin/podman run \
+  --name {{ cluster }} \
+  --cidfile=%t/%N.cid \
+  --replace --rm \
+  --cgroups=split \
+  --sdnotify=conmon \
+  -e {{ env_var }} \
+  --network=dpl \
+  -v {{ cluster }}-data:{{ data_path }} \
+  --log-driver=k8s-file --log-opt=path=/var/log/podman/{{ cluster }}.log \
+  {{ image }}
+ExecStop=/usr/bin/podman stop --cidfile=%t/%N.cid --ignore
+ExecStopPost=-/usr/bin/podman rm -v -f --cidfile=%t/%N.cid --ignore
+ExecStopPost=-/usr/bin/rm -f %t/%N.cid
+Restart=always
+RestartSec=2
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

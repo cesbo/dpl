@@ -1,7 +1,9 @@
 pub mod app;
+pub mod db;
 pub mod domain;
 
 use app::AppConfig;
+use db::DbConfig;
 use domain::DomainConfig;
 use serde::Deserialize;
 
@@ -19,6 +21,7 @@ use crate::{
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum UnitConfig {
     App(AppConfig),
+    Db(DbConfig),
     Domain(DomainConfig),
 }
 
@@ -26,6 +29,7 @@ impl ValidateConfig for UnitConfig {
     fn validate_config(&self) -> Result<(), String> {
         match self {
             UnitConfig::App(config) => config.validate_config(),
+            UnitConfig::Db(config) => config.validate_config(),
             UnitConfig::Domain(config) => config.validate_config(),
         }
     }
@@ -50,6 +54,7 @@ impl UnitConfig {
             UnitConfig::App(config) => config
                 .validate_references(ctx)
                 .map_err(|info| ConfigError::Invalid(format!("app references: {info}")))?,
+            UnitConfig::Db(_) => {}
             UnitConfig::Domain(_) => {}
         }
 
@@ -80,6 +85,26 @@ routes:
         .unwrap();
 
         assert!(matches!(config, UnitConfig::Domain(_)));
+        assert!(config.validate_config().is_ok());
+    }
+
+    #[test]
+    fn parse_db_unit_config() {
+        let config: UnitConfig = serde_yaml::from_str(
+            r#"
+type: db
+engine: postgresql
+version: "18"
+secret: pg-pass
+"#,
+        )
+        .unwrap();
+
+        let UnitConfig::Db(db) = &config else {
+            panic!("expected db variant");
+        };
+        assert_eq!(db.version, "18");
+        assert_eq!(db.secret, "pg-pass");
         assert!(config.validate_config().is_ok());
     }
 
