@@ -1,6 +1,12 @@
 use std::{
     fs,
+    fs::{
+        OpenOptions,
+        create_dir_all,
+        remove_file,
+    },
     io,
+    io::Write,
     path::{
         Path,
         PathBuf,
@@ -53,14 +59,14 @@ pub enum SecretError {
     #[error("encrypt secret '{name}'")]
     Encrypt { name: String },
 
-    #[error("read secret")]
+    #[error("read secret '{name}'")]
     ReadSecret {
         name: String,
         #[source]
         source: io::Error,
     },
 
-    #[error("write secret")]
+    #[error("write secret '{name}'")]
     WriteSecret {
         name: String,
         #[source]
@@ -92,7 +98,7 @@ pub fn secret_exists(base: &Path, name: &str) -> bool {
 pub fn secret_rm(base: &Path, name: &str) -> io::Result<()> {
     let secrets_dir = get_secrets_dir(base);
     let path = get_secret_path(&secrets_dir, name);
-    fs::remove_file(&path)
+    remove_file(&path)
 }
 
 impl MasterKey {
@@ -128,12 +134,10 @@ impl MasterKey {
     }
 
     pub fn save(&self) -> Result<(), SecretError> {
-        use std::io::Write;
-
-        fs::create_dir_all(&self.secrets_dir).map_err(SecretError::SaveKey)?;
+        create_dir_all(&self.secrets_dir).map_err(SecretError::SaveKey)?;
 
         let path = self.secrets_dir.join(KEY_NAME);
-        let mut file = fs::OpenOptions::new()
+        let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&path)
@@ -150,15 +154,25 @@ impl MasterKey {
         let blob = self.encrypt(name, text)?;
 
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|source| SecretError::WriteSecret {
+            create_dir_all(parent).map_err(|source| SecretError::WriteSecret {
                 name: name.into(),
                 source,
             })?;
         }
-        fs::write(&path, blob).map_err(|source| SecretError::WriteSecret {
-            name: name.into(),
-            source,
-        })?;
+
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true) // ошибка, если файл существует
+            .open(&path)
+            .map_err(|source| SecretError::WriteSecret {
+                name: name.into(),
+                source,
+            })?;
+        file.write_all(&blob)
+            .map_err(|source| SecretError::WriteSecret {
+                name: name.into(),
+                source,
+            })?;
 
         Ok(())
     }

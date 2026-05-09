@@ -1,9 +1,6 @@
-use std::{
-    io,
-    path::{
-        Path,
-        PathBuf,
-    },
+use std::path::{
+    Path,
+    PathBuf,
 };
 
 use thiserror::Error;
@@ -38,7 +35,7 @@ impl MainContext {
     pub fn load(base: &Path) -> Result<Self, ContextError> {
         let master_key = match MasterKey::load(base) {
             Ok(v) => Some(v),
-            Err(SecretError::LoadKey(err)) if err.kind() == io::ErrorKind::NotFound => None,
+            Err(SecretError::KeyNotFound) => None,
             Err(err) => return Err(err.into()),
         };
         Ok(MainContext {

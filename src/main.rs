@@ -23,7 +23,7 @@ use self::error::exit_with_stderr;
 
 #[derive(Parser)]
 struct Cli {
-    /// Base directory (contains .secrets/, unit dirs)
+    /// Base directory
     #[arg(long = "base", default_value = "/opt/dpl", global = true)]
     base: PathBuf,
     #[command(subcommand)]

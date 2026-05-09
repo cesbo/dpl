@@ -37,8 +37,8 @@ pub struct Args {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Encrypt and store a secret
-    Set {
+    /// Create and store a new secret
+    Create {
         /// Secret name: `name` or `group/name` (lowercase letters, digits, `-`)
         name: String,
         /// Source: omit for an interactive prompt, "-" to read stdin, or a path to a file.
@@ -61,22 +61,27 @@ enum Cmd {
 
 pub fn run(ctx: &MainContext, args: Args) -> Result<(), Box<dyn Error>> {
     match args.cmd {
-        Cmd::Set { name, source } => set(ctx, &name, source.as_deref()),
+        Cmd::Create { name, source } => create(ctx, &name, source.as_deref()),
         Cmd::Cat { name } => cat(ctx, &name),
         Cmd::Rm { name } => rm(ctx, &name),
         Cmd::Ls => ls(ctx),
     }
 }
 
-fn set(ctx: &MainContext, name: &str, source: Option<&str>) -> Result<(), Box<dyn Error>> {
+fn create(ctx: &MainContext, name: &str, source: Option<&str>) -> Result<(), Box<dyn Error>> {
     if !validate::secret_name(name) {
         return Err(secret::SecretError::InvalidName.into());
     }
 
     let base = ctx.base();
+
+    if secret::secret_exists(base, name) {
+        return Err(format!("secret '{name}' already exists").into());
+    }
+
     let key = match secret::MasterKey::load(base) {
         Ok(key) => key,
-        Err(secret::SecretError::LoadKey(ref err)) if err.kind() == io::ErrorKind::NotFound => {
+        Err(secret::SecretError::KeyNotFound) => {
             let key = secret::MasterKey::generate(base);
             key.save()?;
             key

@@ -219,27 +219,27 @@ runtime:
     DB_URL: ${secret:db/prod-password}
 ```
 
-The tag value is the secret name (matching the `<name>` used with `dpl secret set`). Plain strings and tagged secrets can be mixed freely in the same `env` map. At deploy time `dpl` decrypts each tagged value and inlines the plaintext into the generated `run.sh` (or `build-N.sh` for build-layer envs).
+The tag value is the secret name (matching the `<name>` used with `dpl secret create`). Plain strings and tagged secrets can be mixed freely in the same `env` map. At deploy time `dpl` decrypts each tagged value and inlines the plaintext into the generated `run.sh` (or `build-N.sh` for build-layer envs).
 
 ### CLI
 
 ```bash
-dpl secret set db/prod-password                          # interactive prompt; Enter to generate
-echo -n 'topsecret' | dpl secret set db/prod-password -  # read from stdin
-dpl secret set db/prod-password ./payload.txt            # read from a file
+dpl secret create db/prod-password                          # interactive prompt; Enter to generate
+echo -n 'topsecret' | dpl secret create db/prod-password -  # read from stdin
+dpl secret create db/prod-password ./payload.txt            # read from a file
 
 dpl secret cat db/prod-password                          # print plaintext to stdout
 dpl secret list                                          # print secret names
 dpl secret rm db/prod-password                           # delete
 ```
 
-`secret set` takes an optional source:
+`secret create` takes an optional source:
 
 - omitted - prompts for the value (terminal echo off). An empty input generates a random 32-character alphanumeric secret and prints it once
 - `-` - reads stdin to EOF; a single trailing `\n` is stripped
 - any other value - treated as a file path
 
-The first `dpl secret set` creates `{base_dir}/.secrets/master.key` automatically.
+The first `dpl secret create` creates `{base_dir}/.secrets/master.key` automatically.
 
 ### Threat model
 
