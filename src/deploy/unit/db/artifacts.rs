@@ -9,7 +9,7 @@ use minijinja::{
     context,
 };
 
-use super::model::DbConfig;
+use super::model::DbServerConfig;
 use crate::{
     MainContext,
     deploy::artifacts::{
@@ -42,7 +42,7 @@ pub fn service_file_name(name: &str) -> String {
 pub struct ArtifactsContext<'a> {
     pub ctx: &'a MainContext,
     pub name: &'a str,
-    pub config: &'a DbConfig,
+    pub config: &'a DbServerConfig,
     pub version: u32,
     /// Plaintext root password — inlined into the systemd `Environment=` line.
     pub password: &'a str,
@@ -96,14 +96,14 @@ mod tests {
 
     use super::*;
     use crate::deploy::unit::db::model::{
-        DbConfig,
-        DbEngine,
+        DbServerConfig,
+        DbServerEngine,
     };
 
     #[test]
     fn render_db_service() {
-        let config = DbConfig {
-            engine: DbEngine::Postgresql,
+        let config = DbServerConfig {
+            engine: DbServerEngine::Postgresql,
             version: "18".into(),
             secret: "pg-pass".into(),
         };
@@ -141,8 +141,8 @@ mod tests {
 
     #[test]
     fn render_db_service_escapes_password() {
-        let config = DbConfig {
-            engine: DbEngine::Postgresql,
+        let config = DbServerConfig {
+            engine: DbServerEngine::Postgresql,
             version: "18".into(),
             secret: "pg-pass".into(),
         };

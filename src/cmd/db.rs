@@ -21,17 +21,17 @@ use crate::{
     MainContext,
     cmd::secret as secret_cmd,
     deploy::{
-        DbConfig,
-        DbEngine,
-        DbUnit,
+        DbServerConfig,
+        DbServerEngine,
+        DbServerUnit,
     },
     secret,
     validate,
 };
 
-const ENGINES: &[(&str, DbEngine)] = &[
-    ("postgresql", DbEngine::Postgresql),
-    ("mariadb", DbEngine::Mariadb),
+const ENGINES: &[(&str, DbServerEngine)] = &[
+    ("postgresql", DbServerEngine::Postgresql),
+    ("mariadb", DbServerEngine::Mariadb),
 ];
 
 #[derive(clap::Args)]
@@ -111,7 +111,7 @@ fn init(
         None => prompt_secret(ctx)?,
     };
 
-    let config = DbConfig {
+    let config = DbServerConfig {
         engine,
         version,
         secret: secret_name,
@@ -124,7 +124,7 @@ fn init(
         return Err(err);
     }
 
-    let unit = DbUnit::new(ctx, name.clone(), config.clone());
+    let unit = DbServerUnit::new(ctx, name.clone(), config.clone());
     unit.init()?;
 
     println!(
@@ -148,23 +148,23 @@ fn validate_unit_name(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error
     Ok(())
 }
 
-fn write_config(unit_dir: &std::path::Path, config: &DbConfig) -> Result<(), Box<dyn Error>> {
+fn write_config(unit_dir: &std::path::Path, config: &DbServerConfig) -> Result<(), Box<dyn Error>> {
     #[derive(Serialize)]
     struct UnitFile<'a> {
         #[serde(rename = "type")]
         kind: &'static str,
         #[serde(flatten)]
-        config: &'a DbConfig,
+        config: &'a DbServerConfig,
     }
 
-    let payload = UnitFile { kind: "db", config };
+    let payload = UnitFile { kind: "db-server", config };
     let yaml = serde_yaml::to_string(&payload)?;
     let path = unit_dir.join("config.yaml");
     fs::write(&path, yaml)?;
     Ok(())
 }
 
-fn parse_engine(value: &str) -> Result<DbEngine, Box<dyn Error>> {
+fn parse_engine(value: &str) -> Result<DbServerEngine, Box<dyn Error>> {
     ENGINES
         .iter()
         .find(|(name, _)| *name == value)
@@ -184,7 +184,7 @@ fn prompt_name(ctx: &MainContext) -> Result<String, Box<dyn Error>> {
     }
 }
 
-fn prompt_engine() -> Result<DbEngine, Box<dyn Error>> {
+fn prompt_engine() -> Result<DbServerEngine, Box<dyn Error>> {
     let labels: Vec<&str> = ENGINES.iter().map(|(name, _)| *name).collect();
     let index = Select::with_theme(&ColorfulTheme::default())
         .with_prompt("Database engine")
@@ -194,7 +194,7 @@ fn prompt_engine() -> Result<DbEngine, Box<dyn Error>> {
     Ok(ENGINES[index].1)
 }
 
-fn prompt_version(engine: DbEngine) -> Result<String, Box<dyn Error>> {
+fn prompt_version(engine: DbServerEngine) -> Result<String, Box<dyn Error>> {
     loop {
         let value: String = Input::with_theme(&ColorfulTheme::default())
             .with_prompt("Engine version")

@@ -10,57 +10,57 @@ use crate::{
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct DbConfig {
-    pub engine: DbEngine,
+pub struct DbServerConfig {
+    pub engine: DbServerEngine,
     pub version: String,
     pub secret: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum DbEngine {
+pub enum DbServerEngine {
     Postgresql,
     Mariadb,
 }
 
-impl DbEngine {
+impl DbServerEngine {
     pub fn as_str(&self) -> &'static str {
         match self {
-            DbEngine::Postgresql => "postgresql",
-            DbEngine::Mariadb => "mariadb",
+            DbServerEngine::Postgresql => "postgresql",
+            DbServerEngine::Mariadb => "mariadb",
         }
     }
 
     pub fn image(&self, version: &str) -> String {
         match self {
-            DbEngine::Postgresql => format!("docker.io/library/postgres:{version}"),
-            DbEngine::Mariadb => format!("docker.io/library/mariadb:{version}"),
+            DbServerEngine::Postgresql => format!("docker.io/library/postgres:{version}"),
+            DbServerEngine::Mariadb => format!("docker.io/library/mariadb:{version}"),
         }
     }
 
     pub fn data_path(&self) -> &'static str {
         match self {
-            DbEngine::Postgresql => "/var/lib/postgresql",
-            DbEngine::Mariadb => "/var/lib/mysql",
+            DbServerEngine::Postgresql => "/var/lib/postgresql",
+            DbServerEngine::Mariadb => "/var/lib/mysql",
         }
     }
 
     pub fn password_env(&self) -> &'static str {
         match self {
-            DbEngine::Postgresql => "POSTGRES_PASSWORD",
-            DbEngine::Mariadb => "MARIADB_ROOT_PASSWORD",
+            DbServerEngine::Postgresql => "POSTGRES_PASSWORD",
+            DbServerEngine::Mariadb => "MARIADB_ROOT_PASSWORD",
         }
     }
 
     pub fn default_version(&self) -> &'static str {
         match self {
-            DbEngine::Postgresql => "18-alpine",
-            DbEngine::Mariadb => "12",
+            DbServerEngine::Postgresql => "18-alpine",
+            DbServerEngine::Mariadb => "12",
         }
     }
 }
 
-impl ValidateConfig for DbConfig {
+impl ValidateConfig for DbServerConfig {
     fn validate_config(&self) -> Result<(), String> {
         if self.version.trim().is_empty() {
             return Err("db version must not be empty".into());
@@ -80,7 +80,7 @@ mod tests {
 
     #[test]
     fn parse_db_config() {
-        let config: DbConfig = serde_yaml::from_str(
+        let config: DbServerConfig = serde_yaml::from_str(
             r#"
 engine: postgresql
 version: "18"
@@ -89,7 +89,7 @@ secret: pg-pass
         )
         .unwrap();
 
-        assert_eq!(config.engine, DbEngine::Postgresql);
+        assert_eq!(config.engine, DbServerEngine::Postgresql);
         assert_eq!(config.version, "18");
         assert_eq!(config.secret, "pg-pass");
         assert!(config.validate_config().is_ok());
@@ -97,8 +97,8 @@ secret: pg-pass
 
     #[test]
     fn reject_empty_version() {
-        let config = DbConfig {
-            engine: DbEngine::Postgresql,
+        let config = DbServerConfig {
+            engine: DbServerEngine::Postgresql,
             version: " ".into(),
             secret: "pg-pass".into(),
         };
@@ -107,8 +107,8 @@ secret: pg-pass
 
     #[test]
     fn reject_invalid_secret_name() {
-        let config = DbConfig {
-            engine: DbEngine::Postgresql,
+        let config = DbServerConfig {
+            engine: DbServerEngine::Postgresql,
             version: "18".into(),
             secret: "Bad/Name".into(),
         };
@@ -117,14 +117,14 @@ secret: pg-pass
 
     #[test]
     fn engine_metadata() {
-        let engine = DbEngine::Postgresql;
+        let engine = DbServerEngine::Postgresql;
         assert_eq!(engine.as_str(), "postgresql");
         assert_eq!(engine.image("18-alpine"), "docker.io/library/postgres:18-alpine");
         assert_eq!(engine.data_path(), "/var/lib/postgresql");
         assert_eq!(engine.password_env(), "POSTGRES_PASSWORD");
         assert_eq!(engine.default_version(), "18-alpine");
 
-        let engine = DbEngine::Mariadb;
+        let engine = DbServerEngine::Mariadb;
         assert_eq!(engine.as_str(), "mariadb");
         assert_eq!(engine.image("12"), "docker.io/library/mariadb:12");
         assert_eq!(engine.data_path(), "/var/lib/mysql");

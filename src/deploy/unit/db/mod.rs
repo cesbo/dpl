@@ -8,8 +8,8 @@ use std::{
 };
 
 pub use self::model::{
-    DbConfig,
-    DbEngine,
+    DbServerConfig,
+    DbServerEngine,
 };
 use crate::{
     MainContext,
@@ -25,15 +25,15 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct DbUnit<'a> {
+pub struct DbServerUnit<'a> {
     pub ctx: &'a MainContext,
     pub name: String,
     pub unit_dir: PathBuf,
-    pub config: DbConfig,
+    pub config: DbServerConfig,
 }
 
-impl<'a> DbUnit<'a> {
-    pub fn new(ctx: &'a MainContext, name: impl Into<String>, config: DbConfig) -> Self {
+impl<'a> DbServerUnit<'a> {
+    pub fn new(ctx: &'a MainContext, name: impl Into<String>, config: DbServerConfig) -> Self {
         let name = name.into();
         let unit_dir = ctx.base().join(&name);
 
