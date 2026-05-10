@@ -22,6 +22,7 @@ pub use self::context::MainContext;
 use self::error::exit_with_stderr;
 
 #[derive(Parser)]
+#[command(version)]
 struct Cli {
     /// Base directory
     #[arg(long = "base", default_value = "/opt/dpl", global = true)]
