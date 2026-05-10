@@ -62,12 +62,8 @@ pub fn prompt_value_or_random() -> Result<String, Box<dyn Error>> {
 const CREATE_NEW_SECRET: &str = "+ Create new secret";
 
 /// Pick an existing secret with a fuzzy selector, or create a new one inline.
-/// Falls back to a plain Input prompt when no secrets exist yet.
 pub fn prompt_secret(ctx: &MainContext) -> Result<String, Box<dyn Error>> {
     let names = secret::list_secrets(ctx.base())?;
-    if names.is_empty() {
-        return create_new_secret(ctx);
-    }
 
     let mut items: Vec<&str> = names.iter().map(String::as_str).collect();
     items.push(CREATE_NEW_SECRET);
