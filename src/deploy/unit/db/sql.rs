@@ -21,6 +21,48 @@ use sea_query::{
 
 use super::model::DbServerEngine;
 
+impl DbServerEngine {
+    /// Returns `Ok` only when the container is up, the SQL server
+    /// accepts the connection, and the database exists.
+    pub fn ping(self, server: &str, root_password: &str, db_name: &str) -> io::Result<()> {
+        let password_env = self.client_password_env();
+        let mut cmd = Command::new("podman");
+        cmd.env(password_env, root_password);
+        cmd.args(["exec", "-e", password_env, server]);
+        match self {
+            DbServerEngine::Postgresql => {
+                cmd.args([
+                    "psql",
+                    "-v",
+                    "ON_ERROR_STOP=1",
+                    "-U",
+                    "postgres",
+                    "-d",
+                    db_name,
+                    "-tAc",
+                    "SELECT 1",
+                ]);
+            }
+            DbServerEngine::Mariadb => {
+                cmd.args([
+                    "mariadb", "-u", "root", "-N", "-B", "-e", "SELECT 1", db_name,
+                ]);
+            }
+        }
+
+        let status = cmd
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!("ping exited with {status}")))
+        }
+    }
+}
+
 /// Provision a new database + login user inside a running db-server container.
 pub fn create_database(
     engine: DbServerEngine,

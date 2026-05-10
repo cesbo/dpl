@@ -7,6 +7,11 @@ use std::{
         Command,
         Stdio,
     },
+    thread::sleep,
+    time::{
+        Duration,
+        Instant,
+    },
 };
 
 use clap::Subcommand;
@@ -76,6 +81,14 @@ enum Cmd {
         #[arg(long)]
         secret: Option<String>,
     },
+    /// Wait until a database is reachable through its db-server's CLI
+    Wait {
+        /// Database (and unit) name
+        name: String,
+        /// Timeout in seconds
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+    },
 }
 
 pub fn run(ctx: &MainContext, args: Args) -> Result<(), Box<dyn Error>> {
@@ -92,6 +105,7 @@ pub fn run(ctx: &MainContext, args: Args) -> Result<(), Box<dyn Error>> {
             user,
             secret,
         } => create(ctx, name, db_server, user, secret),
+        Cmd::Wait { name, timeout } => wait(ctx, &name, timeout),
     }
 }
 
@@ -223,6 +237,54 @@ fn create(
         config.server, config.user
     );
     Ok(())
+}
+
+fn wait(ctx: &MainContext, name: &str, timeout_secs: u64) -> Result<(), Box<dyn Error>> {
+    if !validate::resource_name(name) {
+        return Err(format!("invalid unit name '{name}'").into());
+    }
+
+    let db_config = {
+        let unit =
+            UnitConfig::load(ctx, name).map_err(|err| format!("load db unit '{name}': {err}"))?;
+        match unit {
+            UnitConfig::Db(c) => c,
+            _ => return Err(format!("unit '{name}' is not a database").into()),
+        }
+    };
+
+    let server_config = {
+        let server = &db_config.server;
+        let unit = UnitConfig::load(ctx, server)
+            .map_err(|err| format!("load db-server '{server}': {err}"))?;
+        match unit {
+            UnitConfig::DbServer(c) => c,
+            _ => return Err(format!("unit '{}' is not a db-server", server).into()),
+        }
+    };
+
+    let root_password = ctx
+        .resolve_secret(&server_config.secret)
+        .map_err(|err| format!("decrypt secret '{}': {err}", server_config.secret))?;
+
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    let interval = Duration::from_millis(800);
+
+    loop {
+        let result = server_config
+            .engine
+            .ping(&db_config.server, &root_password, name);
+
+        if result.is_ok() {
+            return Ok(());
+        }
+
+        if Instant::now() >= deadline {
+            return Err(format!("timeout waiting for database '{name}'").into());
+        }
+
+        sleep(interval);
+    }
 }
 
 fn validate_unit_name(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {

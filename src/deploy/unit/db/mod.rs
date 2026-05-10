@@ -87,12 +87,13 @@ impl<'a> DbServerUnit<'a> {
             source,
         })?;
 
-        let password = self.ctx.resolve_secret(&self.config.secret).map_err(|err| {
-            DeployError::UnitError {
+        let password = self
+            .ctx
+            .resolve_secret(&self.config.secret)
+            .map_err(|err| DeployError::UnitError {
                 info: format!("decrypt secret '{}'", self.config.secret),
                 source: std::io::Error::other(err),
-            }
-        })?;
+            })?;
 
         let artifacts = artifacts::ArtifactsContext {
             ctx: self.ctx,
