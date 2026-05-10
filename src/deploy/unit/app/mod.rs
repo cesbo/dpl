@@ -26,11 +26,7 @@ use crate::{
     MainContext,
     deploy::{
         DeployError,
-        guard::BusyGuard,
-        state::{
-            DeployState,
-            DeployStatus,
-        },
+        state::DeployState,
     },
     error::format_error_chain,
     log::DeployLog,
@@ -57,16 +53,14 @@ impl<'a> AppUnit<'a> {
         }
     }
 
-    /// Run the full deploy synchronously: acquire busy lock, bump version,
-    /// extract archive, render artifacts, build image, install service.
-    pub fn deploy<R: Read>(self, archive: R) -> Result<(DeployState, DeployLog), DeployError> {
-        let _guard = BusyGuard::lock(&self.unit_dir)?;
-
-        let mut state = DeployState::load(&self.unit_dir)?;
-        if state.latest_build.status == DeployStatus::Building {
-            return Err(DeployError::UnitBusy);
-        }
-
+    /// Run the full deploy synchronously: bump version, extract archive,
+    /// render artifacts, build image, install service. The caller holds the
+    /// busy lock and provides freshly loaded state.
+    pub fn deploy<R: Read>(
+        self,
+        mut state: DeployState,
+        archive: R,
+    ) -> Result<(DeployState, DeployLog), DeployError> {
         let version = state.bump_version()?;
         state.save(&self.unit_dir)?;
 

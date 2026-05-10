@@ -12,11 +12,7 @@ use crate::{
     MainContext,
     deploy::{
         DeployError,
-        guard::BusyGuard,
-        state::{
-            DeployState,
-            DeployStatus,
-        },
+        state::DeployState,
     },
     error::format_error_chain,
 };
@@ -42,14 +38,7 @@ impl<'a> DomainUnit<'a> {
         }
     }
 
-    pub fn deploy(self) -> Result<DeployState, DeployError> {
-        let _guard = BusyGuard::lock(&self.unit_dir)?;
-
-        let mut state = DeployState::load(&self.unit_dir)?;
-        if state.latest_build.status == DeployStatus::Building {
-            return Err(DeployError::UnitBusy);
-        }
-
+    pub fn deploy(self, mut state: DeployState) -> Result<DeployState, DeployError> {
         let version = state.bump_version()?;
         state.save(&self.unit_dir)?;
 

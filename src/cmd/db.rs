@@ -33,6 +33,7 @@ use crate::{
         DbServerUnit,
         DbUnit,
         UnitConfig,
+        acquire,
         list_units,
     },
     secret,
@@ -164,7 +165,8 @@ fn init(
     }
 
     let unit = DbServerUnit::new(ctx, name.clone(), config.clone());
-    unit.init()?;
+    let (_guard, state) = acquire(&unit_dir)?;
+    unit.init(state)?;
 
     println!(
         "started db unit '{name}' ({} {})",

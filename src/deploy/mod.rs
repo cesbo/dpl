@@ -17,6 +17,7 @@ use env::{
     EnvList,
 };
 pub use error::DeployError;
+pub use guard::acquire;
 use state::DeployState;
 use unit::app::AppUnit;
 pub use unit::{
@@ -44,10 +45,13 @@ pub fn deploy_unit<R: Read>(
     let unit = UnitConfig::load(ctx, name)?;
     unit.validate_references(ctx)?;
 
+    let unit_dir = ctx.base().join(name);
+    let (_guard, state) = acquire(&unit_dir)?;
+
     match unit {
         UnitConfig::App(config) => {
             let app = AppUnit::new(ctx, name, config);
-            app.deploy(archive)
+            app.deploy(state, archive)
         }
         UnitConfig::Db(_) | UnitConfig::DbServer(_) | UnitConfig::Domain(_) => {
             Err(DeployError::UnitNotAllowed)

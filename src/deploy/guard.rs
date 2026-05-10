@@ -8,7 +8,13 @@ use std::{
 
 use fs4::fs_std::FileExt;
 
-use super::DeployError;
+use super::{
+    DeployError,
+    state::{
+        DeployState,
+        DeployStatus,
+    },
+};
 
 const LOCK_FILE_NAME: &str = ".deploy.lock";
 
@@ -18,7 +24,7 @@ const LOCK_FILE_NAME: &str = ".deploy.lock";
 pub struct BusyGuard(File);
 
 impl BusyGuard {
-    pub fn lock(unit_dir: &Path) -> Result<Self, DeployError> {
+    fn lock(unit_dir: &Path) -> Result<Self, DeployError> {
         let path = unit_dir.join(LOCK_FILE_NAME);
         let file = OpenOptions::new()
             .create(true)
@@ -40,4 +46,14 @@ impl BusyGuard {
             }),
         }
     }
+}
+
+/// Acquire the unit-level busy lock and load its state.
+pub fn acquire(unit_dir: &Path) -> Result<(BusyGuard, DeployState), DeployError> {
+    let guard = BusyGuard::lock(unit_dir)?;
+    let state = DeployState::load(unit_dir)?;
+    if state.latest_build.status == DeployStatus::Building {
+        return Err(DeployError::UnitBusy);
+    }
+    Ok((guard, state))
 }

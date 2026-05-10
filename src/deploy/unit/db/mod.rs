@@ -21,11 +21,7 @@ use crate::{
     MainContext,
     deploy::{
         DeployError,
-        guard::BusyGuard,
-        state::{
-            DeployState,
-            DeployStatus,
-        },
+        state::DeployState,
     },
     error::format_error_chain,
 };
@@ -53,15 +49,9 @@ impl<'a> DbServerUnit<'a> {
 
     /// One-shot bring-up: decrypt the dpl secret, render the systemd unit
     /// (with the password inlined into `Environment=`), then install and start
-    /// the service. Mirrors `DomainUnit::deploy` lifecycle.
-    pub fn init(self) -> Result<DeployState, DeployError> {
-        let _guard = BusyGuard::lock(&self.unit_dir)?;
-
-        let mut state = DeployState::load(&self.unit_dir)?;
-        if state.latest_build.status == DeployStatus::Building {
-            return Err(DeployError::UnitBusy);
-        }
-
+    /// the service. Mirrors `DomainUnit::deploy` lifecycle. The caller holds
+    /// the busy lock and provides freshly loaded state.
+    pub fn init(self, mut state: DeployState) -> Result<DeployState, DeployError> {
         let version = state.bump_version()?;
         state.save(&self.unit_dir)?;
 
