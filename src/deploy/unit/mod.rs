@@ -158,6 +158,29 @@ secret: pg-pass
     }
 
     #[test]
+    fn parse_app_unit_config_with_databases() {
+        let config: UnitConfig = serde_yaml::from_str(
+            r#"
+type: app
+image: alpine
+port: 8080
+build: []
+runtime:
+  cmd: "./run"
+databases:
+  - main-db
+  - cache-db
+"#,
+        )
+        .unwrap();
+
+        let UnitConfig::App(app) = config else {
+            panic!("expected app variant");
+        };
+        assert_eq!(app.databases, vec!["main-db", "cache-db"]);
+    }
+
+    #[test]
     fn parse_app_unit_config_with_secret_template() {
         let config: UnitConfig = serde_yaml::from_str(
             r#"

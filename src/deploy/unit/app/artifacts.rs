@@ -134,17 +134,22 @@ impl<'a> ArtifactsContext<'a> {
             )?;
         }
 
+        let dpl_bin = std::env::current_exe().map_err(ArtifactError::CurrentExe)?;
+
         let file_name = format!("dpl--{}.service", &self.name);
         let path = artifacts_dir.join(&file_name);
         write_artifact(
             path,
             APP_SERVICE_TEMPLATE,
             context! {
+                dpl_bin => dpl_bin.to_string_lossy(),
+                dpl_base => self.ctx.base().to_string_lossy(),
                 name => &self.name,
                 version => self.version,
                 host_port => self.port,
                 container_port => &self.config.port,
                 volumes => &self.config.volumes,
+                databases => &self.config.databases,
             },
         )?;
 
@@ -252,6 +257,7 @@ mod tests {
                     script: "echo sync".into(),
                 },
             ],
+            databases: vec!["main-db".to_owned(), "cache-db".to_owned()],
         };
 
         let name = "my-app";
@@ -284,5 +290,15 @@ mod tests {
         assert!(artifacts_dir.join("dpl--my-app--cleanup.timer").exists());
         assert!(artifacts_dir.join("dpl--my-app--sync.service").exists());
         assert!(artifacts_dir.join("dpl--my-app--sync.timer").exists());
+
+        let service = fs::read_to_string(artifacts_dir.join("dpl--my-app.service")).unwrap();
+        assert!(
+            service.contains("db wait main-db"),
+            "missing db wait for main-db:\n{service}"
+        );
+        assert!(
+            service.contains("db wait cache-db"),
+            "missing db wait for cache-db:\n{service}"
+        );
     }
 }

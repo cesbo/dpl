@@ -15,6 +15,9 @@ TimeoutStopFailureMode=abort
 ExecStartPre=/bin/mkdir -p /var/log/podman
 ExecStartPre=/usr/bin/podman network create --ignore dpl
 ExecStartPre=-/usr/bin/rm -f %t/%N.cid
+{% for database in databases %}
+ExecStartPre={{ dpl_bin }} --base {{ dpl_base }} db wait {{ database }}
+{% endfor %}
 ExecStart=/usr/bin/podman run \
   --name {{ container_name }} \
   --cidfile=%t/%N.cid \

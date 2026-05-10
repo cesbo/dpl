@@ -24,6 +24,9 @@ pub enum ArtifactError {
     #[error("write artifact")]
     Write(#[source] io::Error),
 
+    #[error("resolve dpl binary path")]
+    CurrentExe(#[source] io::Error),
+
     #[error("resolve env")]
     Env(#[from] super::EnvError),
 

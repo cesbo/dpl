@@ -6,7 +6,10 @@ use serde::{
 use crate::{
     MainContext,
     config::ValidateConfig,
-    deploy::EnvList,
+    deploy::{
+        EnvList,
+        UnitConfig,
+    },
     validate,
 };
 
@@ -23,6 +26,8 @@ pub struct AppConfig {
     pub exports: Vec<ExportConfig>,
     #[serde(default)]
     pub timers: Vec<TimerConfig>,
+    #[serde(default)]
+    pub databases: Vec<String>,
 }
 
 /// Configuration for a build layer of the application
@@ -119,6 +124,18 @@ impl AppConfig {
         for layer in &self.build {
             if let Err(err) = layer.env.validate_references(ctx) {
                 return Err(format!("build env: {err}"));
+            }
+        }
+
+        for db in &self.databases {
+            match UnitConfig::load(ctx, db) {
+                Ok(UnitConfig::Db(_)) => {}
+                Ok(_) => {
+                    return Err(format!("databases: unit '{db}' is not a database"));
+                }
+                Err(err) => {
+                    return Err(format!("databases: load '{db}': {err}"));
+                }
             }
         }
 
