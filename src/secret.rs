@@ -130,6 +130,61 @@ fn get_secret_path(secrets_dir: &Path, name: &str) -> PathBuf {
     dir.join(format!("{last}.yaml"))
 }
 
+/// List all secret names under `base` (e.g. `foo`, `group/bar`), sorted.
+/// Returns an empty vec when the secrets dir does not exist.
+pub fn list_secrets(base: &Path) -> io::Result<Vec<String>> {
+    let secrets_dir = get_secrets_dir(base);
+    let mut out = Vec::new();
+    walk_secrets(&secrets_dir, &secrets_dir, &mut out)?;
+    out.sort();
+    Ok(out)
+}
+
+fn walk_secrets(root: &Path, dir: &Path, out: &mut Vec<String>) -> io::Result<()> {
+    let entries = match fs::read_dir(dir) {
+        Ok(v) => v,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err),
+    };
+
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            walk_secrets(root, &path, out)?;
+            continue;
+        }
+
+        if !file_type.is_file() {
+            continue;
+        }
+
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+
+        let Some(stem) = name.strip_suffix(".yaml") else {
+            continue;
+        };
+
+        let rel = match path.strip_prefix(root) {
+            Ok(rel) => rel,
+            Err(_) => continue,
+        };
+
+        let mut display = PathBuf::new();
+        if let Some(parent) = rel.parent() {
+            display.push(parent);
+        }
+        display.push(stem);
+        out.push(display.to_string_lossy().into_owned());
+    }
+
+    Ok(())
+}
+
 pub fn secret_exists(base: &Path, name: &str) -> bool {
     let secrets_dir = get_secrets_dir(base);
     get_secret_path(&secrets_dir, name)

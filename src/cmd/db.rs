@@ -11,7 +11,7 @@ use std::{
 
 use clap::Subcommand;
 use dialoguer::{
-    Confirm,
+    FuzzySelect,
     Input,
     Select,
     theme::ColorfulTheme,
@@ -133,7 +133,7 @@ fn init(
             validate_secret(ctx, &value)?;
             value
         }
-        None => prompt_secret(ctx)?,
+        None => secret_cmd::prompt_secret(ctx)?,
     };
 
     let config = DbServerConfig {
@@ -195,7 +195,7 @@ fn create(
             validate_secret(ctx, &value)?;
             value
         }
-        None => prompt_secret(ctx)?,
+        None => secret_cmd::prompt_secret(ctx)?,
     };
 
     let config = DbConfig {
@@ -289,7 +289,7 @@ fn prompt_db_server(ctx: &MainContext) -> Result<(String, DbServerConfig), Box<d
         .map(|(name, cfg)| format!("{name} ({} {})", cfg.engine.as_str(), cfg.version))
         .collect();
 
-    let index = Select::with_theme(&ColorfulTheme::default())
+    let index = FuzzySelect::with_theme(&ColorfulTheme::default())
         .with_prompt("Database server")
         .items(&labels)
         .default(0)
@@ -359,36 +359,6 @@ fn check_image_exists(image: &str) -> Result<(), Box<dyn Error>> {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     Err(format!("image '{image}' not found: {}", stderr.trim()).into())
-}
-
-fn prompt_secret(ctx: &MainContext) -> Result<String, Box<dyn Error>> {
-    loop {
-        let value: String = Input::with_theme(&ColorfulTheme::default())
-            .with_prompt("Secret name")
-            .interact_text()?;
-
-        if !validate::secret_name(&value) {
-            eprintln!("{}", secret::SecretError::InvalidName);
-            continue;
-        }
-
-        if ctx.secret_exists(&value) {
-            return Ok(value);
-        }
-
-        let create = Confirm::with_theme(&ColorfulTheme::default())
-            .with_prompt(format!("secret '{value}' does not exist — create it now?"))
-            .default(true)
-            .interact()?;
-        if !create {
-            continue;
-        }
-
-        let key = secret_cmd::load_or_create_key(ctx)?;
-        let text = secret_cmd::prompt_value_or_random()?;
-        key.encrypt_to_file(&value, &text)?;
-        return Ok(value);
-    }
 }
 
 fn validate_secret(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {

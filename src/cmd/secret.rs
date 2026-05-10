@@ -5,14 +5,13 @@ use std::{
         self,
         Read,
     },
-    path::{
-        Path,
-        PathBuf,
-    },
 };
 
 use clap::Subcommand;
 use dialoguer::{
+    Confirm,
+    FuzzySelect,
+    Input,
     Password,
     theme::ColorfulTheme,
 };
@@ -58,6 +57,62 @@ pub fn prompt_value_or_random() -> Result<String, Box<dyn Error>> {
     } else {
         value
     })
+}
+
+const CREATE_NEW_SECRET: &str = "+ Create new secret";
+
+/// Pick an existing secret with a fuzzy selector, or create a new one inline.
+/// Falls back to a plain Input prompt when no secrets exist yet.
+pub fn prompt_secret(ctx: &MainContext) -> Result<String, Box<dyn Error>> {
+    let names = secret::list_secrets(ctx.base())?;
+    if names.is_empty() {
+        return create_new_secret(ctx);
+    }
+
+    let mut items: Vec<&str> = names.iter().map(String::as_str).collect();
+    items.push(CREATE_NEW_SECRET);
+
+    let index = FuzzySelect::with_theme(&ColorfulTheme::default())
+        .with_prompt("Secret name")
+        .items(&items)
+        .default(0)
+        .interact()?;
+
+    if index < names.len() {
+        return Ok(names.into_iter().nth(index).unwrap());
+    }
+
+    create_new_secret(ctx)
+}
+
+fn create_new_secret(ctx: &MainContext) -> Result<String, Box<dyn Error>> {
+    loop {
+        let value: String = Input::with_theme(&ColorfulTheme::default())
+            .with_prompt("Secret name")
+            .interact_text()?;
+
+        if !validate::secret_name(&value) {
+            eprintln!("{}", secret::SecretError::InvalidName);
+            continue;
+        }
+
+        if ctx.secret_exists(&value) {
+            return Ok(value);
+        }
+
+        let create = Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt(format!("secret '{value}' does not exist — create it now?"))
+            .default(true)
+            .interact()?;
+        if !create {
+            continue;
+        }
+
+        let key = load_or_create_key(ctx)?;
+        let text = prompt_value_or_random()?;
+        key.encrypt_to_file(&value, &text)?;
+        return Ok(value);
+    }
 }
 
 #[derive(clap::Args)]
@@ -167,61 +222,13 @@ fn rm(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {
 }
 
 fn ls(ctx: &MainContext) -> Result<(), Box<dyn Error>> {
-    let mut names = Vec::new();
-    let secrets_dir = secret::get_secrets_dir(ctx.base());
-    walk_secrets(&secrets_dir, &secrets_dir, &mut names)?;
+    let names = secret::list_secrets(ctx.base())?;
     if names.is_empty() {
         println!("No secrets found");
     } else {
-        names.sort();
         for name in names {
             println!("{name}");
         }
     }
-    Ok(())
-}
-
-fn walk_secrets(root: &Path, dir: &Path, out: &mut Vec<String>) -> io::Result<()> {
-    let entries = match fs::read_dir(dir) {
-        Ok(v) => v,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(err) => return Err(err),
-    };
-
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-        let file_type = entry.file_type()?;
-
-        if file_type.is_dir() {
-            walk_secrets(root, &path, out)?;
-            continue;
-        }
-
-        if !file_type.is_file() {
-            continue;
-        }
-
-        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
-            continue;
-        };
-
-        let Some(stem) = name.strip_suffix(".yaml") else {
-            continue;
-        };
-
-        let rel = match path.strip_prefix(root) {
-            Ok(rel) => rel,
-            Err(_) => continue,
-        };
-
-        let mut display = PathBuf::new();
-        if let Some(parent) = rel.parent() {
-            display.push(parent);
-        }
-        display.push(stem);
-        out.push(display.to_string_lossy().into_owned());
-    }
-
     Ok(())
 }
