@@ -2,8 +2,13 @@ pub mod app;
 pub mod db;
 pub mod domain;
 
+use std::fs;
+
 use app::AppConfig;
-use db::DbServerConfig;
+use db::{
+    DbConfig,
+    DbServerConfig,
+};
 use domain::DomainConfig;
 use serde::Deserialize;
 
@@ -21,6 +26,7 @@ use crate::{
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum UnitConfig {
     App(AppConfig),
+    Db(DbConfig),
     DbServer(DbServerConfig),
     Domain(DomainConfig),
 }
@@ -29,6 +35,7 @@ impl ValidateConfig for UnitConfig {
     fn validate_config(&self) -> Result<(), String> {
         match self {
             UnitConfig::App(config) => config.validate_config(),
+            UnitConfig::Db(config) => config.validate_config(),
             UnitConfig::DbServer(config) => config.validate_config(),
             UnitConfig::Domain(config) => config.validate_config(),
         }
@@ -54,12 +61,54 @@ impl UnitConfig {
             UnitConfig::App(config) => config
                 .validate_references(ctx)
                 .map_err(|info| ConfigError::Invalid(format!("app references: {info}")))?,
+            UnitConfig::Db(_) => {}
             UnitConfig::DbServer(_) => {}
             UnitConfig::Domain(_) => {}
         }
 
         Ok(unit)
     }
+}
+
+/// Return all units satisfies `predicate`, sorted by name.
+pub fn list_units<F>(ctx: &MainContext, predicate: F) -> Vec<(String, UnitConfig)>
+where
+    F: Fn(&UnitConfig) -> bool,
+{
+    let entries = match fs::read_dir(ctx.base()) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut out: Vec<(String, UnitConfig)> = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+
+        if !crate::validate::resource_name(&name) {
+            continue;
+        }
+
+        let Ok(config) = UnitConfig::load(ctx, &name) else {
+            continue;
+        };
+
+        if predicate(&config) {
+            out.push((name, config));
+        }
+    }
+
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
 }
 
 #[cfg(test)]

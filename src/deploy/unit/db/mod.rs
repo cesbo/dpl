@@ -1,5 +1,7 @@
 mod artifacts;
+mod database;
 mod model;
+mod sql;
 mod systemd;
 
 use std::{
@@ -7,9 +9,13 @@ use std::{
     path::PathBuf,
 };
 
-pub use self::model::{
-    DbServerConfig,
-    DbServerEngine,
+pub use self::{
+    database::DbUnit,
+    model::{
+        DbConfig,
+        DbServerConfig,
+        DbServerEngine,
+    },
 };
 use crate::{
     MainContext,

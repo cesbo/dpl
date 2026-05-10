@@ -15,6 +15,7 @@ fs4 = "0.13"
 indicatif = "0.17"
 minijinja = "2.12.0"
 rand = "0.8"
+sea-query = { version = "0.32", default-features = false, features = ["backend-postgres", "backend-mysql"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_yaml = "0.9.34"
 tar = "0.4"

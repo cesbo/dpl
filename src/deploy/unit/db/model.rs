@@ -5,7 +5,10 @@ use serde::{
 
 use crate::{
     config::ValidateConfig,
-    validate::secret_name,
+    validate::{
+        resource_name,
+        secret_name,
+    },
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -14,6 +17,32 @@ pub struct DbServerConfig {
     pub engine: DbServerEngine,
     pub version: String,
     pub secret: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DbConfig {
+    pub server: String,
+    pub user: String,
+    pub secret: String,
+}
+
+impl ValidateConfig for DbConfig {
+    fn validate_config(&self) -> Result<(), String> {
+        if !resource_name(&self.server) {
+            return Err(format!("invalid db server name '{}'", self.server));
+        }
+
+        if !resource_name(&self.user) {
+            return Err(format!("invalid db user name '{}'", self.user));
+        }
+
+        if !secret_name(&self.secret) {
+            return Err(format!("invalid secret name '{}'", self.secret));
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -56,6 +85,28 @@ impl DbServerEngine {
         match self {
             DbServerEngine::Postgresql => "18-alpine",
             DbServerEngine::Mariadb => "12",
+        }
+    }
+
+    pub fn client_args(&self) -> &'static [&'static str] {
+        match self {
+            DbServerEngine::Postgresql => &[
+                "psql",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-U",
+                "postgres",
+                "-d",
+                "postgres",
+            ],
+            DbServerEngine::Mariadb => &["mariadb", "-u", "root"],
+        }
+    }
+
+    pub fn client_password_env(&self) -> &'static str {
+        match self {
+            DbServerEngine::Postgresql => "PGPASSWORD",
+            DbServerEngine::Mariadb => "MYSQL_PWD",
         }
     }
 }
@@ -116,10 +167,54 @@ secret: pg-pass
     }
 
     #[test]
+    fn parse_db_unit_config() {
+        let config: DbConfig = serde_yaml::from_str(
+            r#"
+server: pg-main
+user: app1
+secret: app1-pass
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.server, "pg-main");
+        assert_eq!(config.user, "app1");
+        assert_eq!(config.secret, "app1-pass");
+        assert!(config.validate_config().is_ok());
+    }
+
+    #[test]
+    fn db_config_rejects_invalid_fields() {
+        let bad_server = DbConfig {
+            server: "Bad/Name".into(),
+            user: "app1".into(),
+            secret: "app1-pass".into(),
+        };
+        assert!(bad_server.validate_config().is_err());
+
+        let bad_user = DbConfig {
+            server: "pg-main".into(),
+            user: "Bad_User".into(),
+            secret: "app1-pass".into(),
+        };
+        assert!(bad_user.validate_config().is_err());
+
+        let bad_secret = DbConfig {
+            server: "pg-main".into(),
+            user: "app1".into(),
+            secret: "Bad/Secret/".into(),
+        };
+        assert!(bad_secret.validate_config().is_err());
+    }
+
+    #[test]
     fn engine_metadata() {
         let engine = DbServerEngine::Postgresql;
         assert_eq!(engine.as_str(), "postgresql");
-        assert_eq!(engine.image("18-alpine"), "docker.io/library/postgres:18-alpine");
+        assert_eq!(
+            engine.image("18-alpine"),
+            "docker.io/library/postgres:18-alpine"
+        );
         assert_eq!(engine.data_path(), "/var/lib/postgresql");
         assert_eq!(engine.password_env(), "POSTGRES_PASSWORD");
         assert_eq!(engine.default_version(), "18-alpine");
