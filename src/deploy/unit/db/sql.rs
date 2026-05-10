@@ -61,57 +61,57 @@ impl DbServerEngine {
             Err(io::Error::other(format!("ping exited with {status}")))
         }
     }
-}
 
-/// Provision a new database + login user inside a running db-server container.
-pub fn create_database(
-    engine: DbServerEngine,
-    server: &str,
-    root_password: &str,
-    db_name: &str,
-    username: &str,
-    password: &str,
-) -> io::Result<()> {
-    let sql = match engine {
-        DbServerEngine::Postgresql => build_postgres_sql(db_name, username, password),
-        DbServerEngine::Mariadb => build_mariadb_sql(db_name, username, password),
-    };
+    /// Provision a new database + login user inside a running db-server container.
+    pub fn create_database(
+        self,
+        server: &str,
+        root_password: &str,
+        db_name: &str,
+        username: &str,
+        password: &str,
+    ) -> io::Result<()> {
+        let sql = match self {
+            DbServerEngine::Postgresql => build_postgres_sql(db_name, username, password),
+            DbServerEngine::Mariadb => build_mariadb_sql(db_name, username, password),
+        };
 
-    let client_password_env = engine.client_password_env();
-    let client_args = engine.client_args();
+        let client_password_env = self.client_password_env();
+        let client_args = self.client_args();
 
-    let mut cmd = Command::new("podman");
-    cmd.env(client_password_env, root_password);
-    cmd.args(["exec", "-i", "-e", client_password_env, server]);
-    cmd.args(client_args);
+        let mut cmd = Command::new("podman");
+        cmd.env(client_password_env, root_password);
+        cmd.args(["exec", "-i", "-e", client_password_env, server]);
+        cmd.args(client_args);
 
-    let mut child = cmd
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+        let mut child = cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
 
-    {
-        let stdin = child
-            .stdin
-            .as_mut()
-            .ok_or_else(|| io::Error::other("failed to capture podman exec stdin"))?;
-        stdin.write_all(sql.as_bytes())?;
+        {
+            let stdin = child
+                .stdin
+                .as_mut()
+                .ok_or_else(|| io::Error::other("failed to capture podman exec stdin"))?;
+            stdin.write_all(sql.as_bytes())?;
+        }
+
+        let output = child.wait_with_output()?;
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let trimmed = stderr.trim();
+        let detail = if trimmed.is_empty() {
+            format!("podman exec exited with {}", output.status)
+        } else {
+            trimmed.to_string()
+        };
+        Err(io::Error::other(detail))
     }
-
-    let output = child.wait_with_output()?;
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let trimmed = stderr.trim();
-    let detail = if trimmed.is_empty() {
-        format!("podman exec exited with {}", output.status)
-    } else {
-        trimmed.to_string()
-    };
-    Err(io::Error::other(detail))
 }
 
 fn build_postgres_sql(db_name: &str, username: &str, password: &str) -> String {

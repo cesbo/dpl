@@ -1,9 +1,6 @@
-use super::{
-    model::{
-        DbConfig,
-        DbServerConfig,
-    },
-    sql,
+use super::model::{
+    DbConfig,
+    DbServerConfig,
 };
 use crate::{
     MainContext,
@@ -54,21 +51,22 @@ impl<'a> DbUnit<'a> {
                 source: std::io::Error::other(err),
             })?;
 
-        sql::create_database(
-            self.server_config.engine,
-            &self.config.server,
-            &root_password,
-            &self.name,
-            &self.config.user,
-            &user_password,
-        )
-        .map_err(|source| DeployError::UnitError {
-            info: format!(
-                "create database '{}' in '{}'",
-                self.name, self.config.server
-            ),
-            source,
-        })?;
+        self.server_config
+            .engine
+            .create_database(
+                &self.config.server,
+                &root_password,
+                &self.name,
+                &self.config.user,
+                &user_password,
+            )
+            .map_err(|source| DeployError::UnitError {
+                info: format!(
+                    "create database '{}' in '{}'",
+                    self.name, self.config.server
+                ),
+                source,
+            })?;
 
         Ok(())
     }
