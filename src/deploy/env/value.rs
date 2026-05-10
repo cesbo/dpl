@@ -7,6 +7,7 @@ use thiserror::Error;
 use super::error::EnvError;
 use crate::{
     MainContext,
+    deploy::unit,
     validate,
 };
 
@@ -29,7 +30,7 @@ pub enum ValueError {
     #[error("invalid name '{name}' for namespace '{ns}' at position {pos}")]
     InvalidName {
         pos: usize,
-        ns: &'static str,
+        ns: String,
         name: String,
     },
 }
@@ -37,25 +38,33 @@ pub enum ValueError {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Ns {
     Secret,
+    Unit(String),
 }
 
 impl Ns {
     fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "secret" => Some(Self::Secret),
-            _ => None,
+        if raw == "secret" {
+            return Some(Self::Secret);
         }
+
+        if validate::resource_name(raw) {
+            return Some(Self::Unit(raw.to_owned()));
+        }
+
+        None
     }
 
-    fn as_str(&self) -> &'static str {
+    fn as_str(&self) -> &str {
         match self {
             Self::Secret => "secret",
+            Self::Unit(name) => name,
         }
     }
 
     fn validate_name(&self, name: &str) -> bool {
         match self {
             Self::Secret => validate::secret_name(name),
+            Self::Unit(_) => true,
         }
     }
 }
@@ -129,6 +138,9 @@ impl Value {
                 Segment::Literal(s) => out.push_str(s),
                 Segment::Ref { ns, name } => match ns {
                     Ns::Secret => out.push_str(&ctx.resolve_secret(name)?),
+                    Ns::Unit(unit_name) => {
+                        out.push_str(&unit::resolve_export(ctx, unit_name, name)?)
+                    }
                 },
             }
         }
@@ -145,6 +157,9 @@ impl Value {
                     if !ctx.secret_exists(name) {
                         return Err(EnvError::MissingSecret { name: name.clone() });
                     }
+                }
+                Ns::Unit(unit_name) => {
+                    unit::validate_export(ctx, unit_name, name)?;
                 }
             }
         }
@@ -169,7 +184,7 @@ fn parse_ref(body: &str, pos: usize) -> Result<Segment, ValueError> {
     if !ns.validate_name(name) {
         return Err(ValueError::InvalidName {
             pos,
-            ns: ns.as_str(),
+            ns: ns.as_str().to_owned(),
             name: name.to_owned(),
         });
     }
@@ -240,6 +255,13 @@ mod tests {
         }
     }
 
+    fn uref(unit: &str, key: &str) -> Segment {
+        Segment::Ref {
+            ns: Ns::Unit(unit.to_owned()),
+            name: key.to_owned(),
+        }
+    }
+
     #[test]
     fn parse_literal_only() {
         let v = Value::parse("hello world").unwrap();
@@ -296,7 +318,7 @@ mod tests {
     #[test]
     fn parse_invalid_secret_name_underscore() {
         let err = Value::parse("${secret:my_key}").unwrap_err();
-        assert!(matches!(err, ValueError::InvalidName { ns: "secret", .. }));
+        assert!(matches!(err, ValueError::InvalidName { ref ns, .. } if ns == "secret"));
     }
 
     #[test]
@@ -317,8 +339,8 @@ mod tests {
 
     #[test]
     fn parse_unknown_namespace() {
-        let err = Value::parse("${env:HOME}").unwrap_err();
-        assert!(matches!(err, ValueError::UnknownNamespace { .. }));
+        let err = Value::parse("${EnvNs:home}").unwrap_err();
+        assert!(matches!(err, ValueError::UnknownNamespace { ref ns, .. } if ns == "EnvNs"));
     }
 
     #[test]
@@ -348,7 +370,7 @@ mod tests {
     #[test]
     fn parse_invalid_secret_name() {
         let err = Value::parse("${secret:Bad Name}").unwrap_err();
-        assert!(matches!(err, ValueError::InvalidName { ns: "secret", .. }));
+        assert!(matches!(err, ValueError::InvalidName { ref ns, .. } if ns == "secret"));
     }
 
     #[test]
@@ -371,5 +393,71 @@ mod tests {
     fn parse_namespaced_secret() {
         let v = Value::parse("${secret:db/prod-password}").unwrap();
         assert_eq!(v.0, vec![sref("db/prod-password")]);
+    }
+
+    #[test]
+    fn parse_unit_ref() {
+        let v = Value::parse("${pg-main:port}").unwrap();
+        assert_eq!(v.0, vec![uref("pg-main", "port")]);
+    }
+
+    #[test]
+    fn parse_unit_ref_mixed_with_secret() {
+        let v =
+            Value::parse("postgres://${app-db:user}:${secret:app-pass}@${pg-main:host}").unwrap();
+        assert_eq!(
+            v.0,
+            vec![
+                lit("postgres://"),
+                uref("app-db", "user"),
+                lit(":"),
+                sref("app-pass"),
+                lit("@"),
+                uref("pg-main", "host"),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_secrets_typo_is_unit_ref() {
+        let v = Value::parse("${secrets:foo}").unwrap();
+        assert_eq!(v.0, vec![uref("secrets", "foo")]);
+    }
+
+    #[test]
+    fn parse_unit_ref_uppercase_ns_rejected() {
+        let err = Value::parse("${PgMain:port}").unwrap_err();
+        assert!(matches!(err, ValueError::UnknownNamespace { ref ns, .. } if ns == "PgMain"));
+    }
+
+    #[test]
+    fn parse_unit_ref_underscore_ns_rejected() {
+        let err = Value::parse("${pg_main:port}").unwrap_err();
+        assert!(matches!(err, ValueError::UnknownNamespace { ref ns, .. } if ns == "pg_main"));
+    }
+
+    #[test]
+    fn parse_unit_ref_uppercase_key_rejected() {
+        let err = Value::parse("${pg-main:PORT}").unwrap_err();
+        assert!(matches!(err, ValueError::InvalidName { ref ns, .. } if ns == "pg-main"));
+    }
+
+    #[test]
+    fn parse_unit_ref_hyphen_key_rejected() {
+        let err = Value::parse("${pg-main:db-port}").unwrap_err();
+        assert!(matches!(err, ValueError::InvalidName { ref ns, .. } if ns == "pg-main"));
+    }
+
+    #[test]
+    fn references_iter_mixed_secret_and_unit() {
+        let v = Value::parse("${secret:x}-${pg-main:port}").unwrap();
+        let refs: Vec<(&Ns, &str)> = v.references().collect();
+        assert_eq!(
+            refs,
+            vec![
+                (&Ns::Secret, "x"),
+                (&Ns::Unit("pg-main".to_owned()), "port"),
+            ]
+        );
     }
 }

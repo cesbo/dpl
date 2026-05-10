@@ -42,6 +42,7 @@ pub fn deploy_unit<R: Read>(
     archive: R,
 ) -> Result<(DeployState, DeployLog), DeployError> {
     let unit = UnitConfig::load(ctx, name)?;
+    unit.validate_references(ctx)?;
 
     match unit {
         UnitConfig::App(config) => {

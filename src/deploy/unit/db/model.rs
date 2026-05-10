@@ -4,7 +4,9 @@ use serde::{
 };
 
 use crate::{
+    MainContext,
     config::ValidateConfig,
+    deploy::env::EnvError,
     validate::{
         resource_name,
         secret_name,
@@ -42,6 +44,30 @@ impl ValidateConfig for DbConfig {
         }
 
         Ok(())
+    }
+}
+
+impl DbConfig {
+    pub fn has_export(key: &str) -> bool {
+        matches!(key, "user" | "name" | "password")
+    }
+
+    pub fn resolve_export(
+        &self,
+        ctx: &MainContext,
+        name: &str,
+        key: &str,
+    ) -> Result<String, EnvError> {
+        match key {
+            "user" => Ok(self.user.clone()),
+            "name" => Ok(name.to_owned()),
+            "password" => Ok(ctx.resolve_secret(&self.secret)?),
+            _ => Err(EnvError::UnknownExport {
+                unit: name.to_owned(),
+                kind: "db",
+                key: key.to_owned(),
+            }),
+        }
     }
 }
 
@@ -205,6 +231,73 @@ secret: app1-pass
             secret: "Bad/Secret/".into(),
         };
         assert!(bad_secret.validate_config().is_err());
+    }
+
+    #[test]
+    fn db_has_export() {
+        assert!(DbConfig::has_export("user"));
+        assert!(DbConfig::has_export("name"));
+        assert!(DbConfig::has_export("password"));
+        assert!(!DbConfig::has_export("host"));
+        assert!(!DbConfig::has_export("port"));
+        assert!(!DbConfig::has_export(""));
+    }
+
+    #[test]
+    fn db_resolve_export_user_and_name() {
+        let config = DbConfig {
+            server: "pg-main".into(),
+            user: "app1".into(),
+            secret: "app1-pass".into(),
+        };
+        let ctx = MainContext::default();
+
+        assert_eq!(config.resolve_export(&ctx, "app-db", "user").unwrap(), "app1");
+        assert_eq!(config.resolve_export(&ctx, "app-db", "name").unwrap(), "app-db");
+    }
+
+    #[test]
+    fn db_resolve_export_unknown_key() {
+        let config = DbConfig {
+            server: "pg-main".into(),
+            user: "app1".into(),
+            secret: "app1-pass".into(),
+        };
+        let err = config
+            .resolve_export(&MainContext::default(), "app-db", "host")
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            EnvError::UnknownExport { ref unit, kind: "db", ref key }
+                if unit == "app-db" && key == "host"
+        ));
+    }
+
+    #[test]
+    fn db_resolve_export_password_requires_secret() {
+        use tempfile::TempDir;
+
+        use crate::secret::MasterKey;
+
+        let base = TempDir::new().unwrap();
+        let key = MasterKey::generate(base.path());
+        key.save().unwrap();
+        key.encrypt_to_file("app1-pass", "topsecret").unwrap();
+
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: Some(MasterKey::load(base.path()).unwrap()),
+        };
+
+        let config = DbConfig {
+            server: "pg-main".into(),
+            user: "app1".into(),
+            secret: "app1-pass".into(),
+        };
+        assert_eq!(
+            config.resolve_export(&ctx, "app-db", "password").unwrap(),
+            "topsecret"
+        );
     }
 
     #[test]

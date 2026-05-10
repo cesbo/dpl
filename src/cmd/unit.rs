@@ -55,7 +55,8 @@ pub fn run(ctx: &MainContext, args: Args) -> Result<(), Box<dyn Error>> {
 }
 
 fn check(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {
-    UnitConfig::load(ctx, name)?;
+    let unit = UnitConfig::load(ctx, name)?;
+    unit.validate_references(ctx)?;
     println!("ok");
     Ok(())
 }

@@ -19,7 +19,10 @@ use crate::{
         ValidateConfig,
         load_config,
     },
-    deploy::DeployError,
+    deploy::{
+        DeployError,
+        env::EnvError,
+    },
 };
 
 #[derive(Debug, Deserialize)]
@@ -49,25 +52,103 @@ impl UnitConfig {
         }
 
         let path = ctx.base().join(name).join("config.yaml");
-        let unit = load_config(&path).map_err(|err| {
+        load_config(&path).map_err(|err| {
             if err.is_not_found() {
                 DeployError::UnitNotFound
             } else {
                 DeployError::UnitConfig(err)
             }
-        })?;
+        })
+    }
 
-        match &unit {
-            UnitConfig::App(config) => config
-                .validate_references(ctx)
-                .map_err(|info| ConfigError::Invalid(format!("app references: {info}")))?,
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), DeployError> {
+        match self {
+            UnitConfig::App(config) => {
+                config
+                    .validate_references(ctx)
+                    .map_err(|info| ConfigError::Invalid(format!("app references: {info}")))?;
+            }
             UnitConfig::Db(_) => {}
             UnitConfig::DbServer(_) => {}
             UnitConfig::Domain(_) => {}
-        }
+        };
 
-        Ok(unit)
+        Ok(())
     }
+
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            UnitConfig::App(_) => "app",
+            UnitConfig::Db(_) => "db",
+            UnitConfig::DbServer(_) => "db-server",
+            UnitConfig::Domain(_) => "domain",
+        }
+    }
+
+    pub fn has_export(&self, key: &str) -> bool {
+        match self {
+            UnitConfig::Db(_) => DbConfig::has_export(key),
+            _ => false,
+        }
+    }
+
+    pub fn resolve_export(
+        &self,
+        ctx: &MainContext,
+        name: &str,
+        key: &str,
+    ) -> Result<String, EnvError> {
+        match self {
+            UnitConfig::Db(config) => config.resolve_export(ctx, name, key),
+            _ => Err(EnvError::UnknownExport {
+                unit: name.to_owned(),
+                kind: self.kind(),
+                key: key.to_owned(),
+            }),
+        }
+    }
+}
+
+fn load_for_export(ctx: &MainContext, unit_name: &str) -> Result<UnitConfig, EnvError> {
+    UnitConfig::load(ctx, unit_name).map_err(|err| match err {
+        DeployError::UnitNotFound | DeployError::InvalidUnitName => EnvError::UnitNotFound {
+            name: unit_name.to_owned(),
+        },
+        DeployError::UnitConfig(source) => EnvError::UnitConfig {
+            name: unit_name.to_owned(),
+            source,
+        },
+        other => EnvError::UnitConfig {
+            name: unit_name.to_owned(),
+            source: ConfigError::Invalid(other.to_string()),
+        },
+    })
+}
+
+pub(crate) fn validate_export(
+    ctx: &MainContext,
+    unit_name: &str,
+    key: &str,
+) -> Result<(), EnvError> {
+    let unit = load_for_export(ctx, unit_name)?;
+    if unit.has_export(key) {
+        Ok(())
+    } else {
+        Err(EnvError::UnknownExport {
+            unit: unit_name.to_owned(),
+            kind: unit.kind(),
+            key: key.to_owned(),
+        })
+    }
+}
+
+pub(crate) fn resolve_export(
+    ctx: &MainContext,
+    unit_name: &str,
+    key: &str,
+) -> Result<String, EnvError> {
+    let unit = load_for_export(ctx, unit_name)?;
+    unit.resolve_export(ctx, unit_name, key)
 }
 
 /// Return all units satisfies `predicate`, sorted by name.
@@ -178,6 +259,67 @@ databases:
             panic!("expected app variant");
         };
         assert_eq!(app.databases, vec!["main-db", "cache-db"]);
+    }
+
+    #[test]
+    fn load_skips_reference_validation() {
+        use std::fs;
+
+        use tempfile::TempDir;
+
+        let base = TempDir::new().unwrap();
+        let app_dir = base.path().join("app-x");
+        fs::create_dir_all(&app_dir).unwrap();
+        fs::write(
+            app_dir.join("config.yaml"),
+            "type: app\nimage: alpine\nport: 8080\nbuild: []\nruntime:\n  env:\n    OTHER: \"${nope:user}\"\n  cmd: ./run\n",
+        )
+        .unwrap();
+
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: None,
+        };
+
+        // load skips reference validation: succeeds even with a missing ref.
+        let unit = UnitConfig::load(&ctx, "app-x").unwrap();
+        assert!(matches!(unit, UnitConfig::App(_)));
+
+        // validate_references surfaces the missing unit.
+        let err = unit.validate_references(&ctx).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("nope") || format!("{err:?}").contains("nope"),
+            "expected error to mention 'nope': {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_export_unknown_unit() {
+        let err = validate_export(&MainContext::default(), "nope", "user").unwrap_err();
+        assert!(matches!(err, EnvError::UnitNotFound { ref name } if name == "nope"));
+    }
+
+    #[test]
+    fn validate_export_unknown_key_on_non_db() {
+        use std::fs;
+
+        use tempfile::TempDir;
+
+        let base = TempDir::new().unwrap();
+        let dir = base.path().join("example-com");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("config.yaml"), "type: domain\n").unwrap();
+
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: None,
+        };
+        let err = validate_export(&ctx, "example-com", "host").unwrap_err();
+        assert!(matches!(
+            err,
+            EnvError::UnknownExport { kind, .. } if kind == "domain"
+        ));
     }
 
     #[test]
