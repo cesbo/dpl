@@ -9,14 +9,10 @@ use super::{
 use crate::{
     archive::ArchiveError,
     config::ConfigError,
-    context::ContextError,
 };
 
 #[derive(Debug, Error)]
 pub enum DeployError {
-    #[error("load main context")]
-    MainContext(#[from] ContextError),
-
     #[error(transparent)]
     UnitConfig(#[from] ConfigError),
 
