@@ -272,7 +272,7 @@ databases:
     #[test]
     fn validate_export_unknown_unit() {
         let err = validate_export(&MainContext::default(), "nope", "user").unwrap_err();
-        assert_eq!(err, "unit not found");
+        assert_eq!(err, "load unit 'nope': unit not found");
     }
 
     #[test]

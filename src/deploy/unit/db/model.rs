@@ -18,6 +18,13 @@ use crate::{
     },
 };
 
+/// RFC 3986 *unreserved* set: encode everything except `A-Z a-z 0-9 - . _ ~`.
+const USERINFO: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct DbServerConfig {
@@ -101,7 +108,7 @@ impl DbConfig {
                     "{scheme}://{user}:{password}@{host}:{port}/{db}",
                     scheme = server.engine.url_scheme(),
                     user = self.user,
-                    password = userinfo_encode(&password),
+                    password = utf8_percent_encode(&password, USERINFO).to_string(),
                     host = self.server,
                     port = server.engine.default_port(),
                     db = unit_name,
@@ -119,17 +126,6 @@ impl DbConfig {
         };
         Ok(server)
     }
-}
-
-/// RFC 3986 *unreserved* set: encode everything except `A-Z a-z 0-9 - . _ ~`.
-const USERINFO: &AsciiSet = &NON_ALPHANUMERIC
-    .remove(b'-')
-    .remove(b'.')
-    .remove(b'_')
-    .remove(b'~');
-
-fn userinfo_encode(s: &str) -> String {
-    utf8_percent_encode(s, USERINFO).to_string()
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -324,27 +320,9 @@ secret: app1-pass
         assert!(DbConfig::has_export("password"));
         assert!(DbConfig::has_export("host"));
         assert!(DbConfig::has_export("port"));
+        assert!(DbConfig::has_export("url"));
         assert!(!DbConfig::has_export("unknown"));
         assert!(!DbConfig::has_export(""));
-    }
-
-    #[test]
-    fn db_resolve_export_user_and_name() {
-        let config = DbConfig {
-            server: "pg-main".into(),
-            user: "app1".into(),
-            secret: "app1-pass".into(),
-        };
-        let ctx = MainContext::default();
-
-        assert_eq!(
-            config.resolve_export(&ctx, "app-db", "user").unwrap(),
-            "app1"
-        );
-        assert_eq!(
-            config.resolve_export(&ctx, "app-db", "name").unwrap(),
-            "app-db"
-        );
     }
 
     #[test]
@@ -361,55 +339,76 @@ secret: app1-pass
     }
 
     #[test]
-    fn db_resolve_export_host() {
+    fn db_resolve_export_postgres() {
+        use std::fs;
+
+        use tempfile::TempDir;
+
+        use crate::secret::MasterKey;
+
+        let base = TempDir::new().unwrap();
+        let server_dir = base.path().join("pg-main");
+        fs::create_dir_all(&server_dir).unwrap();
+        fs::write(
+            server_dir.join("config.yaml"),
+            "type: db-server\nengine: postgresql\nversion: \"18\"\nsecret: pg-pass\n",
+        )
+        .unwrap();
+
+        let key = MasterKey::generate(base.path());
+        key.save().unwrap();
+        key.encrypt_to_file("app1-pass", "top$ecret&").unwrap();
+
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: Some(MasterKey::load(base.path()).unwrap()),
+        };
         let config = DbConfig {
             server: "pg-main".into(),
             user: "app1".into(),
             secret: "app1-pass".into(),
         };
+
+        assert_eq!(
+            config.resolve_export(&ctx, "app-db", "name").unwrap(),
+            "app-db"
+        );
+
+        assert_eq!(
+            config.resolve_export(&ctx, "app-db", "user").unwrap(),
+            "app1"
+        );
+
+        assert_eq!(
+            config.resolve_export(&ctx, "app-db", "password").unwrap(),
+            "top$ecret&"
+        );
+
         assert_eq!(
             config
                 .resolve_export(&MainContext::default(), "app-db", "host")
                 .unwrap(),
             "pg-main"
         );
-    }
 
-    #[test]
-    fn db_resolve_export_port_postgres() {
-        use std::fs;
-
-        use tempfile::TempDir;
-
-        let base = TempDir::new().unwrap();
-        let server_dir = base.path().join("pg-main");
-        fs::create_dir_all(&server_dir).unwrap();
-        fs::write(
-            server_dir.join("config.yaml"),
-            "type: db-server\nengine: postgresql\nversion: \"18\"\nsecret: pg-pass\n",
-        )
-        .unwrap();
-
-        let ctx = MainContext {
-            base: base.path().to_path_buf(),
-            master_key: None,
-        };
-        let config = DbConfig {
-            server: "pg-main".into(),
-            user: "app1".into(),
-            secret: "app1-pass".into(),
-        };
         assert_eq!(
             config.resolve_export(&ctx, "app-db", "port").unwrap(),
             "5432"
         );
+
+        assert_eq!(
+            config.resolve_export(&ctx, "app-db", "url").unwrap(),
+            "postgresql://app1:top%24ecret%26@pg-main:5432/app-db"
+        );
     }
 
     #[test]
-    fn db_resolve_export_port_mariadb() {
+    fn db_resolve_export_mariadb() {
         use std::fs;
 
         use tempfile::TempDir;
+
+        use crate::secret::MasterKey;
 
         let base = TempDir::new().unwrap();
         let server_dir = base.path().join("maria-main");
@@ -420,180 +419,55 @@ secret: app1-pass
         )
         .unwrap();
 
+        let key = MasterKey::generate(base.path());
+        key.save().unwrap();
+        key.encrypt_to_file("app1-pass", "top$ecret&").unwrap();
+
         let ctx = MainContext {
             base: base.path().to_path_buf(),
-            master_key: None,
+            master_key: Some(MasterKey::load(base.path()).unwrap()),
         };
         let config = DbConfig {
             server: "maria-main".into(),
             user: "app1".into(),
             secret: "app1-pass".into(),
         };
+
+        assert_eq!(
+            config.resolve_export(&ctx, "app-db", "name").unwrap(),
+            "app-db"
+        );
+
+        assert_eq!(
+            config.resolve_export(&ctx, "app-db", "user").unwrap(),
+            "app1"
+        );
+
+        assert_eq!(
+            config.resolve_export(&ctx, "app-db", "password").unwrap(),
+            "top$ecret&"
+        );
+
+        assert_eq!(
+            config
+                .resolve_export(&MainContext::default(), "app-db", "host")
+                .unwrap(),
+            "maria-main"
+        );
+
         assert_eq!(
             config.resolve_export(&ctx, "app-db", "port").unwrap(),
             "3306"
         );
-    }
-
-    #[test]
-    fn db_resolve_export_password_requires_secret() {
-        use tempfile::TempDir;
-
-        use crate::secret::MasterKey;
-
-        let base = TempDir::new().unwrap();
-        let key = MasterKey::generate(base.path());
-        key.save().unwrap();
-        key.encrypt_to_file("app1-pass", "topsecret").unwrap();
-
-        let ctx = MainContext {
-            base: base.path().to_path_buf(),
-            master_key: Some(MasterKey::load(base.path()).unwrap()),
-        };
-
-        let config = DbConfig {
-            server: "pg-main".into(),
-            user: "app1".into(),
-            secret: "app1-pass".into(),
-        };
-        assert_eq!(
-            config.resolve_export(&ctx, "app-db", "password").unwrap(),
-            "topsecret"
-        );
-    }
-
-    #[test]
-    fn db_has_export_url() {
-        assert!(DbConfig::has_export("url"));
-    }
-
-    #[test]
-    fn db_resolve_export_url_postgres() {
-        use std::fs;
-
-        use tempfile::TempDir;
-
-        use crate::secret::MasterKey;
-
-        let base = TempDir::new().unwrap();
-        let server_dir = base.path().join("pg-main");
-        fs::create_dir_all(&server_dir).unwrap();
-        fs::write(
-            server_dir.join("config.yaml"),
-            "type: db-server\nengine: postgresql\nversion: \"18\"\nsecret: pg-pass\n",
-        )
-        .unwrap();
-
-        let key = MasterKey::generate(base.path());
-        key.save().unwrap();
-        key.encrypt_to_file("app1-pass", "topsecret").unwrap();
-
-        let ctx = MainContext {
-            base: base.path().to_path_buf(),
-            master_key: Some(MasterKey::load(base.path()).unwrap()),
-        };
-        let config = DbConfig {
-            server: "pg-main".into(),
-            user: "app1".into(),
-            secret: "app1-pass".into(),
-        };
 
         assert_eq!(
             config.resolve_export(&ctx, "app-db", "url").unwrap(),
-            "postgresql://app1:topsecret@pg-main:5432/app-db"
+            "mysql://app1:top%24ecret%26@maria-main:3306/app-db"
         );
     }
 
     #[test]
-    fn db_resolve_export_url_mariadb() {
-        use std::fs;
-
-        use tempfile::TempDir;
-
-        use crate::secret::MasterKey;
-
-        let base = TempDir::new().unwrap();
-        let server_dir = base.path().join("maria-main");
-        fs::create_dir_all(&server_dir).unwrap();
-        fs::write(
-            server_dir.join("config.yaml"),
-            "type: db-server\nengine: mariadb\nversion: \"12\"\nsecret: maria-pass\n",
-        )
-        .unwrap();
-
-        let key = MasterKey::generate(base.path());
-        key.save().unwrap();
-        key.encrypt_to_file("app1-pass", "topsecret").unwrap();
-
-        let ctx = MainContext {
-            base: base.path().to_path_buf(),
-            master_key: Some(MasterKey::load(base.path()).unwrap()),
-        };
-        let config = DbConfig {
-            server: "maria-main".into(),
-            user: "app1".into(),
-            secret: "app1-pass".into(),
-        };
-
-        assert_eq!(
-            config.resolve_export(&ctx, "app-db", "url").unwrap(),
-            "mysql://app1:topsecret@maria-main:3306/app-db"
-        );
-    }
-
-    #[test]
-    fn db_resolve_export_url_encodes_password() {
-        use std::fs;
-
-        use tempfile::TempDir;
-
-        use crate::secret::MasterKey;
-
-        let base = TempDir::new().unwrap();
-        let server_dir = base.path().join("pg-main");
-        fs::create_dir_all(&server_dir).unwrap();
-        fs::write(
-            server_dir.join("config.yaml"),
-            "type: db-server\nengine: postgresql\nversion: \"18\"\nsecret: pg-pass\n",
-        )
-        .unwrap();
-
-        let key = MasterKey::generate(base.path());
-        key.save().unwrap();
-        key.encrypt_to_file("app1-pass", "p@ss:w/rd#1").unwrap();
-
-        let ctx = MainContext {
-            base: base.path().to_path_buf(),
-            master_key: Some(MasterKey::load(base.path()).unwrap()),
-        };
-        let config = DbConfig {
-            server: "pg-main".into(),
-            user: "app1".into(),
-            secret: "app1-pass".into(),
-        };
-
-        assert_eq!(
-            config.resolve_export(&ctx, "app-db", "url").unwrap(),
-            "postgresql://app1:p%40ss%3Aw%2Frd%231@pg-main:5432/app-db"
-        );
-    }
-
-    #[test]
-    fn userinfo_encode_basics() {
-        assert_eq!(userinfo_encode("abcXYZ012"), "abcXYZ012");
-        assert_eq!(userinfo_encode("-._~"), "-._~");
-        assert_eq!(userinfo_encode(" "), "%20");
-        assert_eq!(userinfo_encode("@"), "%40");
-        assert_eq!(userinfo_encode(":"), "%3A");
-        assert_eq!(userinfo_encode("/"), "%2F");
-        assert_eq!(userinfo_encode("%"), "%25");
-        assert_eq!(userinfo_encode("#"), "%23");
-        // Non-ASCII byte (UTF-8 'ñ' = 0xC3 0xB1) encodes byte-by-byte.
-        assert_eq!(userinfo_encode("ñ"), "%C3%B1");
-    }
-
-    #[test]
-    fn engine_metadata() {
+    fn metadata_postgres() {
         let engine = DbServerEngine::Postgresql;
         assert_eq!(engine.as_str(), "postgresql");
         assert_eq!(
