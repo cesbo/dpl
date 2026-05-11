@@ -8,7 +8,10 @@ use crate::{
     config::ValidateConfig,
     deploy::{
         env::EnvError,
-        unit::UnitConfig,
+        unit::{
+            UnitConfig,
+            UnitConfigError,
+        },
     },
     validate::{
         resource_name,
@@ -70,7 +73,7 @@ impl DbConfig {
     }
 
     pub fn has_export(key: &str) -> bool {
-        matches!(key, "user" | "name" | "password")
+        matches!(key, "user" | "name" | "password" | "host" | "port")
     }
 
     pub fn resolve_export(
@@ -83,6 +86,28 @@ impl DbConfig {
             "user" => Ok(self.user.clone()),
             "name" => Ok(name.to_owned()),
             "password" => Ok(ctx.resolve_secret(&self.secret)?),
+            "host" => Ok(self.server.clone()),
+            "port" => {
+                let server = UnitConfig::load(ctx, &self.server).map_err(|err| match err {
+                    UnitConfigError::NotFound | UnitConfigError::InvalidName => {
+                        EnvError::UnitNotFound {
+                            name: self.server.clone(),
+                        }
+                    }
+                    UnitConfigError::Config(source) => EnvError::UnitConfig {
+                        name: self.server.clone(),
+                        source,
+                    },
+                })?;
+                let UnitConfig::DbServer(server) = server else {
+                    return Err(EnvError::UnknownExport {
+                        unit: name.to_owned(),
+                        kind: "db",
+                        key: key.to_owned(),
+                    });
+                };
+                Ok(server.engine.default_port().to_string())
+            }
             _ => Err(EnvError::UnknownExport {
                 unit: name.to_owned(),
                 kind: "db",
@@ -132,6 +157,13 @@ impl DbServerEngine {
         match self {
             DbServerEngine::Postgresql => "18-alpine",
             DbServerEngine::Mariadb => "12",
+        }
+    }
+
+    pub fn default_port(&self) -> u16 {
+        match self {
+            DbServerEngine::Postgresql => 5432,
+            DbServerEngine::Mariadb => 3306,
         }
     }
 
@@ -268,8 +300,9 @@ secret: app1-pass
         assert!(DbConfig::has_export("user"));
         assert!(DbConfig::has_export("name"));
         assert!(DbConfig::has_export("password"));
-        assert!(!DbConfig::has_export("host"));
-        assert!(!DbConfig::has_export("port"));
+        assert!(DbConfig::has_export("host"));
+        assert!(DbConfig::has_export("port"));
+        assert!(!DbConfig::has_export("unknown"));
         assert!(!DbConfig::has_export(""));
     }
 
@@ -294,13 +327,80 @@ secret: app1-pass
             secret: "app1-pass".into(),
         };
         let err = config
-            .resolve_export(&MainContext::default(), "app-db", "host")
+            .resolve_export(&MainContext::default(), "app-db", "unknown")
             .unwrap_err();
         assert!(matches!(
             err,
             EnvError::UnknownExport { ref unit, kind: "db", ref key }
-                if unit == "app-db" && key == "host"
+                if unit == "app-db" && key == "unknown"
         ));
+    }
+
+    #[test]
+    fn db_resolve_export_host() {
+        let config = DbConfig {
+            server: "pg-main".into(),
+            user: "app1".into(),
+            secret: "app1-pass".into(),
+        };
+        assert_eq!(
+            config.resolve_export(&MainContext::default(), "app-db", "host").unwrap(),
+            "pg-main"
+        );
+    }
+
+    #[test]
+    fn db_resolve_export_port_postgres() {
+        use std::fs;
+
+        use tempfile::TempDir;
+
+        let base = TempDir::new().unwrap();
+        let server_dir = base.path().join("pg-main");
+        fs::create_dir_all(&server_dir).unwrap();
+        fs::write(
+            server_dir.join("config.yaml"),
+            "type: db-server\nengine: postgresql\nversion: \"18\"\nsecret: pg-pass\n",
+        )
+        .unwrap();
+
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: None,
+        };
+        let config = DbConfig {
+            server: "pg-main".into(),
+            user: "app1".into(),
+            secret: "app1-pass".into(),
+        };
+        assert_eq!(config.resolve_export(&ctx, "app-db", "port").unwrap(), "5432");
+    }
+
+    #[test]
+    fn db_resolve_export_port_mariadb() {
+        use std::fs;
+
+        use tempfile::TempDir;
+
+        let base = TempDir::new().unwrap();
+        let server_dir = base.path().join("maria-main");
+        fs::create_dir_all(&server_dir).unwrap();
+        fs::write(
+            server_dir.join("config.yaml"),
+            "type: db-server\nengine: mariadb\nversion: \"12\"\nsecret: maria-pass\n",
+        )
+        .unwrap();
+
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: None,
+        };
+        let config = DbConfig {
+            server: "maria-main".into(),
+            user: "app1".into(),
+            secret: "app1-pass".into(),
+        };
+        assert_eq!(config.resolve_export(&ctx, "app-db", "port").unwrap(), "3306");
     }
 
     #[test]
@@ -341,6 +441,7 @@ secret: app1-pass
         assert_eq!(engine.data_path(), "/var/lib/postgresql");
         assert_eq!(engine.password_env(), "POSTGRES_PASSWORD");
         assert_eq!(engine.default_version(), "18-alpine");
+        assert_eq!(engine.default_port(), 5432);
 
         let engine = DbServerEngine::Mariadb;
         assert_eq!(engine.as_str(), "mariadb");
@@ -348,5 +449,6 @@ secret: app1-pass
         assert_eq!(engine.data_path(), "/var/lib/mysql");
         assert_eq!(engine.password_env(), "MARIADB_ROOT_PASSWORD");
         assert_eq!(engine.default_version(), "12");
+        assert_eq!(engine.default_port(), 3306);
     }
 }
