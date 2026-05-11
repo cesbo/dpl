@@ -11,6 +11,7 @@ use db::{
 };
 use domain::DomainConfig;
 use serde::Deserialize;
+use thiserror::Error;
 
 use crate::{
     MainContext,
@@ -24,6 +25,18 @@ use crate::{
         env::EnvError,
     },
 };
+
+#[derive(Debug, Error)]
+pub enum UnitConfigError {
+    #[error("invalid unit name")]
+    InvalidName,
+
+    #[error("unit not found")]
+    NotFound,
+
+    #[error(transparent)]
+    Config(#[from] ConfigError),
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
@@ -46,17 +59,17 @@ impl ValidateConfig for UnitConfig {
 }
 
 impl UnitConfig {
-    pub fn load(ctx: &MainContext, name: &str) -> Result<Self, DeployError> {
+    pub fn load(ctx: &MainContext, name: &str) -> Result<Self, UnitConfigError> {
         if !crate::validate::resource_name(name) {
-            return Err(DeployError::InvalidUnitName);
+            return Err(UnitConfigError::InvalidName);
         }
 
         let path = ctx.base().join(name).join("config.yaml");
         load_config(&path).map_err(|err| {
             if err.is_not_found() {
-                DeployError::UnitNotFound
+                UnitConfigError::NotFound
             } else {
-                DeployError::UnitConfig(err)
+                UnitConfigError::Config(err)
             }
         })
     }
@@ -64,9 +77,9 @@ impl UnitConfig {
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), DeployError> {
         match self {
             UnitConfig::App(config) => {
-                config
-                    .validate_references(ctx)
-                    .map_err(|info| ConfigError::Invalid(format!("app references: {info}")))?;
+                config.validate_references(ctx).map_err(|info| {
+                    UnitConfigError::Config(ConfigError::Invalid(format!("app references: {info}")))
+                })?;
             }
             UnitConfig::Db(_) => {}
             UnitConfig::DbServer(_) => {}
@@ -111,16 +124,12 @@ impl UnitConfig {
 
 fn load_for_export(ctx: &MainContext, unit_name: &str) -> Result<UnitConfig, EnvError> {
     UnitConfig::load(ctx, unit_name).map_err(|err| match err {
-        DeployError::UnitNotFound | DeployError::InvalidUnitName => EnvError::UnitNotFound {
+        UnitConfigError::NotFound | UnitConfigError::InvalidName => EnvError::UnitNotFound {
             name: unit_name.to_owned(),
         },
-        DeployError::UnitConfig(source) => EnvError::UnitConfig {
+        UnitConfigError::Config(source) => EnvError::UnitConfig {
             name: unit_name.to_owned(),
             source,
-        },
-        other => EnvError::UnitConfig {
-            name: unit_name.to_owned(),
-            source: ConfigError::Invalid(other.to_string()),
         },
     })
 }

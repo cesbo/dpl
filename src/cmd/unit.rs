@@ -86,7 +86,9 @@ fn deploy(ctx: &MainContext, name: &str, path: Option<&Path>) -> Result<(), Box<
 }
 
 fn state(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {
-    let state = deploy::unit_state(ctx, name)?;
+    let _unit = UnitConfig::load(ctx, name)?;
+    let unit_dir = ctx.base().join(name);
+    let state = DeployState::load(&unit_dir)?;
     let build = &state.latest_build;
     let status = format!("{:?}", build.status).to_lowercase();
 
@@ -98,5 +100,6 @@ fn state(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {
     if let Some(err) = &build.error {
         println!("error:   {err}");
     }
+
     Ok(())
 }

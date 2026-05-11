@@ -5,25 +5,17 @@ use thiserror::Error;
 use super::{
     artifacts::ArtifactError,
     state::DeployStateError,
+    unit::UnitConfigError,
 };
-use crate::{
-    archive::ArchiveError,
-    config::ConfigError,
-};
+use crate::archive::ArchiveError;
 
 #[derive(Debug, Error)]
 pub enum DeployError {
     #[error(transparent)]
-    UnitConfig(#[from] ConfigError),
-
-    #[error("unit not found")]
-    UnitNotFound,
+    Unit(#[from] UnitConfigError),
 
     #[error(transparent)]
     Status(#[from] DeployStateError),
-
-    #[error("invalid unit name")]
-    InvalidUnitName,
 
     #[error("unit busy")]
     UnitBusy,

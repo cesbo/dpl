@@ -7,10 +7,7 @@ mod guard;
 mod state;
 mod unit;
 
-use std::{
-    fs,
-    io::Read,
-};
+use std::io::Read;
 
 use env::{
     EnvError,
@@ -57,16 +54,4 @@ pub fn deploy_unit<R: Read>(
             Err(DeployError::UnitNotAllowed)
         }
     }
-}
-
-pub fn unit_state(ctx: &MainContext, name: &str) -> Result<DeployState, DeployError> {
-    let unit_dir = ctx.base().join(name);
-
-    let config_path = unit_dir.join("config.yaml");
-    if fs::metadata(&config_path).is_err() {
-        return Err(DeployError::UnitNotFound);
-    }
-
-    let state = DeployState::load(&unit_dir)?;
-    Ok(state)
 }
