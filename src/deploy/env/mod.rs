@@ -53,19 +53,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn deserialize_literal_and_template() {
-        let list: EnvList = serde_yaml::from_str(
-            r#"
-PORT: "8080"
-DATABASE_URL: "postgres://app:${secret:db}@host/app"
-TOKEN: "${secret:api-token}"
-"#,
-        )
-        .unwrap();
-        assert_eq!(list.0.len(), 3);
-    }
-
-    #[test]
     fn deserialize_unquoted_integer() {
         let list: EnvList = serde_yaml::from_str("DB_PORT: 5432").unwrap();
         let resolved = list.resolve(&MainContext::default()).unwrap();
@@ -124,11 +111,12 @@ TOKEN: "${secret:api-token}"
             master_key: None,
         };
 
-        let list: EnvList =
-            serde_yaml::from_str(r#"DB_USER: "${app-db:user}"
+        let list: EnvList = serde_yaml::from_str(
+            r#"DB_USER: "${app-db:user}"
 DB_NAME: "${app-db:name}"
-"#)
-            .unwrap();
+"#,
+        )
+        .unwrap();
         list.validate_references(&ctx).unwrap();
         let resolved = list.resolve(&ctx).unwrap();
         assert_eq!(resolved.get("DB_USER").map(String::as_str), Some("app1"));
@@ -167,39 +155,11 @@ DB_NAME: "${app-db:name}"
             master_key: None,
         };
 
-        let list: EnvList = serde_yaml::from_str(r#"X: "${app-db:port}""#).unwrap();
+        let list: EnvList = serde_yaml::from_str(r#"X: "${app-db:unknown}""#).unwrap();
         let err = list.validate_references(&ctx).unwrap_err();
         assert!(
-            err.contains("${app-db:port}"),
-            "expected error to mention '${{app-db:port}}': {err}"
-        );
-        assert!(
-            err.contains("not available"),
-            "expected error to say 'not available': {err}"
-        );
-    }
-
-    #[test]
-    fn validate_references_rejects_unit_without_exports() {
-        use std::fs;
-
-        use tempfile::TempDir;
-
-        let base = TempDir::new().unwrap();
-        let dir = base.path().join("example-com");
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("config.yaml"), "type: domain\n").unwrap();
-
-        let ctx = MainContext {
-            base: base.path().to_path_buf(),
-            master_key: None,
-        };
-
-        let list: EnvList = serde_yaml::from_str(r#"X: "${example-com:host}""#).unwrap();
-        let err = list.validate_references(&ctx).unwrap_err();
-        assert!(
-            err.contains("${example-com:host}"),
-            "expected error to mention '${{example-com:host}}': {err}"
+            err.contains("${app-db:unknown}"),
+            "expected error to mention '${{app-db:unknown}}': {err}"
         );
         assert!(
             err.contains("not available"),

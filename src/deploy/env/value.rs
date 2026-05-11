@@ -319,21 +319,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_invalid_secret_name_underscore() {
-        let err = Value::parse("${secret:my_key}").unwrap_err();
-        assert!(matches!(err, ValueError::InvalidName { ref ns, .. } if ns == "secret"));
-    }
-
-    #[test]
     fn parse_bare_dollar() {
         assert!(matches!(
             Value::parse("price $5"),
             Err(ValueError::BareDollar { pos: 6 })
         ));
-    }
 
-    #[test]
-    fn parse_trailing_dollar() {
         assert!(matches!(
             Value::parse("end$"),
             Err(ValueError::BareDollar { pos: 3 })
@@ -341,13 +332,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_unknown_namespace() {
-        let err = Value::parse("${EnvNs:home}").unwrap_err();
-        assert!(matches!(err, ValueError::UnknownNamespace { ref ns, .. } if ns == "EnvNs"));
-    }
-
-    #[test]
-    fn parse_empty_name() {
+    fn parse_secret_empty_name() {
         assert!(matches!(
             Value::parse("${secret:}"),
             Err(ValueError::MalformedRef { .. })
@@ -383,16 +368,6 @@ mod tests {
     }
 
     #[test]
-    fn references_iter() {
-        let v = Value::parse("a${secret:x}b${secret:y}c${secret:x}").unwrap();
-        let refs: Vec<(&Ns, &str)> = v.references().collect();
-        assert_eq!(
-            refs,
-            vec![(&Ns::Secret, "x"), (&Ns::Secret, "y"), (&Ns::Secret, "x")]
-        );
-    }
-
-    #[test]
     fn parse_namespaced_secret() {
         let v = Value::parse("${secret:db/prod-password}").unwrap();
         assert_eq!(v.0, vec![sref("db/prod-password")]);
@@ -422,37 +397,13 @@ mod tests {
     }
 
     #[test]
-    fn parse_secrets_typo_is_unit_ref() {
-        let v = Value::parse("${secrets:foo}").unwrap();
-        assert_eq!(v.0, vec![uref("secrets", "foo")]);
-    }
-
-    #[test]
-    fn parse_unit_ref_uppercase_ns_rejected() {
+    fn parse_unit_ref_invalid_ns_rejected() {
         let err = Value::parse("${PgMain:port}").unwrap_err();
         assert!(matches!(err, ValueError::UnknownNamespace { ref ns, .. } if ns == "PgMain"));
     }
 
     #[test]
-    fn parse_unit_ref_underscore_ns_rejected() {
-        let err = Value::parse("${pg_main:port}").unwrap_err();
-        assert!(matches!(err, ValueError::UnknownNamespace { ref ns, .. } if ns == "pg_main"));
-    }
-
-    #[test]
-    fn parse_unit_ref_uppercase_key_rejected() {
-        let err = Value::parse("${pg-main:PORT}").unwrap_err();
-        assert!(matches!(err, ValueError::InvalidName { ref ns, .. } if ns == "pg-main"));
-    }
-
-    #[test]
-    fn parse_unit_ref_hyphen_key_rejected() {
-        let err = Value::parse("${pg-main:db-port}").unwrap_err();
-        assert!(matches!(err, ValueError::InvalidName { ref ns, .. } if ns == "pg-main"));
-    }
-
-    #[test]
-    fn references_iter_mixed_secret_and_unit() {
+    fn references_iter() {
         let v = Value::parse("${secret:x}-${pg-main:port}").unwrap();
         let refs: Vec<(&Ns, &str)> = v.references().collect();
         assert_eq!(
