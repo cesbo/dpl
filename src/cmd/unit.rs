@@ -14,6 +14,7 @@ use crate::{
     MainContext,
     deploy::{
         self,
+        DeployState,
         UnitConfig,
     },
     log::fmt_elapsed,

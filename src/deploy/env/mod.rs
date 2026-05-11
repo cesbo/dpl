@@ -28,7 +28,7 @@ impl EnvList {
             .collect()
     }
 
-    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), EnvError> {
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
         for value in self.0.values() {
             value.validate_references(ctx)?;
         }
@@ -98,7 +98,10 @@ TOKEN: "${secret:api-token}"
         let err = list
             .validate_references(&MainContext::default())
             .unwrap_err();
-        assert!(matches!(err, EnvError::MissingSecret { ref name } if name == "nope"));
+        assert!(
+            err.contains("${secret:nope}"),
+            "expected error to mention '${{secret:nope}}': {err}"
+        );
     }
 
     #[test]
@@ -138,7 +141,10 @@ DB_NAME: "${app-db:name}"
         let err = list
             .validate_references(&MainContext::default())
             .unwrap_err();
-        assert!(matches!(err, EnvError::UnitNotFound { ref name } if name == "nope"));
+        assert!(
+            err.contains("${nope:user}"),
+            "expected error to mention '${{nope:user}}': {err}"
+        );
     }
 
     #[test]
@@ -163,12 +169,14 @@ DB_NAME: "${app-db:name}"
 
         let list: EnvList = serde_yaml::from_str(r#"X: "${app-db:port}""#).unwrap();
         let err = list.validate_references(&ctx).unwrap_err();
-        let EnvError::UnknownExport { unit, kind, key } = err else {
-            panic!("unexpected error variant");
-        };
-        assert_eq!(unit, "app-db");
-        assert_eq!(kind, "db");
-        assert_eq!(key, "port");
+        assert!(
+            err.contains("${app-db:port}"),
+            "expected error to mention '${{app-db:port}}': {err}"
+        );
+        assert!(
+            err.contains("not available"),
+            "expected error to say 'not available': {err}"
+        );
     }
 
     #[test]
@@ -189,9 +197,13 @@ DB_NAME: "${app-db:name}"
 
         let list: EnvList = serde_yaml::from_str(r#"X: "${example-com:host}""#).unwrap();
         let err = list.validate_references(&ctx).unwrap_err();
-        assert!(matches!(
-            err,
-            EnvError::UnknownExport { kind, .. } if kind == "domain"
-        ));
+        assert!(
+            err.contains("${example-com:host}"),
+            "expected error to mention '${{example-com:host}}': {err}"
+        );
+        assert!(
+            err.contains("not available"),
+            "expected error to say 'not available': {err}"
+        );
     }
 }

@@ -20,10 +20,7 @@ use crate::{
         ValidateConfig,
         load_config,
     },
-    deploy::{
-        DeployError,
-        env::EnvError,
-    },
+    deploy::env::EnvError,
 };
 
 #[derive(Debug, Error)]
@@ -74,13 +71,9 @@ impl UnitConfig {
         })
     }
 
-    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), DeployError> {
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
         match self {
-            UnitConfig::App(config) => {
-                config.validate_references(ctx).map_err(|info| {
-                    UnitConfigError::Config(ConfigError::Invalid(format!("app references: {info}")))
-                })?;
-            }
+            UnitConfig::App(config) => config.validate_references(ctx)?,
             UnitConfig::Db(_) => {}
             UnitConfig::DbServer(_) => {}
             UnitConfig::Domain(_) => {}
@@ -138,16 +131,20 @@ pub(crate) fn validate_export(
     ctx: &MainContext,
     unit_name: &str,
     key: &str,
-) -> Result<(), EnvError> {
-    let unit = load_for_export(ctx, unit_name)?;
+) -> Result<(), String> {
+    let unit = match UnitConfig::load(ctx, unit_name) {
+        Ok(unit) => unit,
+        Err(UnitConfigError::NotFound | UnitConfigError::InvalidName) => {
+            return Err("unit not found".to_owned());
+        }
+        Err(UnitConfigError::Config(err)) => {
+            return Err(format!("load unit config: {err}"));
+        }
+    };
     if unit.has_export(key) {
         Ok(())
     } else {
-        Err(EnvError::UnknownExport {
-            unit: unit_name.to_owned(),
-            kind: unit.kind(),
-            key: key.to_owned(),
-        })
+        Err("not available".to_owned())
     }
 }
 
@@ -296,17 +293,16 @@ databases:
 
         // validate_references surfaces the missing unit.
         let err = unit.validate_references(&ctx).unwrap_err();
-        let msg = err.to_string();
         assert!(
-            msg.contains("nope") || format!("{err:?}").contains("nope"),
-            "expected error to mention 'nope': {msg}"
+            err.contains("${nope:user}"),
+            "expected error to mention '${{nope:user}}': {err}"
         );
     }
 
     #[test]
     fn validate_export_unknown_unit() {
         let err = validate_export(&MainContext::default(), "nope", "user").unwrap_err();
-        assert!(matches!(err, EnvError::UnitNotFound { ref name } if name == "nope"));
+        assert_eq!(err, "unit not found");
     }
 
     #[test]
@@ -325,10 +321,7 @@ databases:
             master_key: None,
         };
         let err = validate_export(&ctx, "example-com", "host").unwrap_err();
-        assert!(matches!(
-            err,
-            EnvError::UnknownExport { kind, .. } if kind == "domain"
-        ));
+        assert_eq!(err, "not available");
     }
 
     #[test]

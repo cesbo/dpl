@@ -14,6 +14,9 @@ pub enum DeployError {
     #[error(transparent)]
     Unit(#[from] UnitConfigError),
 
+    #[error("invalid references: {0}")]
+    References(String),
+
     #[error(transparent)]
     Status(#[from] DeployStateError),
 

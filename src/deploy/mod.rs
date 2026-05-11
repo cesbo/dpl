@@ -15,7 +15,7 @@ use env::{
 };
 pub use error::DeployError;
 pub use guard::acquire;
-use state::DeployState;
+pub use state::DeployState;
 use unit::app::AppUnit;
 pub use unit::{
     UnitConfig,
@@ -40,7 +40,8 @@ pub fn deploy_unit<R: Read>(
     archive: R,
 ) -> Result<(DeployState, DeployLog), DeployError> {
     let unit = UnitConfig::load(ctx, name)?;
-    unit.validate_references(ctx)?;
+    unit.validate_references(ctx)
+        .map_err(DeployError::References)?;
 
     let unit_dir = ctx.base().join(name);
     let (_guard, state) = acquire(&unit_dir)?;

@@ -147,19 +147,22 @@ impl Value {
         Ok(out)
     }
 
-    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), EnvError> {
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
         for seg in &self.0 {
             let Segment::Ref { ns, name } = seg else {
                 continue;
             };
+            let token = format!("${{{}:{}}}", ns.as_str(), name);
             match ns {
                 Ns::Secret => {
                     if !ctx.secret_exists(name) {
-                        return Err(EnvError::MissingSecret { name: name.clone() });
+                        return Err(format!("{token}: secret not found"));
                     }
                 }
                 Ns::Unit(unit_name) => {
-                    unit::validate_export(ctx, unit_name, name)?;
+                    if let Err(err) = unit::validate_export(ctx, unit_name, name) {
+                        return Err(format!("{token}: {err}"));
+                    }
                 }
             }
         }
