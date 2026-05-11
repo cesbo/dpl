@@ -6,7 +6,10 @@ use serde::{
 use crate::{
     MainContext,
     config::ValidateConfig,
-    deploy::env::EnvError,
+    deploy::{
+        env::EnvError,
+        unit::UnitConfig,
+    },
     validate::{
         resource_name,
         secret_name,
@@ -52,6 +55,17 @@ impl DbConfig {
         if !ctx.secret_exists(&self.secret) {
             return Err(format!("secret '{}' not found", self.secret));
         }
+
+        match UnitConfig::load(ctx, &self.server) {
+            Ok(UnitConfig::DbServer(_)) => {}
+            Ok(_) => {
+                return Err(format!("server '{}' is not a db-server", self.server));
+            }
+            Err(err) => {
+                return Err(format!("load server '{}': {err}", self.server));
+            }
+        }
+
         Ok(())
     }
 
