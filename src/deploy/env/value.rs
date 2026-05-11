@@ -139,7 +139,14 @@ impl Value {
                 Segment::Ref { ns, name } => match ns {
                     Ns::Secret => out.push_str(&ctx.resolve_secret(name)?),
                     Ns::Unit(unit_name) => {
-                        out.push_str(&unit::resolve_export(ctx, unit_name, name)?)
+                        let value =
+                            unit::resolve_export(ctx, unit_name, name).map_err(|reason| {
+                                EnvError::ResolveRef {
+                                    token: format!("${{{unit_name}:{name}}}"),
+                                    reason,
+                                }
+                            })?;
+                        out.push_str(&value);
                     }
                 },
             }

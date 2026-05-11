@@ -21,6 +21,7 @@ serde_yaml = "0.9.34"
 tar = "0.4"
 tempfile = "3"
 thiserror = "2"
+percent-encoding = "2.3.2"
 
 [profile.release]
 codegen-units = 1

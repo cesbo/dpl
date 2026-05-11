@@ -20,7 +20,6 @@ use crate::{
         ValidateConfig,
         load_config,
     },
-    deploy::env::EnvError,
 };
 
 #[derive(Debug, Error)]
@@ -103,35 +102,15 @@ impl UnitConfig {
         ctx: &MainContext,
         name: &str,
         key: &str,
-    ) -> Result<String, EnvError> {
+    ) -> Result<String, String> {
         match self {
             UnitConfig::Db(config) => config.resolve_export(ctx, name, key),
-            _ => Err(EnvError::UnknownExport {
-                unit: name.to_owned(),
-                kind: self.kind(),
-                key: key.to_owned(),
-            }),
+            _ => Err(format!("unit type '{}' has no exports", self.kind())),
         }
     }
 }
 
-fn load_for_export(ctx: &MainContext, unit_name: &str) -> Result<UnitConfig, EnvError> {
-    UnitConfig::load(ctx, unit_name).map_err(|err| match err {
-        UnitConfigError::NotFound | UnitConfigError::InvalidName => EnvError::UnitNotFound {
-            name: unit_name.to_owned(),
-        },
-        UnitConfigError::Config(source) => EnvError::UnitConfig {
-            name: unit_name.to_owned(),
-            source,
-        },
-    })
-}
-
-pub(crate) fn validate_export(
-    ctx: &MainContext,
-    unit_name: &str,
-    key: &str,
-) -> Result<(), String> {
+pub(crate) fn validate_export(ctx: &MainContext, unit_name: &str, key: &str) -> Result<(), String> {
     let unit = match UnitConfig::load(ctx, unit_name) {
         Ok(unit) => unit,
         Err(UnitConfigError::NotFound | UnitConfigError::InvalidName) => {
@@ -152,9 +131,10 @@ pub(crate) fn resolve_export(
     ctx: &MainContext,
     unit_name: &str,
     key: &str,
-) -> Result<String, EnvError> {
-    let unit = load_for_export(ctx, unit_name)?;
-    unit.resolve_export(ctx, unit_name, key)
+) -> Result<String, String> {
+    UnitConfig::load(ctx, unit_name)
+        .map_err(|err| format!("load unit '{unit_name}': {err}"))?
+        .resolve_export(ctx, unit_name, key)
 }
 
 /// Return all units satisfies `predicate`, sorted by name.
