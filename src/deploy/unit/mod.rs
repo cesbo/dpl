@@ -100,26 +100,20 @@ impl UnitConfig {
     pub fn resolve_export(
         &self,
         ctx: &MainContext,
-        name: &str,
+        unit_name: &str,
         key: &str,
     ) -> Result<String, String> {
         match self {
-            UnitConfig::Db(config) => config.resolve_export(ctx, name, key),
-            _ => Err(format!("unit type '{}' has no exports", self.kind())),
+            UnitConfig::Db(config) => config.resolve_export(ctx, unit_name, key),
+            _ => Err(format!("unit '{unit_name}' has no exports")),
         }
     }
 }
 
-pub(crate) fn validate_export(ctx: &MainContext, unit_name: &str, key: &str) -> Result<(), String> {
-    let unit = match UnitConfig::load(ctx, unit_name) {
-        Ok(unit) => unit,
-        Err(UnitConfigError::NotFound | UnitConfigError::InvalidName) => {
-            return Err("unit not found".to_owned());
-        }
-        Err(UnitConfigError::Config(err)) => {
-            return Err(format!("load unit config: {err}"));
-        }
-    };
+pub fn validate_export(ctx: &MainContext, unit_name: &str, key: &str) -> Result<(), String> {
+    let unit = UnitConfig::load(ctx, unit_name)
+        .map_err(|err| format!("load unit '{unit_name}': {err}"))?;
+
     if unit.has_export(key) {
         Ok(())
     } else {
@@ -127,11 +121,7 @@ pub(crate) fn validate_export(ctx: &MainContext, unit_name: &str, key: &str) -> 
     }
 }
 
-pub(crate) fn resolve_export(
-    ctx: &MainContext,
-    unit_name: &str,
-    key: &str,
-) -> Result<String, String> {
+pub fn resolve_export(ctx: &MainContext, unit_name: &str, key: &str) -> Result<String, String> {
     UnitConfig::load(ctx, unit_name)
         .map_err(|err| format!("load unit '{unit_name}': {err}"))?
         .resolve_export(ctx, unit_name, key)

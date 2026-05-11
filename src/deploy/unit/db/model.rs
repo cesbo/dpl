@@ -78,12 +78,12 @@ impl DbConfig {
     pub fn resolve_export(
         &self,
         ctx: &MainContext,
-        name: &str,
+        unit_name: &str,
         key: &str,
     ) -> Result<String, String> {
         match key {
             "user" => Ok(self.user.clone()),
-            "name" => Ok(name.to_owned()),
+            "name" => Ok(unit_name.to_owned()),
             "password" => ctx
                 .resolve_secret(&self.secret)
                 .map_err(|err| format!("decrypt secret '{}': {err}", self.secret)),
@@ -104,7 +104,7 @@ impl DbConfig {
                     password = userinfo_encode(&password),
                     host = self.server,
                     port = server.engine.default_port(),
-                    db = name,
+                    db = unit_name,
                 ))
             }
             _ => Err(format!("unknown export '{key}'")),
