@@ -48,6 +48,13 @@ impl ValidateConfig for DbConfig {
 }
 
 impl DbConfig {
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
+        if !ctx.secret_exists(&self.secret) {
+            return Err(format!("secret '{}' not found", self.secret));
+        }
+        Ok(())
+    }
+
     pub fn has_export(key: &str) -> bool {
         matches!(key, "user" | "name" | "password")
     }
@@ -134,6 +141,15 @@ impl DbServerEngine {
             DbServerEngine::Postgresql => "PGPASSWORD",
             DbServerEngine::Mariadb => "MYSQL_PWD",
         }
+    }
+}
+
+impl DbServerConfig {
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
+        if !ctx.secret_exists(&self.secret) {
+            return Err(format!("secret '{}' not found", self.secret));
+        }
+        Ok(())
     }
 }
 

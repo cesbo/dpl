@@ -74,8 +74,8 @@ impl UnitConfig {
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
         match self {
             UnitConfig::App(config) => config.validate_references(ctx)?,
-            UnitConfig::Db(_) => {}
-            UnitConfig::DbServer(_) => {}
+            UnitConfig::Db(config) => config.validate_references(ctx)?,
+            UnitConfig::DbServer(config) => config.validate_references(ctx)?,
             UnitConfig::Domain(_) => {}
         };
 
