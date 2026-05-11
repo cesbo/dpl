@@ -31,7 +31,6 @@ use crate::{
         DbServerConfig,
         DbServerEngine,
         DbServerUnit,
-        DbUnit,
         UnitConfig,
         acquire,
         list_units,
@@ -117,15 +116,13 @@ fn init(
     version: Option<String>,
     secret_name: Option<String>,
 ) -> Result<(), Box<dyn Error>> {
-    let name = match name {
+    let unit_name = match name {
         Some(value) => {
             validate_unit_name(ctx, &value)?;
             value
         }
         None => prompt_name(ctx)?,
     };
-
-    let unit_dir = ctx.base().join(&name);
 
     let engine = match engine {
         Some(value) => parse_engine(&value)?,
@@ -157,22 +154,24 @@ fn init(
         secret: secret_name,
     };
 
-    fs::create_dir_all(&unit_dir)?;
+    let unit_dir = scopeguard::guard(ctx.base().join(&unit_name), |unit_dir| {
+        let _ = fs::remove_dir_all(unit_dir);
+    });
 
-    if let Err(err) = write_unit_config(&unit_dir, "db-server", &config) {
-        let _ = fs::remove_dir_all(&unit_dir);
-        return Err(err);
-    }
+    write_unit_config(&unit_name, &unit_dir, "db-server", &config)?;
 
-    let unit = DbServerUnit::new(ctx, name.clone(), config.clone());
+    let unit = DbServerUnit::new(ctx, unit_name.clone(), config.clone());
     let (_guard, state) = acquire(&unit_dir)?;
     unit.init(state)?;
 
+    scopeguard::ScopeGuard::into_inner(unit_dir);
+
     println!(
-        "started db unit '{name}' ({} {})",
-        config.engine.as_str(),
-        config.version
+        "started db server '{unit_name}' ({engine} {version})",
+        engine = config.engine.as_str(),
+        version = &config.version
     );
+
     Ok(())
 }
 
@@ -183,7 +182,7 @@ fn create(
     user: Option<String>,
     secret_name: Option<String>,
 ) -> Result<(), Box<dyn Error>> {
-    let name = match name {
+    let db_name = match name {
         Some(value) => {
             validate_unit_name(ctx, &value)?;
             value
@@ -203,7 +202,7 @@ fn create(
             }
             value
         }
-        None => name.clone(),
+        None => db_name.clone(),
     };
 
     let secret_name = match secret_name {
@@ -220,24 +219,50 @@ fn create(
         secret: secret_name,
     };
 
-    let unit_dir = ctx.base().join(&name);
-    fs::create_dir_all(&unit_dir)?;
+    let root_password = ctx.resolve_secret(&server_config.secret).map_err(|err| {
+        format!(
+            "resolve db-server secret '{secret}': {err}",
+            secret = &server_config.secret
+        )
+    })?;
 
-    if let Err(err) = write_unit_config(&unit_dir, "db", &config) {
-        let _ = fs::remove_dir_all(&unit_dir);
-        return Err(err);
-    }
+    let password = ctx.resolve_secret(&config.secret).map_err(|err| {
+        format!(
+            "resolve db secret '{secret}': {err}",
+            secret = &config.secret
+        )
+    })?;
 
-    let unit = DbUnit::new(ctx, name.clone(), config.clone(), server_config);
-    if let Err(err) = unit.create() {
-        let _ = fs::remove_dir_all(&unit_dir);
-        return Err(err.into());
-    }
+    let unit_dir = scopeguard::guard(ctx.base().join(&db_name), |unit_dir| {
+        let _ = fs::remove_dir_all(unit_dir);
+    });
+
+    write_unit_config(&db_name, &unit_dir, "db", &config)?;
+
+    server_config
+        .engine
+        .create_database(
+            &config.server,
+            &root_password,
+            &db_name,
+            &config.user,
+            &password,
+        )
+        .map_err(|err| {
+            format!(
+                "create database '{db_name}' in '{server}': {err}",
+                server = &config.server
+            )
+        })?;
+
+    scopeguard::ScopeGuard::into_inner(unit_dir);
 
     println!(
-        "created database '{name}' in '{}' (user '{}')",
-        config.server, config.user
+        "created database '{db_name}' in '{server}' (user '{user}')",
+        server = &config.server,
+        user = &config.user,
     );
+
     Ok(())
 }
 
@@ -303,10 +328,11 @@ fn validate_unit_name(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error
 }
 
 fn write_unit_config<C: Serialize>(
+    unit_name: &str,
     unit_dir: &Path,
     kind: &'static str,
     config: &C,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), String> {
     #[derive(Serialize)]
     struct UnitFile<'a, C: Serialize> {
         #[serde(rename = "type")]
@@ -316,9 +342,15 @@ fn write_unit_config<C: Serialize>(
     }
 
     let payload = UnitFile { kind, config };
-    let yaml = serde_yaml::to_string(&payload)?;
+    let yaml = serde_yaml::to_string(&payload)
+        .map_err(|err| format!("serialize unit '{unit_name}' config: {err}"))?;
+
+    fs::create_dir_all(unit_dir)
+        .map_err(|err| format!("create unit '{unit_name}' directory: {err}"))?;
+
     let path = unit_dir.join("config.yaml");
-    fs::write(&path, yaml)?;
+    fs::write(&path, yaml).map_err(|err| format!("write unit '{unit_name}' config: {err}"))?;
+
     Ok(())
 }
 

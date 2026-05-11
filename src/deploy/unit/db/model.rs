@@ -108,7 +108,7 @@ impl DbConfig {
                     "{scheme}://{user}:{password}@{host}:{port}/{db}",
                     scheme = server.engine.url_scheme(),
                     user = self.user,
-                    password = utf8_percent_encode(&password, USERINFO).to_string(),
+                    password = utf8_percent_encode(&password, USERINFO),
                     host = self.server,
                     port = server.engine.default_port(),
                     db = unit_name,

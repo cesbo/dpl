@@ -24,7 +24,6 @@ pub use unit::{
         DbServerConfig,
         DbServerEngine,
         DbServerUnit,
-        DbUnit,
     },
     list_units,
 };
