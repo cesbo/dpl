@@ -5,7 +5,7 @@ mod env;
 mod error;
 mod guard;
 mod state;
-mod unit;
+pub mod unit;
 
 use std::io::Read;
 
@@ -23,7 +23,6 @@ pub use unit::{
         DbConfig,
         DbServerConfig,
         DbServerEngine,
-        DbServerUnit,
     },
     list_units,
 };

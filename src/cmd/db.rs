@@ -30,9 +30,7 @@ use crate::{
         DbConfig,
         DbServerConfig,
         DbServerEngine,
-        DbServerUnit,
         UnitConfig,
-        acquire,
         list_units,
     },
     secret,
@@ -154,15 +152,31 @@ fn init(
         secret: secret_name,
     };
 
+    let root_password = ctx.resolve_secret(&config.secret).map_err(|err| {
+        format!(
+            "resolve db-server secret '{secret}': {err}",
+            secret = &config.secret
+        )
+    })?;
+
     let unit_dir = scopeguard::guard(ctx.base().join(&unit_name), |unit_dir| {
         let _ = fs::remove_dir_all(unit_dir);
     });
 
     write_unit_config(&unit_name, &unit_dir, "db-server", &config)?;
 
-    let unit = DbServerUnit::new(ctx, unit_name.clone(), config.clone());
-    let (_guard, state) = acquire(&unit_dir)?;
-    unit.init(state)?;
+    let service_name = crate::deploy::unit::db::create_service_file(
+        Path::new(crate::systemd::SYSTEMD_DIR),
+        &unit_name,
+        config.engine,
+        &config.version,
+        &root_password,
+    )
+    .map_err(|err| format!("create service file for db-server '{unit_name}': {err}"))?;
+
+    crate::systemd::reload().map_err(|err| format!("reload systemd daemon: {err}"))?;
+    crate::systemd::enable_service(&service_name)
+        .map_err(|err| format!("start service for db-server '{unit_name}': {err}"))?;
 
     scopeguard::ScopeGuard::into_inner(unit_dir);
 

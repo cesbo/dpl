@@ -9,10 +9,9 @@ use minijinja::{
     context,
 };
 
-use super::model::DbServerConfig;
-use crate::{
-    MainContext,
-    deploy::artifacts::{
+use crate::deploy::{
+    DbServerEngine,
+    artifacts::{
         ArtifactError,
         render,
     },
@@ -39,40 +38,32 @@ pub fn service_file_name(name: &str) -> String {
     format!("dpl--{name}.service")
 }
 
-pub struct ArtifactsContext<'a> {
-    pub ctx: &'a MainContext,
-    pub name: &'a str,
-    pub config: &'a DbServerConfig,
-    pub version: u32,
-    /// Plaintext root password — inlined into the systemd `Environment=` line.
-    pub password: &'a str,
-}
+pub fn create_service_file(
+    dst: &Path,
+    name: &str,
+    engine: DbServerEngine,
+    version: &str,
+    password: &str,
+) -> Result<String, ArtifactError> {
+    let content = render(
+        &TEMPLATES,
+        DB_SERVICE_TEMPLATE,
+        context! {
+            name => name,
+            engine => engine.as_str(),
+            version => &version,
+            image => engine.image(&version),
+            data_path => engine.data_path(),
+            env_var => engine.password_env(),
+            password => escape_systemd_env_value(password),
+        },
+    )?;
 
-impl<'a> ArtifactsContext<'a> {
-    pub fn save(&self, deploy_dir: &Path) -> Result<(), ArtifactError> {
-        let artifacts_dir = deploy_dir.join("artifacts");
-        fs::create_dir_all(&artifacts_dir).map_err(ArtifactError::CreateDir)?;
+    let service_name = service_file_name(name);
+    let path = dst.join(&service_name);
+    fs::write(&path, content).map_err(ArtifactError::Write)?;
 
-        let engine = self.config.engine;
-        let path = artifacts_dir.join(service_file_name(self.name));
-        let content = render(
-            &TEMPLATES,
-            DB_SERVICE_TEMPLATE,
-            context! {
-                name => self.name,
-                engine => engine.as_str(),
-                version => &self.config.version,
-                image => engine.image(&self.config.version),
-                data_path => engine.data_path(),
-                env_var => engine.password_env(),
-                password => escape_systemd_env_value(self.password),
-            },
-        )?;
-
-        fs::write(&path, content).map_err(ArtifactError::Write)?;
-
-        Ok(())
-    }
+    Ok(service_name)
 }
 
 /// Escapes a value for use inside a quoted systemd `Environment="KEY=value"`
@@ -95,41 +86,22 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::deploy::unit::db::model::{
-        DbServerConfig,
-        DbServerEngine,
-    };
+    use crate::deploy::unit::db::model::DbServerEngine;
 
     #[test]
     fn render_db_service() {
-        let config = DbServerConfig {
-            engine: DbServerEngine::Postgresql,
-            version: "18".into(),
-            secret: "pg-pass".into(),
-        };
-
         let name = "pg-main";
         let temp_dir = tempdir().unwrap();
-        let deploy_dir = temp_dir.path().join(name);
-        fs::create_dir_all(&deploy_dir).unwrap();
+        let dst = temp_dir.path();
 
-        let ctx = MainContext::default();
-        let artifacts = ArtifactsContext {
-            ctx: &ctx,
-            name,
-            config: &config,
-            version: 1,
-            password: "p@ss",
-        };
+        create_service_file(dst, name, DbServerEngine::Postgresql, "18", r#"a\b"c"#).unwrap();
 
-        artifacts.save(&deploy_dir).unwrap();
-
-        let service_path = deploy_dir.join("artifacts").join("dpl--pg-main.service");
+        let service_path = dst.join("dpl--pg-main.service");
         assert!(service_path.exists());
 
         let body = fs::read_to_string(&service_path).unwrap();
         assert!(body.contains("--name pg-main"));
-        assert!(body.contains("Environment=\"POSTGRES_PASSWORD=p@ss\""));
+        assert!(body.contains(r#"Environment="POSTGRES_PASSWORD=a\\b\"c""#));
         assert!(body.contains("-e POSTGRES_PASSWORD"));
         assert!(!body.contains("--secret"));
         assert!(body.contains("-v pg-main-data:/var/lib/postgresql"));
@@ -137,34 +109,5 @@ mod tests {
         assert!(!body.contains("postgres:18-alpine"));
         assert!(body.contains("/var/log/podman/pg-main.log"));
         assert!(body.contains("Description=DPL Database for pg-main (postgresql 18)"));
-    }
-
-    #[test]
-    fn render_db_service_escapes_password() {
-        let config = DbServerConfig {
-            engine: DbServerEngine::Postgresql,
-            version: "18".into(),
-            secret: "pg-pass".into(),
-        };
-
-        let name = "pg-main";
-        let temp_dir = tempdir().unwrap();
-        let deploy_dir = temp_dir.path().join(name);
-        fs::create_dir_all(&deploy_dir).unwrap();
-
-        let ctx = MainContext::default();
-        let artifacts = ArtifactsContext {
-            ctx: &ctx,
-            name,
-            config: &config,
-            version: 1,
-            password: r#"a\b"c"#,
-        };
-
-        artifacts.save(&deploy_dir).unwrap();
-
-        let body = fs::read_to_string(deploy_dir.join("artifacts").join("dpl--pg-main.service"))
-            .unwrap();
-        assert!(body.contains(r#"Environment="POSTGRES_PASSWORD=a\\b\"c""#));
     }
 }
