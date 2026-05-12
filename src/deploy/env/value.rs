@@ -1,6 +1,8 @@
 use serde::{
     Deserialize,
     Deserializer,
+    Serialize,
+    Serializer,
 };
 use thiserror::Error;
 
@@ -16,9 +18,7 @@ pub enum ValueError {
     #[error("unterminated reference at position {pos}: missing '}}'")]
     UnterminatedRef { pos: usize },
 
-    #[error(
-        "bare '$' at position {pos}: use '$$' for a literal '$' or '${{ns:name}}' for a reference"
-    )]
+    #[error("bare '$' at position {pos}")]
     BareDollar { pos: usize },
 
     #[error("malformed reference at position {pos}: expected '${{ns:name}}'")]
@@ -72,6 +72,7 @@ impl Ns {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Segment {
     Literal(String),
+    Dollar,
     Ref { ns: Ns, name: String },
 }
 
@@ -96,7 +97,10 @@ impl Value {
             let next = bytes.get(i + 1).copied();
             match next {
                 Some(b'$') => {
-                    literal.push('$');
+                    if !literal.is_empty() {
+                        segments.push(Segment::Literal(std::mem::take(&mut literal)));
+                    }
+                    segments.push(Segment::Dollar);
                     i += 2;
                 }
                 Some(b'{') => {
@@ -124,10 +128,29 @@ impl Value {
         Ok(Self(segments))
     }
 
+    /// Render back to the wire string form.
+    pub fn as_template(&self) -> String {
+        let mut out = String::new();
+        for seg in &self.0 {
+            match seg {
+                Segment::Literal(s) => out.push_str(s),
+                Segment::Dollar => out.push_str("$$"),
+                Segment::Ref { ns, name } => {
+                    out.push_str("${");
+                    out.push_str(ns.as_str());
+                    out.push(':');
+                    out.push_str(name);
+                    out.push('}');
+                }
+            }
+        }
+        out
+    }
+
     pub fn references(&self) -> impl Iterator<Item = (&Ns, &str)> {
         self.0.iter().filter_map(|seg| match seg {
             Segment::Ref { ns, name } => Some((ns, name.as_str())),
-            Segment::Literal(_) => None,
+            Segment::Literal(_) | Segment::Dollar => None,
         })
     }
 
@@ -136,6 +159,7 @@ impl Value {
         for seg in &self.0 {
             match seg {
                 Segment::Literal(s) => out.push_str(s),
+                Segment::Dollar => out.push('$'),
                 Segment::Ref { ns, name } => match ns {
                     Ns::Secret => out.push_str(&ctx.resolve_secret(name)?),
                     Ns::Unit(unit_name) => {
@@ -203,6 +227,15 @@ fn parse_ref(body: &str, pos: usize) -> Result<Segment, ValueError> {
         ns,
         name: name.to_owned(),
     })
+}
+
+impl Serialize for Value {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.as_template())
+    }
 }
 
 impl<'de> Deserialize<'de> for Value {
@@ -308,13 +341,16 @@ mod tests {
     #[test]
     fn parse_escape() {
         let v = Value::parse("cost: $$5 / $$").unwrap();
-        assert_eq!(v.0, vec![lit("cost: $5 / $")]);
+        assert_eq!(
+            v.0,
+            vec![lit("cost: "), Segment::Dollar, lit("5 / "), Segment::Dollar]
+        );
     }
 
     #[test]
     fn parse_escape_then_ref() {
         let v = Value::parse("$$${secret:k}").unwrap();
-        assert_eq!(v.0, vec![lit("$"), sref("k")]);
+        assert_eq!(v.0, vec![Segment::Dollar, sref("k")]);
     }
 
     #[test]
@@ -407,6 +443,23 @@ mod tests {
     fn parse_unit_ref_invalid_ns_rejected() {
         let err = Value::parse("${PgMain:port}").unwrap_err();
         assert!(matches!(err, ValueError::UnknownNamespace { ref ns, .. } if ns == "PgMain"));
+    }
+
+    #[test]
+    fn as_template_roundtrip() {
+        for input in [
+            "",
+            "hello world",
+            "${secret:my-key}",
+            "postgres://app:${secret:db}@host/${secret:db-name}?x=1",
+            "cost: $$5 / $$",
+            "$$${secret:k}",
+            "${app-db:user}-${secret:pw}",
+        ] {
+            let v = Value::parse(input).unwrap();
+            assert_eq!(v.as_template(), input, "roundtrip mismatch for {input:?}");
+            assert_eq!(Value::parse(&v.as_template()).unwrap(), v);
+        }
     }
 
     #[test]

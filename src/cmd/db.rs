@@ -21,7 +21,6 @@ use dialoguer::{
     Select,
     theme::ColorfulTheme,
 };
-use serde::Serialize;
 
 use crate::{
     MainContext,
@@ -167,7 +166,9 @@ fn init(
         let _ = fs::remove_dir_all(unit_dir);
     });
 
-    write_unit_config(&unit_name, &unit_dir, "db-server", &config)?;
+    UnitConfig::DbServer(config.clone())
+        .save(ctx, &unit_name)
+        .map_err(|err| format!("write unit '{unit_name}' config: {err}"))?;
 
     let service_name = crate::deploy::unit::db::create_service_file(
         Path::new(crate::systemd::SYSTEMD_DIR),
@@ -255,7 +256,9 @@ fn create(
         let _ = fs::remove_dir_all(unit_dir);
     });
 
-    write_unit_config(&db_name, &unit_dir, "db", &config)?;
+    UnitConfig::Db(config.clone())
+        .save(ctx, &db_name)
+        .map_err(|err| format!("write unit '{db_name}' config: {err}"))?;
 
     server_config
         .engine
@@ -341,31 +344,6 @@ fn validate_unit_name(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error
     if unit_dir.exists() {
         return Err(format!("unit '{name}' already exists").into());
     }
-
-    Ok(())
-}
-
-fn write_unit_config<C: Serialize>(
-    unit_name: &str,
-    unit_dir: &Path,
-    kind: &'static str,
-    config: &C,
-) -> Result<(), String> {
-    #[derive(Serialize)]
-    struct UnitFile<'a, C: Serialize> {
-        #[serde(rename = "type")]
-        kind: &'static str,
-        #[serde(flatten)]
-        config: &'a C,
-    }
-
-    fs::create_dir_all(unit_dir)
-        .map_err(|err| format!("create unit '{unit_name}' directory: {err}"))?;
-
-    let payload = UnitFile { kind, config };
-    let path = unit_dir.join("config.yaml");
-    crate::config::save_config(path, &payload)
-        .map_err(|err| format!("write unit '{unit_name}' config: {err}"))?;
 
     Ok(())
 }

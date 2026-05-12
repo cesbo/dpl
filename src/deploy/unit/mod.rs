@@ -10,7 +10,10 @@ use db::{
     DbServerConfig,
 };
 use domain::DomainConfig;
-use serde::Deserialize;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 use thiserror::Error;
 
 use crate::{
@@ -19,6 +22,7 @@ use crate::{
         ConfigError,
         ValidateConfig,
         load_config,
+        save_config,
     },
 };
 
@@ -34,7 +38,7 @@ pub enum UnitConfigError {
     Config(#[from] ConfigError),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum UnitConfig {
     App(AppConfig),
@@ -68,6 +72,17 @@ impl UnitConfig {
                 UnitConfigError::Config(err)
             }
         })
+    }
+
+    pub fn save(&self, ctx: &MainContext, name: &str) -> Result<(), UnitConfigError> {
+        if !crate::validate::resource_name(name) {
+            return Err(UnitConfigError::InvalidName);
+        }
+
+        let dir = ctx.base().join(name);
+        fs::create_dir_all(&dir).map_err(|err| UnitConfigError::Config(ConfigError::Write(err)))?;
+        let path = dir.join("config.yaml");
+        save_config(&path, self).map_err(UnitConfigError::Config)
     }
 
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
@@ -267,6 +282,61 @@ databases:
             err.contains("${nope:user}"),
             "expected error to mention '${{nope:user}}': {err}"
         );
+    }
+
+    #[test]
+    fn save_roundtrip_db_server() {
+        use tempfile::TempDir;
+
+        use crate::deploy::unit::db::{
+            DbServerConfig,
+            DbServerEngine,
+        };
+
+        let base = TempDir::new().unwrap();
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: None,
+        };
+
+        let original = UnitConfig::DbServer(DbServerConfig {
+            engine: DbServerEngine::Postgresql,
+            version: "18-alpine".into(),
+            secret: "pg-pass".into(),
+        });
+        original.save(&ctx, "pg-main").unwrap();
+
+        let loaded = UnitConfig::load(&ctx, "pg-main").unwrap();
+        let (UnitConfig::DbServer(a), UnitConfig::DbServer(b)) = (&original, &loaded) else {
+            panic!("expected db-server variants");
+        };
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn save_rejects_invalid_name() {
+        use tempfile::TempDir;
+
+        use crate::deploy::unit::db::{
+            DbServerConfig,
+            DbServerEngine,
+        };
+
+        let base = TempDir::new().unwrap();
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: None,
+        };
+
+        let unit = UnitConfig::DbServer(DbServerConfig {
+            engine: DbServerEngine::Postgresql,
+            version: "18".into(),
+            secret: "pg-pass".into(),
+        });
+        assert!(matches!(
+            unit.save(&ctx, "Bad/Name"),
+            Err(UnitConfigError::InvalidName)
+        ));
     }
 
     #[test]

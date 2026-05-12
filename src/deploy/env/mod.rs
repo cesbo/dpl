@@ -3,7 +3,10 @@ mod value;
 
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 pub use self::error::EnvError;
 use self::value::Value;
@@ -13,7 +16,7 @@ use crate::{
     validate,
 };
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct EnvList(BTreeMap<String, Value>);
 
 impl EnvList {

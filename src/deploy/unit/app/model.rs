@@ -13,7 +13,7 @@ use crate::{
     validate,
 };
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
     pub image: String,
@@ -31,7 +31,7 @@ pub struct AppConfig {
 }
 
 /// Configuration for a build layer of the application
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct BuildLayerConfig {
     /// Description
@@ -47,7 +47,7 @@ pub struct BuildLayerConfig {
 }
 
 /// Configuration for the runtime environment of the application
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeConfig {
     /// Environment variables

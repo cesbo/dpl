@@ -1,4 +1,7 @@
-use serde::Deserialize;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 use crate::{
     config::ValidateConfig,
@@ -8,7 +11,7 @@ use crate::{
     },
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct DomainConfig {
     #[serde(default)]
@@ -21,7 +24,7 @@ pub struct DomainConfig {
     pub routes: Vec<RouteConfig>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProxyConfig {
     Cloudflare,
@@ -51,14 +54,14 @@ impl ValidateConfig for ProxyConfig {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum HttpsConfig {
     Proxy,
     Acme,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RouteConfig {
     /// URL path prefix (e.g. "/billing", "/billing/static")
@@ -67,7 +70,7 @@ pub struct RouteConfig {
     pub target: RouteTarget,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RouteTarget {
     /// Proxy pass to an app unit socket
