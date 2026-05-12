@@ -1,19 +1,29 @@
 use std::{
+    any::Any,
     fs,
     io,
     path::Path,
 };
 
-use serde::de::DeserializeOwned;
+use serde::{
+    Serialize,
+    de::DeserializeOwned,
+};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("read config")]
-    Read(#[from] io::Error),
+    Read(#[source] io::Error),
+
+    #[error("write config")]
+    Write(#[source] io::Error),
 
     #[error("parse config")]
-    Parse(#[from] serde_yaml::Error),
+    Parse(#[source] serde_yaml::Error),
+
+    #[error("serialize config")]
+    Serialize(#[source] serde_yaml::Error),
 
     #[error("invalid config: {0}")]
     Invalid(String),
@@ -39,7 +49,7 @@ pub trait ValidateConfig {
     }
 }
 
-pub fn load_config<T>(path: &Path) -> Result<T, ConfigError>
+pub fn load_config<T>(path: impl AsRef<Path>) -> Result<T, ConfigError>
 where
     T: DeserializeOwned + ValidateConfig,
 {
@@ -56,10 +66,26 @@ where
         }
     };
 
-    let config: T = serde_yaml::from_str(&content)?;
+    let config: T = serde_yaml::from_str(&content).map_err(ConfigError::Parse)?;
     config.validate_config().map_err(ConfigError::Invalid)?;
 
     Ok(config)
+}
+
+pub fn save_config<T>(path: impl AsRef<Path>, config: &T) -> Result<(), ConfigError>
+where
+    T: Serialize,
+{
+    let yaml = serde_yaml::to_string(config).map_err(ConfigError::Serialize)?;
+
+    let path = path.as_ref();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(ConfigError::Write)?;
+    }
+
+    fs::write(path, yaml).map_err(ConfigError::Write)?;
+
+    Ok(())
 }
 
 #[cfg(test)]
