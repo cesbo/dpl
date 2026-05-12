@@ -25,7 +25,7 @@ pub struct SystemdContext<'a> {
 impl<'a> SystemdContext<'a> {
     pub fn new(name: &'a str) -> Self {
         Self {
-            systemd_dir: Path::new("/etc/systemd/system"),
+            systemd_dir: Path::new(crate::systemd::SYSTEMD_DIR),
             name,
         }
     }
