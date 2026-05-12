@@ -155,6 +155,7 @@ impl DeployStateGuard {
         let path = unit_dir.join(LOCK_FILE_NAME);
         let file = OpenOptions::new()
             .create(true)
+            .truncate(true)
             .write(true)
             .open(&path)
             .map_err(DeployStateError::Lock)?;

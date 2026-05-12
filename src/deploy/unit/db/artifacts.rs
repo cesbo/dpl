@@ -10,11 +10,11 @@ use minijinja::{
 };
 
 use crate::deploy::{
-    DbServerEngine,
     artifacts::{
         ArtifactError,
         render,
     },
+    unit::db::DbServerEngine,
 };
 
 const DB_SERVICE_TEMPLATE: &str = "db-service";
@@ -51,8 +51,8 @@ pub fn create_service_file(
         context! {
             name => name,
             engine => engine.as_str(),
-            version => &version,
-            image => engine.image(&version),
+            version => version,
+            image => engine.image(version),
             data_path => engine.data_path(),
             env_var => engine.password_env(),
             password => escape_systemd_env_value(password),

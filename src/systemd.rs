@@ -13,7 +13,7 @@ pub fn enable_service(name: &str) -> io::Result<()> {
 }
 
 pub fn disable_service(name: &str) -> io::Result<()> {
-    run_systemctl(&["-q", "disable", "--now", &name])
+    run_systemctl(&["-q", "disable", "--now", name])
 }
 
 pub fn stop_service(name: &str) -> io::Result<()> {

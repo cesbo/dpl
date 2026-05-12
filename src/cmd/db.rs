@@ -27,11 +27,15 @@ use crate::{
     MainContext,
     cmd::secret as secret_cmd,
     deploy::{
-        DbConfig,
-        DbServerConfig,
-        DbServerEngine,
         UnitConfig,
-        list_units,
+        unit::{
+            db::{
+                DbConfig,
+                DbServerConfig,
+                DbServerEngine,
+            },
+            list_units,
+        },
     },
     secret,
     validate,

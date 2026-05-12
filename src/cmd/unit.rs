@@ -13,9 +13,9 @@ use clap::Subcommand;
 use crate::{
     MainContext,
     deploy::{
-        self,
         DeployState,
         UnitConfig,
+        unit::app::AppUnit,
     },
     log::fmt_elapsed,
 };
@@ -63,14 +63,26 @@ fn check(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {
 }
 
 fn deploy(ctx: &MainContext, name: &str, path: Option<&Path>) -> Result<(), Box<dyn Error>> {
+    let unit = UnitConfig::load(ctx, name)?;
+    unit.validate_references(ctx)?;
+
+    let UnitConfig::App(app_config) = unit else {
+        return Err(format!("deploy unit '{name}': not allowed").into());
+    };
+
+    let unit_dir = ctx.base().join(name);
+    let (_guard, state) = DeployState::acquire(&unit_dir)?;
+
+    let app = AppUnit::new(ctx, name, app_config);
+
     let (final_state, log) = match path {
         Some(path) => {
             let file = fs::File::open(path)?;
-            deploy::deploy_unit(ctx, name, file)?
+            app.deploy(state, file)?
         }
         None => {
-            let stdin = io::stdin();
-            deploy::deploy_unit(ctx, name, stdin.lock())?
+            let stdin = io::stdin().lock();
+            app.deploy(state, stdin)?
         }
     };
 
