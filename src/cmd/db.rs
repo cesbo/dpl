@@ -341,15 +341,13 @@ fn write_unit_config<C: Serialize>(
         config: &'a C,
     }
 
-    let payload = UnitFile { kind, config };
-    let yaml = serde_yaml::to_string(&payload)
-        .map_err(|err| format!("serialize unit '{unit_name}' config: {err}"))?;
-
     fs::create_dir_all(unit_dir)
         .map_err(|err| format!("create unit '{unit_name}' directory: {err}"))?;
 
+    let payload = UnitFile { kind, config };
     let path = unit_dir.join("config.yaml");
-    fs::write(&path, yaml).map_err(|err| format!("write unit '{unit_name}' config: {err}"))?;
+    crate::config::save_config(path, &payload)
+        .map_err(|err| format!("write unit '{unit_name}' config: {err}"))?;
 
     Ok(())
 }

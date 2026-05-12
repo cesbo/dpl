@@ -1,5 +1,4 @@
 use std::{
-    any::Any,
     fs,
     io,
     path::Path,
@@ -77,12 +76,6 @@ where
     T: Serialize,
 {
     let yaml = serde_yaml::to_string(config).map_err(ConfigError::Serialize)?;
-
-    let path = path.as_ref();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(ConfigError::Write)?;
-    }
-
     fs::write(path, yaml).map_err(ConfigError::Write)?;
 
     Ok(())
