@@ -5,23 +5,13 @@ use thiserror::Error;
 use super::{
     artifacts::ArtifactError,
     state::DeployStateError,
-    unit::UnitConfigError,
 };
 use crate::archive::ArchiveError;
 
 #[derive(Debug, Error)]
 pub enum DeployError {
     #[error(transparent)]
-    Unit(#[from] UnitConfigError),
-
-    #[error("invalid references: {0}")]
-    References(String),
-
-    #[error(transparent)]
     Status(#[from] DeployStateError),
-
-    #[error("not allowed")]
-    UnitNotAllowed,
 
     #[error("save artifacts")]
     ArtifactError(#[from] ArtifactError),
