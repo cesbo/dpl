@@ -5,13 +5,17 @@ use std::{
         Write,
     },
     path::Path,
-    process::{
-        Command,
-        Stdio,
-    },
 };
 
-use crate::log::DeployLog;
+use crate::{
+    log::DeployLog,
+    systemd::{
+        disable_service,
+        enable_service,
+        run_systemctl,
+        stop_service,
+    },
+};
 
 pub struct SystemdContext<'a> {
     systemd_dir: &'a Path,
@@ -35,7 +39,7 @@ impl<'a> SystemdContext<'a> {
 
         reload_systemd(log);
 
-        if let Err(err) = run_systemctl(&["-q", "enable", "--now", &service_name]) {
+        if let Err(err) = enable_service(&service_name) {
             let _ = fs::remove_file(&dst);
             reload_systemd(log);
             Err(err)
@@ -49,7 +53,7 @@ impl<'a> SystemdContext<'a> {
 
         let app_service = format!("{prefix}.service");
         let app_service_path = self.systemd_dir.join(&app_service);
-        let _ = run_systemctl(&["-q", "disable", "--now", &app_service]);
+        let _ = disable_service(&app_service);
 
         // Check if the container failed to stop
         if run_systemctl(&["-q", "is-failed", &app_service]).is_ok() {
@@ -80,7 +84,7 @@ impl<'a> SystemdContext<'a> {
 
         for prefix in &timers {
             let timer_name = format!("{prefix}.timer");
-            match run_systemctl(&["-q", "enable", "--now", &timer_name]) {
+            match enable_service(&timer_name) {
                 Ok(_) => {
                     log.detail(&format!("timer {timer_name} installed"));
                 }
@@ -140,7 +144,7 @@ impl<'a> SystemdContext<'a> {
 
         // Reload without log access — only used internally during install_app,
         // which already logs its own reload.
-        let _ = run_systemctl(&["-q", "daemon-reload"]);
+        let _ = crate::systemd::reload();
 
         Ok(())
     }
@@ -151,7 +155,10 @@ fn list_timers(dir: &Path, prefix: &str, log: &DeployLog) -> Vec<String> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(err) => {
-            log.error(&format!("failed to read directory {}: {err}", dir.display()));
+            log.error(&format!(
+                "failed to read directory {}: {err}",
+                dir.display()
+            ));
             return Vec::new();
         }
     };
@@ -173,11 +180,11 @@ fn list_timers(dir: &Path, prefix: &str, log: &DeployLog) -> Vec<String> {
 /// Removes a timer and its associated service from the systemd.
 fn remove_timer(systemd_dir: &Path, prefix: &str, log: &DeployLog) {
     let timer_unit = format!("{prefix}.timer");
-    let _ = run_systemctl(&["-q", "disable", "--now", &timer_unit]);
+    let _ = disable_service(&timer_unit);
     let removed = remove_timer_file(systemd_dir, &timer_unit, log);
 
     let timer_service = format!("{prefix}.service");
-    let _ = run_systemctl(&["-q", "stop", &timer_service]);
+    let _ = stop_service(&timer_service);
     remove_timer_file(systemd_dir, &timer_service, log);
 
     if removed {
@@ -196,7 +203,9 @@ fn remove_timer_file(systemd_dir: &Path, file_name: &str, log: &DeployLog) -> bo
             false
         }
         Err(err) => {
-            log.error(&format!("failed to remove timer service file {file_name}: {err}"));
+            log.error(&format!(
+                "failed to remove timer service file {file_name}: {err}"
+            ));
             false
         }
     }
@@ -239,22 +248,8 @@ fn copy_timer_file(
 }
 
 fn reload_systemd(log: &DeployLog) {
-    if let Err(err) = run_systemctl(&["-q", "daemon-reload"]) {
+    if let Err(err) = crate::systemd::reload() {
         log.error(&format!("reload systemd: {err}"));
-    }
-}
-
-fn run_systemctl(args: &[&str]) -> io::Result<()> {
-    let status = Command::new("systemctl")
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err(io::Error::other(format!("systemctl exited with {status}")))
     }
 }
 

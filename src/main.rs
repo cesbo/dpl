@@ -6,6 +6,7 @@ mod deploy;
 mod error;
 mod log;
 mod secret;
+mod systemd;
 mod validate;
 
 use std::{
