@@ -3,7 +3,6 @@
 mod artifacts;
 mod env;
 mod error;
-mod guard;
 mod state;
 pub mod unit;
 
@@ -14,7 +13,6 @@ use env::{
     EnvList,
 };
 pub use error::DeployError;
-pub use guard::acquire;
 pub use state::DeployState;
 use unit::app::AppUnit;
 pub use unit::{
@@ -42,7 +40,7 @@ pub fn deploy_unit<R: Read>(
         .map_err(DeployError::References)?;
 
     let unit_dir = ctx.base().join(name);
-    let (_guard, state) = acquire(&unit_dir)?;
+    let (_guard, state) = DeployState::acquire(&unit_dir)?;
 
     match unit {
         UnitConfig::App(config) => {

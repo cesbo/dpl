@@ -1,5 +1,9 @@
 use std::{
-    fs,
+    fs::{
+        File,
+        OpenOptions,
+        read_to_string,
+    },
     io::{
         self,
         Write,
@@ -7,13 +11,36 @@ use std::{
     path::Path,
 };
 
+use fs4::fs_std::FileExt;
 use serde::{
     Deserialize,
     Serialize,
 };
 use thiserror::Error;
 
+const LOCK_FILE_NAME: &str = ".deploy.lock";
 const STATE_FILE_NAME: &str = "state.yaml";
+
+#[derive(Debug, Error)]
+pub enum DeployStateError {
+    #[error("lock unit")]
+    Lock(#[source] io::Error),
+
+    #[error("unit busy")]
+    Busy,
+
+    #[error("read state file")]
+    Read(#[source] io::Error),
+
+    #[error("write state file")]
+    Write(#[source] io::Error),
+
+    #[error("unit version overflow")]
+    VersionOverflow,
+
+    #[error("unit has no active version")]
+    NoActiveVersion,
+}
 
 #[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -42,23 +69,22 @@ pub struct DeployState {
     pub latest_build: BuildResult,
 }
 
-#[derive(Debug, Error)]
-pub enum DeployStateError {
-    #[error("read state file")]
-    Read(#[source] io::Error),
-    #[error("write state file")]
-    Write(#[source] io::Error),
-    #[error("unit version overflow")]
-    VersionOverflow,
-    #[error("unit has no active version")]
-    NoActiveVersion,
-}
-
 impl DeployState {
+    /// Acquire the unit-level busy lock and load its state.
+    pub fn acquire(unit_dir: &Path) -> Result<(DeployStateGuard, DeployState), DeployStateError> {
+        let guard = DeployStateGuard::lock(unit_dir)?;
+        let state = DeployState::load(unit_dir)?;
+        if state.latest_build.status == DeployStatus::Building {
+            return Err(DeployStateError::Busy);
+        }
+
+        Ok((guard, state))
+    }
+
     pub fn load(unit_dir: &Path) -> Result<Self, DeployStateError> {
         let path = unit_dir.join(STATE_FILE_NAME);
 
-        let content = match fs::read_to_string(&path) {
+        let content = match read_to_string(&path) {
             Ok(content) => content,
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
                 return Ok(DeployState::default());
@@ -116,5 +142,27 @@ impl DeployState {
     pub fn set_ready(&mut self) {
         self.latest_build.status = DeployStatus::Ready;
         self.latest_build.error = None;
+    }
+}
+
+/// Holds an OS-level exclusive `flock` on `{unit_dir}/.deploy.lock` for the
+/// lifetime of the value. The kernel releases the lock when the file
+/// descriptor is closed, including on process crash.
+pub struct DeployStateGuard(File);
+
+impl DeployStateGuard {
+    fn lock(unit_dir: &Path) -> Result<Self, DeployStateError> {
+        let path = unit_dir.join(LOCK_FILE_NAME);
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&path)
+            .map_err(DeployStateError::Lock)?;
+
+        match file.try_lock_exclusive() {
+            Ok(true) => Ok(DeployStateGuard(file)),
+            Ok(false) => Err(DeployStateError::Busy),
+            Err(err) => Err(DeployStateError::Lock(err)),
+        }
     }
 }

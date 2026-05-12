@@ -20,9 +20,6 @@ pub enum DeployError {
     #[error(transparent)]
     Status(#[from] DeployStateError),
 
-    #[error("unit busy")]
-    UnitBusy,
-
     #[error("not allowed")]
     UnitNotAllowed,
 
