@@ -1,7 +1,5 @@
 use std::{
-    error::Error,
     fs,
-    io,
     path::Path,
     process::{
         Command,
@@ -14,6 +12,13 @@ use std::{
     },
 };
 
+use anyhow::{
+    Context,
+    Result,
+    anyhow,
+    bail,
+    ensure,
+};
 use clap::Subcommand;
 use dialoguer::{
     FuzzySelect,
@@ -24,7 +29,6 @@ use dialoguer::{
 
 use crate::{
     MainContext,
-    cmd::secret as secret_cmd,
     deploy::{
         UnitConfig,
         unit::{
@@ -36,7 +40,6 @@ use crate::{
             list_units,
         },
     },
-    secret,
     validate,
 };
 
@@ -92,7 +95,7 @@ enum Cmd {
     },
 }
 
-pub fn run(ctx: &MainContext, args: Args) -> Result<(), Box<dyn Error>> {
+pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
     match args.cmd {
         Cmd::Init {
             name,
@@ -116,10 +119,10 @@ fn init(
     engine: Option<String>,
     version: Option<String>,
     secret_name: Option<String>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<()> {
     let unit_name = match name {
         Some(value) => {
-            validate_unit_name(ctx, &value)?;
+            super::check_unit_name(ctx, &value, false)?;
             value
         }
         None => prompt_name(ctx)?,
@@ -132,9 +135,8 @@ fn init(
 
     let version = match version {
         Some(value) => {
-            if value.trim().is_empty() {
-                return Err("version must not be empty".into());
-            }
+            let value = value.trim().to_owned();
+            ensure!(!value.is_empty(), "version must not be empty");
             check_image_exists(&engine.image(&value))?;
             value
         }
@@ -143,10 +145,10 @@ fn init(
 
     let secret_name = match secret_name {
         Some(value) => {
-            validate_secret(ctx, &value)?;
+            super::check_secret_name(ctx, &value, true)?;
             value
         }
-        None => secret_cmd::prompt_secret(ctx)?,
+        None => super::secret::prompt_secret(ctx)?,
     };
 
     let config = DbServerConfig {
@@ -155,12 +157,7 @@ fn init(
         secret: secret_name,
     };
 
-    let root_password = ctx.resolve_secret(&config.secret).map_err(|err| {
-        format!(
-            "resolve db-server secret '{secret}': {err}",
-            secret = &config.secret
-        )
-    })?;
+    let root_password = resolve_secret(ctx, &config.secret)?;
 
     let unit_dir = scopeguard::guard(ctx.base().join(&unit_name), |unit_dir| {
         let _ = fs::remove_dir_all(unit_dir);
@@ -168,7 +165,7 @@ fn init(
 
     UnitConfig::DbServer(config.clone())
         .save(ctx, &unit_name)
-        .map_err(|err| format!("write unit '{unit_name}' config: {err}"))?;
+        .with_context(|| format!("write unit '{unit_name}' config"))?;
 
     let service_name = crate::deploy::unit::db::create_service_file(
         Path::new(crate::systemd::SYSTEMD_DIR),
@@ -177,11 +174,11 @@ fn init(
         &config.version,
         &root_password,
     )
-    .map_err(|err| format!("create service file for db-server '{unit_name}': {err}"))?;
+    .with_context(|| format!("create serivce file for db-server '{unit_name}'"))?;
 
-    crate::systemd::reload().map_err(|err| format!("reload systemd daemon: {err}"))?;
+    crate::systemd::reload().context("reload systemd")?;
     crate::systemd::enable_service(&service_name)
-        .map_err(|err| format!("start service for db-server '{unit_name}': {err}"))?;
+        .with_context(|| format!("start service for db-server '{unit_name}'"))?;
 
     scopeguard::ScopeGuard::into_inner(unit_dir);
 
@@ -200,10 +197,10 @@ fn create(
     db_server: Option<String>,
     user: Option<String>,
     secret_name: Option<String>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<()> {
     let db_name = match name {
         Some(value) => {
-            validate_unit_name(ctx, &value)?;
+            super::check_unit_name(ctx, &value, false)?;
             value
         }
         None => prompt_name(ctx)?,
@@ -216,9 +213,11 @@ fn create(
 
     let user = match user {
         Some(value) => {
-            if !validate::resource_name(&value) {
-                return Err(format!("invalid user name '{value}'").into());
-            }
+            let value = value.trim().to_owned();
+            ensure!(
+                validate::resource_name(&value),
+                "invalid user name '{value}'"
+            );
             value
         }
         None => db_name.clone(),
@@ -226,10 +225,10 @@ fn create(
 
     let secret_name = match secret_name {
         Some(value) => {
-            validate_secret(ctx, &value)?;
+            super::check_secret_name(ctx, &value, true)?;
             value
         }
-        None => secret_cmd::prompt_secret(ctx)?,
+        None => super::secret::prompt_secret(ctx)?,
     };
 
     let config = DbConfig {
@@ -238,19 +237,8 @@ fn create(
         secret: secret_name,
     };
 
-    let root_password = ctx.resolve_secret(&server_config.secret).map_err(|err| {
-        format!(
-            "resolve db-server secret '{secret}': {err}",
-            secret = &server_config.secret
-        )
-    })?;
-
-    let password = ctx.resolve_secret(&config.secret).map_err(|err| {
-        format!(
-            "resolve db secret '{secret}': {err}",
-            secret = &config.secret
-        )
-    })?;
+    let root_password = resolve_secret(ctx, &server_config.secret)?;
+    let password = resolve_secret(ctx, &config.secret)?;
 
     let unit_dir = scopeguard::guard(ctx.base().join(&db_name), |unit_dir| {
         let _ = fs::remove_dir_all(unit_dir);
@@ -258,7 +246,7 @@ fn create(
 
     UnitConfig::Db(config.clone())
         .save(ctx, &db_name)
-        .map_err(|err| format!("write unit '{db_name}' config: {err}"))?;
+        .with_context(|| format!("write unit '{db_name}' config"))?;
 
     server_config
         .engine
@@ -269,12 +257,7 @@ fn create(
             &config.user,
             &password,
         )
-        .map_err(|err| {
-            format!(
-                "create database '{db_name}' in '{server}': {err}",
-                server = &config.server
-            )
-        })?;
+        .with_context(|| format!("create database '{}' in '{}'", db_name, &config.server))?;
 
     scopeguard::ScopeGuard::into_inner(unit_dir);
 
@@ -287,33 +270,13 @@ fn create(
     Ok(())
 }
 
-fn wait(ctx: &MainContext, name: &str, timeout_secs: u64) -> Result<(), Box<dyn Error>> {
-    if !validate::resource_name(name) {
-        return Err(format!("invalid unit name '{name}'").into());
-    }
+fn wait(ctx: &MainContext, name: &str, timeout_secs: u64) -> Result<()> {
+    super::check_unit_name(ctx, name, true)?;
 
-    let db_config = {
-        let unit =
-            UnitConfig::load(ctx, name).map_err(|err| format!("load db unit '{name}': {err}"))?;
-        match unit {
-            UnitConfig::Db(c) => c,
-            _ => return Err(format!("unit '{name}' is not a database").into()),
-        }
-    };
+    let (_, db_config) = load_db(ctx, name)?;
+    let (_, server_config) = load_db_server(ctx, &db_config.server)?;
 
-    let server_config = {
-        let server = &db_config.server;
-        let unit = UnitConfig::load(ctx, server)
-            .map_err(|err| format!("load db-server '{server}': {err}"))?;
-        match unit {
-            UnitConfig::DbServer(c) => c,
-            _ => return Err(format!("unit '{}' is not a db-server", server).into()),
-        }
-    };
-
-    let root_password = ctx
-        .resolve_secret(&server_config.secret)
-        .map_err(|err| format!("decrypt secret '{}': {err}", server_config.secret))?;
+    let root_password = resolve_secret(ctx, &server_config.secret)?;
 
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
     let interval = Duration::from_millis(800);
@@ -327,40 +290,50 @@ fn wait(ctx: &MainContext, name: &str, timeout_secs: u64) -> Result<(), Box<dyn 
             return Ok(());
         }
 
-        if Instant::now() >= deadline {
-            return Err(format!("timeout waiting for database '{name}'").into());
-        }
+        ensure!(
+            Instant::now() < deadline,
+            "timeout waiting for database '{name}'"
+        );
 
         sleep(interval);
     }
 }
 
-fn validate_unit_name(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {
-    if !validate::resource_name(name) {
-        return Err(format!("invalid unit name '{name}'").into());
-    }
-
-    let unit_dir = ctx.base().join(name);
-    if unit_dir.exists() {
-        return Err(format!("unit '{name}' already exists").into());
-    }
-
-    Ok(())
+fn resolve_secret(ctx: &MainContext, name: &str) -> Result<String> {
+    ctx.resolve_secret(name)
+        .with_context(|| format!("resolve secret '{name}'"))
 }
 
-fn load_db_server(
-    ctx: &MainContext,
-    name: &str,
-) -> Result<(String, DbServerConfig), Box<dyn Error>> {
-    let config =
-        UnitConfig::load(ctx, name).map_err(|err| format!("load db-server '{name}': {err}"))?;
-    match config {
-        UnitConfig::DbServer(server) => Ok((name.to_string(), server)),
-        _ => Err(format!("unit '{name}' is not a db-server").into()),
+fn load_db_server(ctx: &MainContext, name: &str) -> Result<(String, DbServerConfig)> {
+    let unit = UnitConfig::load(ctx, name).with_context(|| format!("load db-server '{name}'"))?;
+    let UnitConfig::DbServer(config) = unit else {
+        bail!("unit '{name}' is not a db-server");
+    };
+    Ok((name.to_string(), config))
+}
+
+fn load_db(ctx: &MainContext, name: &str) -> Result<(String, DbConfig)> {
+    let unit = UnitConfig::load(ctx, name).with_context(|| format!("load db '{name}'"))?;
+    let UnitConfig::Db(config) = unit else {
+        bail!("unit '{name}' is not a db");
+    };
+    Ok((name.to_string(), config))
+}
+
+fn prompt_name(ctx: &MainContext) -> Result<String> {
+    loop {
+        let value: String = Input::with_theme(&ColorfulTheme::default())
+            .with_prompt("Unit name")
+            .interact_text()?;
+
+        match super::check_unit_name(ctx, &value, false) {
+            Ok(()) => return Ok(value),
+            Err(err) => eprintln!("{err}"),
+        }
     }
 }
 
-fn prompt_db_server(ctx: &MainContext) -> Result<(String, DbServerConfig), Box<dyn Error>> {
+fn prompt_db_server(ctx: &MainContext) -> Result<(String, DbServerConfig)> {
     let servers: Vec<(String, DbServerConfig)> =
         list_units(ctx, |c| matches!(c, UnitConfig::DbServer(_)))
             .into_iter()
@@ -370,9 +343,7 @@ fn prompt_db_server(ctx: &MainContext) -> Result<(String, DbServerConfig), Box<d
             })
             .collect();
 
-    if servers.is_empty() {
-        return Err("no db-server units found — run `dpl db init` first".into());
-    }
+    ensure!(servers.is_empty(), "no db-server units");
 
     let labels: Vec<String> = servers
         .iter()
@@ -388,27 +359,15 @@ fn prompt_db_server(ctx: &MainContext) -> Result<(String, DbServerConfig), Box<d
     Ok(servers.into_iter().nth(index).unwrap())
 }
 
-fn parse_engine(value: &str) -> Result<DbServerEngine, Box<dyn Error>> {
+fn parse_engine(value: &str) -> Result<DbServerEngine> {
     ENGINES
         .iter()
         .find(|(name, _)| *name == value)
         .map(|(_, engine)| *engine)
-        .ok_or_else(|| format!("unsupported engine '{value}'").into())
+        .ok_or_else(|| anyhow!("unsupported engine '{value}'"))
 }
 
-fn prompt_name(ctx: &MainContext) -> Result<String, Box<dyn Error>> {
-    loop {
-        let value: String = Input::with_theme(&ColorfulTheme::default())
-            .with_prompt("Unit name")
-            .interact_text()?;
-        match validate_unit_name(ctx, &value) {
-            Ok(()) => return Ok(value),
-            Err(err) => eprintln!("{err}"),
-        }
-    }
-}
-
-fn prompt_engine() -> Result<DbServerEngine, Box<dyn Error>> {
+fn prompt_engine() -> Result<DbServerEngine> {
     let labels: Vec<&str> = ENGINES.iter().map(|(name, _)| *name).collect();
     let index = Select::with_theme(&ColorfulTheme::default())
         .with_prompt("Database engine")
@@ -418,16 +377,20 @@ fn prompt_engine() -> Result<DbServerEngine, Box<dyn Error>> {
     Ok(ENGINES[index].1)
 }
 
-fn prompt_version(engine: DbServerEngine) -> Result<String, Box<dyn Error>> {
+fn prompt_version(engine: DbServerEngine) -> Result<String> {
     loop {
         let value: String = Input::with_theme(&ColorfulTheme::default())
             .with_prompt("Engine version")
             .default(engine.default_version().to_string())
-            .interact_text()?;
-        if value.trim().is_empty() {
+            .interact_text()?
+            .trim()
+            .to_owned();
+
+        if value.is_empty() {
             eprintln!("version must not be empty");
             continue;
         }
+
         match check_image_exists(&engine.image(&value)) {
             Ok(()) => return Ok(value),
             Err(err) => eprintln!("{err}"),
@@ -435,32 +398,18 @@ fn prompt_version(engine: DbServerEngine) -> Result<String, Box<dyn Error>> {
     }
 }
 
-fn check_image_exists(image: &str) -> Result<(), Box<dyn Error>> {
+fn check_image_exists(image: &str) -> Result<()> {
     let output = Command::new("podman")
         .args(["manifest", "inspect", image])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .output()
-        .map_err(|err| format!("failed to run podman: {err}"))?;
+        .context("failed to run podman")?;
 
     if output.status.success() {
         return Ok(());
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    Err(format!("image '{image}' not found: {}", stderr.trim()).into())
-}
-
-fn validate_secret(ctx: &MainContext, name: &str) -> Result<(), Box<dyn Error>> {
-    if !validate::secret_name(name) {
-        return Err(secret::SecretError::InvalidName.into());
-    }
-    if !ctx.secret_exists(name) {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("secret '{name}' not found"),
-        )
-        .into());
-    }
-    Ok(())
+    bail!("image '{image}' not found: {err}", err = stderr.trim());
 }

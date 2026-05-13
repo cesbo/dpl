@@ -10,13 +10,3 @@ pub fn format_error_chain(e: &(dyn Error + 'static)) -> String {
     }
     out
 }
-
-pub fn exit_with_stderr(e: &(dyn Error + 'static)) -> ! {
-    eprintln!("error: {e}");
-    let mut src = e.source();
-    while let Some(s) = src {
-        eprintln!("  caused by: {s}");
-        src = s.source();
-    }
-    std::process::exit(1);
-}

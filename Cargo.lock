@@ -387,6 +387,7 @@ name = "dpl"
 version = "0.0.1"
 dependencies = [
  "aes-gcm",
+ "anyhow",
  "base64",
  "chrono",
  "clap",

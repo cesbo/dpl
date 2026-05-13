@@ -132,7 +132,7 @@ pub fn validate_export(ctx: &MainContext, unit_name: &str, key: &str) -> Result<
     if unit.has_export(key) {
         Ok(())
     } else {
-        Err("not available".to_owned())
+        Err("variable is not available".into())
     }
 }
 

@@ -9,18 +9,18 @@ mod secret;
 mod systemd;
 mod validate;
 
-use std::{
-    error::Error,
-    path::PathBuf,
-};
+use std::path::PathBuf;
 
+use anyhow::{
+    Context,
+    Result,
+};
 use clap::{
     Parser,
     Subcommand,
 };
 
 pub use self::context::MainContext;
-use self::error::exit_with_stderr;
 
 #[derive(Parser)]
 #[command(version)]
@@ -42,19 +42,14 @@ enum Command {
     Unit(cmd::unit::Args),
 }
 
-fn main() {
+fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let result: Result<(), Box<dyn Error>> = match MainContext::load(&cli.base) {
-        Ok(ctx) => match cli.command {
-            Command::Db(args) => cmd::db::run(&ctx, args),
-            Command::Secret(args) => cmd::secret::run(&ctx, args),
-            Command::Unit(args) => cmd::unit::run(&ctx, args),
-        },
-        Err(err) => Err(err.into()),
-    };
+    let ctx = MainContext::load(&cli.base).context("load main context")?;
 
-    if let Err(err) = result {
-        exit_with_stderr(err.as_ref());
+    match cli.command {
+        Command::Db(args) => cmd::db::run(&ctx, args),
+        Command::Secret(args) => cmd::secret::run(&ctx, args),
+        Command::Unit(args) => cmd::unit::run(&ctx, args),
     }
 }
