@@ -131,10 +131,10 @@ impl AppConfig {
             match UnitConfig::load(ctx, db) {
                 Ok(UnitConfig::Db(_)) => {}
                 Ok(_) => {
-                    return Err(format!("database reference: unit '{db}' is not a database"));
+                    return Err(format!("databases: unit '{db}' is not a database"));
                 }
                 Err(err) => {
-                    return Err(format!("database reference: {err}"));
+                    return Err(format!("databases: {err}"));
                 }
             }
         }
