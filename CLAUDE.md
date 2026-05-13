@@ -1,15 +1,18 @@
-# dpl — Deploy Server
+# dpl — Deploy CLI
 
-Deploy server: accepts deploy archives over HTTP, generates build artifacts from MiniJinja templates, runs `podman build`, exports static files from the built image when configured, and stores deploy state on disk.
+CLI tool that manages local units (`app`, `db-server`, `db`, `domain`),
+renders build artifacts from MiniJinja templates, runs `podman build`,
+exports static files when configured, and installs systemd services. State
+lives on disk in each unit's directory.
 
 ## Commands
 
 ```bash
 cargo build          # Build
-cargo run -- --base /path/to/base  # Run server using base directory
 cargo test           # Run all tests
 cargo test <name>    # Single test (e.g. cargo test render_templates)
 cargo clippy         # Lint
+cargo run -- --base /path/to/base <group> <command> ...
 ```
 
 - Never run `cargo fmt` — the project uses custom rustfmt rules.
@@ -19,34 +22,52 @@ cargo clippy         # Lint
 
 ### Separation of Concerns
 
-- **`DeployService`** (`deploy/service.rs`) — "is the unit busy?", "which unit method to call?". Orchestration only.
-- **Unit implementations** (e.g. `deploy/app/`) — "what does a deploy of this kind actually do". All build logic lives here.
+- **`cmd/`** (`cmd/unit.rs`, `cmd/db.rs`, `cmd/secret.rs`) — clap subcommand
+  surface. Parses flags, prompts for missing input, calls into the unit/secret
+  layer.
+- **Unit implementations** (`deploy/unit/app/`, `deploy/unit/db/`,
+  `deploy/unit/domain/`) — "what does a deploy / install of this kind actually
+  do". All build, render, and systemd logic lives here.
+- **Deploy state** (`deploy/state.rs`) — on-disk `state.yaml` and the
+  `.deploy.lock` advisory `flock`. Acquired before any unit deploy runs.
 
 Keep this split when adding functionality.
 
-### Request Flow
+### Deploy Flow (app unit)
 
-1. `POST /deploy/{name}` receives a tar.gz archive
-2. Handler extracts archive into a versioned workspace, returns `{ "name": ..., "version": N }` immediately
-3. Background task runs: template rendering -> `podman build` -> optional static file export -> state update
+1. `dpl unit deploy <name> [path]` loads `UnitConfig`, calls
+   `validate_references` against the current secrets and referenced units,
+   then `DeployState::acquire` takes the `flock` on `{unit_dir}/.deploy.lock`.
+2. `AppUnit::deploy` bumps the version, writes the archive to
+   `{deploy_dir}/app.tar.gz`, renders artifacts (`containerfile`, `run.sh`,
+   `build-N.sh`, systemd service), runs `podman build`, optionally exports
+   static files, and (re)installs the systemd service via `systemctl`.
+3. `DeployState` is rewritten to `{unit_dir}/state.yaml` at each phase
+   transition; failures land as `status: failed` with an `error` string.
 
 ### Key Dependencies
 
 | Crate | Purpose |
 |-------|---------|
-| axum | HTTP framework |
+| clap | CLI parsing (`derive`, subcommands) |
+| dialoguer | Interactive prompts for missing flags |
 | minijinja | Template rendering for build artifacts |
 | serde / serde_yaml | Config and model (de)serialization |
-| thiserror | Error types |
-| tokio | Async runtime |
+| aes-gcm | AES-256-GCM for the secrets store |
+| fs4 | Advisory `flock(2)` for `.deploy.lock` |
+| thiserror / anyhow | Error types (`thiserror` for library, `anyhow` for CLI) |
 | tracing | Structured logging |
 
 ### Current Limitations
 
-- Unit types implemented: `app`, `domain`.
-- Auth: plain Bearer tokens (`Authorization: Bearer name:token`) stored per-token in `{base}/.tokens/{name}.yaml`.
-- API: `POST /deploy/{name}`, `GET /deploy/{name}/state`, `GET /deploy/{name}/log`.
-- Systemd service file is generated but not installed or restarted.
+- Unit types implemented: `app`, `db-server`, `db`, `domain`.
+- Auth is out of scope — `dpl` runs locally (typically as root). Sensitive
+  values live in `{base}/.secrets/` encrypted with an AES-256-GCM master key.
+- Entry points are CLI subcommands (`dpl unit ...`, `dpl db ...`,
+  `dpl secret ...`). No HTTP surface.
+- `dpl db init` installs and starts the generated systemd unit; `dpl unit
+  deploy` does the same for app units. Other unit types render artifacts but
+  don't yet install services.
 
 ## Coding Style
 
