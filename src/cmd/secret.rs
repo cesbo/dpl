@@ -9,6 +9,7 @@ use std::{
 use anyhow::{
     Context,
     Result,
+    bail,
     ensure,
 };
 use clap::Subcommand;
@@ -26,8 +27,10 @@ use rand::{
 
 use crate::{
     MainContext,
-    secret,
-    validate,
+    secret::{
+        self,
+        SecretError,
+    },
 };
 
 const RANDOM_SECRET_LEN: usize = 32;
@@ -73,7 +76,13 @@ pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
 }
 
 fn create(ctx: &MainContext, name: &str, source: Option<&str>) -> Result<()> {
-    super::check_secret_name(ctx, name, false)?;
+    match ctx.check_secret(name) {
+        Ok(_) => bail!(SecretError::AlreadyExists {
+            name: name.to_string(),
+        }),
+        Err(SecretError::NotFound { .. }) => {}
+        Err(err) => bail!(err),
+    }
 
     let key = load_or_create_key(ctx)?;
     let text = match source {
@@ -93,9 +102,7 @@ fn cat(ctx: &MainContext, name: &str) -> Result<()> {
 }
 
 fn rm(ctx: &MainContext, name: &str) -> Result<()> {
-    super::check_secret_name(ctx, name, true)?;
-
-    secret::secret_rm(ctx.base(), name).context("remove secret")?;
+    secret::remove(ctx.base(), name)?;
     println!("secret '{}' removed", name);
 
     Ok(())
@@ -189,13 +196,13 @@ fn create_new_secret(ctx: &MainContext) -> Result<String> {
             .with_prompt("Secret name")
             .interact_text()?;
 
-        if !validate::secret_name(&name) {
-            eprintln!("{}", secret::SecretError::InvalidName { name });
-            continue;
-        }
-
-        if ctx.secret_exists(&name) {
-            return Ok(name);
+        match ctx.check_secret(&name) {
+            Ok(_) => return Ok(name),
+            Err(SecretError::NotFound { .. }) => {}
+            Err(err) => {
+                eprintln!("{}", err);
+                continue;
+            }
         }
 
         let create = Confirm::with_theme(&ColorfulTheme::default())
@@ -208,9 +215,8 @@ fn create_new_secret(ctx: &MainContext) -> Result<String> {
         }
 
         let key = load_or_create_key(ctx)?;
-        let text = prompt_value_or_random()?;
-        key.encrypt_to_file(&name, &text)
-            .with_context(|| format!("save new secret '{name}' to file"))?;
+        let value = prompt_value_or_random()?;
+        key.encrypt_to_file(&name, &value)?;
 
         return Ok(name);
     }

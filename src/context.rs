@@ -56,7 +56,7 @@ impl MainContext {
         master_key.decrypt_from_file(name)
     }
 
-    pub fn secret_exists(&self, name: &str) -> bool {
-        crate::secret::secret_exists(&self.base, name)
+    pub fn check_secret(&self, name: &str) -> Result<(), SecretError> {
+        crate::secret::check(&self.base, name)
     }
 }

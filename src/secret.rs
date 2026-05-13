@@ -128,14 +128,22 @@ pub fn get_secrets_dir(base: &Path) -> PathBuf {
     base.join(".secrets")
 }
 
-fn get_secret_path(secrets_dir: &Path, name: &str) -> PathBuf {
+fn get_secret_path(secrets_dir: &Path, name: &str) -> Result<PathBuf, SecretError> {
+    if !crate::validate::secret_name(name) {
+        return Err(SecretError::InvalidName {
+            name: name.to_string(),
+        });
+    }
+
     let mut dir = secrets_dir.to_path_buf();
     let parts = name.split('/').collect::<Vec<&str>>();
     let (last, rest) = parts.split_last().unwrap();
     for item in rest {
         dir = dir.join(item);
     }
-    dir.join(format!("{last}.yaml"))
+    let path = dir.join(format!("{last}.yaml"));
+
+    Ok(path)
 }
 
 /// List all secret names under `base` (e.g. `foo`, `group/bar`), sorted.
@@ -193,17 +201,34 @@ fn walk_secrets(root: &Path, dir: &Path, out: &mut Vec<String>) -> io::Result<()
     Ok(())
 }
 
-pub fn secret_exists(base: &Path, name: &str) -> bool {
+pub fn check(base: &Path, name: &str) -> Result<(), SecretError> {
     let secrets_dir = get_secrets_dir(base);
-    get_secret_path(&secrets_dir, name)
-        .try_exists()
-        .unwrap_or(false)
+    let path = get_secret_path(&secrets_dir, name)?;
+    match fs::metadata(path) {
+        Ok(_) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Err(SecretError::NotFound {
+            name: name.to_string(),
+        }),
+        Err(source) => Err(SecretError::ReadSecret {
+            name: name.to_string(),
+            source,
+        }),
+    }
 }
 
-pub fn secret_rm(base: &Path, name: &str) -> io::Result<()> {
+pub fn remove(base: &Path, name: &str) -> Result<(), SecretError> {
     let secrets_dir = get_secrets_dir(base);
-    let path = get_secret_path(&secrets_dir, name);
-    remove_file(&path)
+    let path = get_secret_path(&secrets_dir, name)?;
+    match remove_file(&path) {
+        Ok(_) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Err(SecretError::NotFound {
+            name: name.to_string(),
+        }),
+        Err(source) => Err(SecretError::WriteSecret {
+            name: name.to_string(),
+            source,
+        }),
+    }
 }
 
 fn metadata_aad(metadata: &SecretMetadata) -> Vec<u8> {
@@ -259,7 +284,7 @@ impl MasterKey {
     }
 
     pub fn encrypt_to_file(&self, name: &str, text: &str) -> Result<(), SecretError> {
-        let path = get_secret_path(&self.secrets_dir, name);
+        let path = get_secret_path(&self.secrets_dir, name)?;
         let metadata = SecretMetadata {
             created_at: Utc::now(),
         };
@@ -342,7 +367,7 @@ impl MasterKey {
     }
 
     pub fn decrypt_from_file(&self, name: &str) -> Result<String, SecretError> {
-        let path = get_secret_path(&self.secrets_dir, name);
+        let path = get_secret_path(&self.secrets_dir, name)?;
         let content = fs::read_to_string(&path).map_err(|source| {
             if source.kind() == io::ErrorKind::NotFound {
                 SecretError::NotFound {
@@ -484,7 +509,7 @@ mod tests {
         let key = MasterKey::generate(base);
         key.encrypt_to_file("group/foo", "secret-value").unwrap();
 
-        let path = get_secret_path(&get_secrets_dir(base), "group/foo");
+        let path = get_secret_path(&get_secrets_dir(base), "group/foo").unwrap();
         assert!(path.extension().is_some_and(|ext| ext == "yaml"));
         assert!(path.exists());
 
@@ -499,7 +524,7 @@ mod tests {
         let key = MasterKey::generate(base);
         key.encrypt_to_file("foo", "v").unwrap();
 
-        let path = get_secret_path(&get_secrets_dir(base), "foo");
+        let path = get_secret_path(&get_secrets_dir(base), "foo").unwrap();
         let content = fs::read_to_string(&path).unwrap();
         let file: SecretFile = serde_yaml::from_str(&content).unwrap();
         assert_eq!(file.version, 1);

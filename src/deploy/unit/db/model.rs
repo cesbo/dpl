@@ -61,9 +61,8 @@ impl ValidateConfig for DbConfig {
 
 impl DbConfig {
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
-        if !ctx.secret_exists(&self.secret) {
-            return Err(format!("secret '{}' not found", self.secret));
-        }
+        ctx.check_secret(&self.secret)
+            .map_err(|err| err.to_string())?;
 
         match UnitConfig::load(ctx, &self.server) {
             Ok(UnitConfig::DbServer(_)) => {}
@@ -209,9 +208,8 @@ impl DbServerEngine {
 
 impl DbServerConfig {
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
-        if !ctx.secret_exists(&self.secret) {
-            return Err(format!("secret '{}' not found", self.secret));
-        }
+        ctx.check_secret(&self.secret)
+            .map_err(|err| err.to_string())?;
         Ok(())
     }
 }

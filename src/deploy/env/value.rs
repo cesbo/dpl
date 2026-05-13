@@ -186,8 +186,8 @@ impl Value {
             let token = format!("${{{}:{}}}", ns.as_str(), name);
             match ns {
                 Ns::Secret => {
-                    if !ctx.secret_exists(name) {
-                        return Err(format!("{token}: not found"));
+                    if let Err(err) = ctx.check_secret(name) {
+                        return Err(format!("{token}: {err}"));
                     }
                 }
                 Ns::Unit(unit_name) => {
