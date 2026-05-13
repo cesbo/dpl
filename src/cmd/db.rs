@@ -32,6 +32,7 @@ use crate::{
     deploy::{
         UnitConfig,
         unit::{
+            UnitConfigError,
             db::{
                 DbConfig,
                 DbServerConfig,
@@ -122,7 +123,7 @@ fn init(
 ) -> Result<()> {
     let unit_name = match name {
         Some(value) => {
-            super::check_unit_name(ctx, &value, false)?;
+            check_unit_name(ctx, &value)?;
             value
         }
         None => prompt_name(ctx)?,
@@ -200,7 +201,7 @@ fn create(
 ) -> Result<()> {
     let db_name = match name {
         Some(value) => {
-            super::check_unit_name(ctx, &value, false)?;
+            check_unit_name(ctx, &value)?;
             value
         }
         None => prompt_name(ctx)?,
@@ -271,8 +272,6 @@ fn create(
 }
 
 fn wait(ctx: &MainContext, name: &str, timeout_secs: u64) -> Result<()> {
-    super::check_unit_name(ctx, name, true)?;
-
     let (_, db_config) = load_db(ctx, name)?;
     let (_, server_config) = load_db_server(ctx, &db_config.server)?;
 
@@ -304,8 +303,17 @@ fn resolve_secret(ctx: &MainContext, name: &str) -> Result<String> {
         .with_context(|| format!("resolve secret '{name}'"))
 }
 
+/// Validates the unit name format and checks its presence.
+fn check_unit_name(ctx: &MainContext, name: &str) -> Result<()> {
+    match UnitConfig::load(ctx, name) {
+        Ok(_) => bail!("unit '{name}' already exists"),
+        Err(UnitConfigError::NotFound { .. }) => Ok(()),
+        Err(err) => Err(err.into()),
+    }
+}
+
 fn load_db_server(ctx: &MainContext, name: &str) -> Result<(String, DbServerConfig)> {
-    let unit = UnitConfig::load(ctx, name).with_context(|| format!("load db-server '{name}'"))?;
+    let unit = UnitConfig::load(ctx, name)?;
     let UnitConfig::DbServer(config) = unit else {
         bail!("unit '{name}' is not a db-server");
     };
@@ -313,7 +321,7 @@ fn load_db_server(ctx: &MainContext, name: &str) -> Result<(String, DbServerConf
 }
 
 fn load_db(ctx: &MainContext, name: &str) -> Result<(String, DbConfig)> {
-    let unit = UnitConfig::load(ctx, name).with_context(|| format!("load db '{name}'"))?;
+    let unit = UnitConfig::load(ctx, name)?;
     let UnitConfig::Db(config) = unit else {
         bail!("unit '{name}' is not a db");
     };
@@ -326,7 +334,7 @@ fn prompt_name(ctx: &MainContext) -> Result<String> {
             .with_prompt("Unit name")
             .interact_text()?;
 
-        match super::check_unit_name(ctx, &value, false) {
+        match check_unit_name(ctx, &value) {
             Ok(()) => return Ok(value),
             Err(err) => eprintln!("{err}"),
         }

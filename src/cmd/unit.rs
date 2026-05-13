@@ -60,13 +60,13 @@ pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
 }
 
 fn check(ctx: &MainContext, name: &str) -> Result<()> {
-    let _ = load_unit(ctx, name, true)?;
+    let _ = load_unit(ctx, name)?;
     println!("ok");
     Ok(())
 }
 
 fn deploy(ctx: &MainContext, name: &str, path: Option<&Path>) -> Result<()> {
-    let unit = load_unit(ctx, name, true)?;
+    let unit = load_unit(ctx, name)?;
 
     let UnitConfig::App(app_config) = unit else {
         bail!("deploy not allowed for unit '{name}'");
@@ -102,7 +102,7 @@ fn deploy(ctx: &MainContext, name: &str, path: Option<&Path>) -> Result<()> {
 }
 
 fn state(ctx: &MainContext, name: &str) -> Result<()> {
-    let _unit = load_unit(ctx, name, false)?;
+    let _unit = UnitConfig::load(ctx, name)?;
 
     let unit_dir = ctx.base().join(name);
     let state = DeployState::load(&unit_dir).context("load deploy state")?;
@@ -121,15 +121,12 @@ fn state(ctx: &MainContext, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn load_unit(ctx: &MainContext, name: &str, validate: bool) -> Result<UnitConfig> {
-    super::check_unit_name(ctx, name, true)?;
-    let unit = UnitConfig::load(ctx, name).context("load unit '{name}'")?;
+fn load_unit(ctx: &MainContext, name: &str) -> Result<UnitConfig> {
+    let unit = UnitConfig::load(ctx, name)?;
 
-    if validate {
-        unit.validate_references(ctx)
-            .map_err(anyhow::Error::msg)
-            .with_context(|| format!("invalid reference in unit '{name}'"))?;
-    }
+    unit.validate_references(ctx)
+        .map_err(anyhow::Error::msg)
+        .with_context(|| format!("unit '{name}' has invalid references"))?;
 
     Ok(unit)
 }

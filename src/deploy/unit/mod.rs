@@ -28,11 +28,11 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum UnitConfigError {
-    #[error("invalid unit name")]
-    InvalidName,
+    #[error("invalid unit name '{name}'")]
+    InvalidName { name: String },
 
-    #[error("unit not found")]
-    NotFound,
+    #[error("unit '{name}' not found")]
+    NotFound { name: String },
 
     #[error(transparent)]
     Config(#[from] ConfigError),
@@ -61,13 +61,17 @@ impl ValidateConfig for UnitConfig {
 impl UnitConfig {
     pub fn load(ctx: &MainContext, name: &str) -> Result<Self, UnitConfigError> {
         if !crate::validate::resource_name(name) {
-            return Err(UnitConfigError::InvalidName);
+            return Err(UnitConfigError::InvalidName {
+                name: name.to_string(),
+            });
         }
 
         let path = ctx.base().join(name).join("config.yaml");
         load_config(&path).map_err(|err| {
             if err.is_not_found() {
-                UnitConfigError::NotFound
+                UnitConfigError::NotFound {
+                    name: name.to_string(),
+                }
             } else {
                 UnitConfigError::Config(err)
             }
@@ -76,7 +80,9 @@ impl UnitConfig {
 
     pub fn save(&self, ctx: &MainContext, name: &str) -> Result<(), UnitConfigError> {
         if !crate::validate::resource_name(name) {
-            return Err(UnitConfigError::InvalidName);
+            return Err(UnitConfigError::InvalidName {
+                name: name.to_string(),
+            });
         }
 
         let dir = ctx.base().join(name);
@@ -126,8 +132,7 @@ impl UnitConfig {
 }
 
 pub fn validate_export(ctx: &MainContext, unit_name: &str, key: &str) -> Result<(), String> {
-    let unit = UnitConfig::load(ctx, unit_name)
-        .map_err(|err| format!("load unit '{unit_name}': {err}"))?;
+    let unit = UnitConfig::load(ctx, unit_name).map_err(|err| err.to_string())?;
 
     if unit.has_export(key) {
         Ok(())
@@ -138,7 +143,7 @@ pub fn validate_export(ctx: &MainContext, unit_name: &str, key: &str) -> Result<
 
 pub fn resolve_export(ctx: &MainContext, unit_name: &str, key: &str) -> Result<String, String> {
     UnitConfig::load(ctx, unit_name)
-        .map_err(|err| format!("load unit '{unit_name}': {err}"))?
+        .map_err(|err| err.to_string())?
         .resolve_export(ctx, unit_name, key)
 }
 
@@ -335,14 +340,14 @@ databases:
         });
         assert!(matches!(
             unit.save(&ctx, "Bad/Name"),
-            Err(UnitConfigError::InvalidName)
+            Err(UnitConfigError::InvalidName { .. })
         ));
     }
 
     #[test]
     fn validate_export_unknown_unit() {
         let err = validate_export(&MainContext::default(), "nope", "user").unwrap_err();
-        assert_eq!(err, "load unit 'nope': unit not found");
+        assert_eq!(err, "unit 'nope' not found");
     }
 
     #[test]
@@ -361,7 +366,7 @@ databases:
             master_key: None,
         };
         let err = validate_export(&ctx, "example-com", "host").unwrap_err();
-        assert_eq!(err, "not available");
+        assert_eq!(err, "variable is not available");
     }
 
     #[test]

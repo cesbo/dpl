@@ -68,10 +68,10 @@ impl DbConfig {
         match UnitConfig::load(ctx, &self.server) {
             Ok(UnitConfig::DbServer(_)) => {}
             Ok(_) => {
-                return Err(format!("server '{}' is not a db-server", self.server));
+                return Err(format!("server: '{}' is not a db-server", self.server));
             }
             Err(err) => {
-                return Err(format!("load server '{}': {err}", self.server));
+                return Err(format!("server: {err}"));
             }
         }
 
@@ -120,9 +120,12 @@ impl DbConfig {
 
     fn load_server(&self, ctx: &MainContext) -> Result<DbServerConfig, String> {
         let server = UnitConfig::load(ctx, &self.server)
-            .map_err(|err| format!("load server '{}': {err}", self.server))?;
+            .map_err(|err| format!("server reference: {err}"))?;
         let UnitConfig::DbServer(server) = server else {
-            return Err(format!("'{}' is not a db-server", self.server));
+            return Err(format!(
+                "server reference: '{}' is not a db-server",
+                self.server
+            ));
         };
         Ok(server)
     }
