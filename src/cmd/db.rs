@@ -145,10 +145,7 @@ fn init(
     };
 
     let secret_name = match secret_name {
-        Some(value) => {
-            super::check_secret_name(ctx, &value, true)?;
-            value
-        }
+        Some(value) => value,
         None => super::secret::prompt_secret(ctx)?,
     };
 
@@ -225,10 +222,7 @@ fn create(
     };
 
     let secret_name = match secret_name {
-        Some(value) => {
-            super::check_secret_name(ctx, &value, true)?;
-            value
-        }
+        Some(value) => value,
         None => super::secret::prompt_secret(ctx)?,
     };
 

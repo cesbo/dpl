@@ -4,11 +4,8 @@ use crate::secret::SecretError;
 
 #[derive(Debug, Error)]
 pub enum EnvError {
-    #[error("secret")]
+    #[error(transparent)]
     Secret(#[from] SecretError),
-
-    #[error("secret '{name}' does not exist")]
-    MissingSecret { name: String },
 
     #[error("{token}: {reason}")]
     ResolveRef { token: String, reason: String },
