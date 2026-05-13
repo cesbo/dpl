@@ -1,12 +1,14 @@
 use std::{
-    fs,
     fs::{
+        self,
         OpenOptions,
         create_dir_all,
         remove_file,
     },
-    io,
-    io::Write,
+    io::{
+        self,
+        Write,
+    },
     path::{
         Path,
         PathBuf,
@@ -63,11 +65,17 @@ pub struct SecretFile {
 
 #[derive(Debug, Error)]
 pub enum SecretError {
-    #[error("invalid secret name")]
-    InvalidName,
+    #[error("invalid secret name '{name}'")]
+    InvalidName { name: String },
 
-    #[error("invalid utf-8")]
-    InvalidData,
+    #[error("secret '{name}' not found")]
+    NotFound { name: String },
+
+    #[error("secret '{name}' already exists")]
+    AlreadyExists { name: String },
+
+    #[error("secret '{name}' is not valid UTF-8")]
+    InvalidData { name: String },
 
     #[error("master key not found")]
     KeyNotFound,
@@ -258,39 +266,49 @@ impl MasterKey {
         let secret_file = self.encrypt(name, &metadata, text)?;
         let yaml =
             serde_yaml::to_string(&secret_file).map_err(|source| SecretError::Serialize {
-                name: name.into(),
+                name: name.to_string(),
                 source,
             })?;
 
         if let Some(parent) = path.parent() {
             create_dir_all(parent).map_err(|source| SecretError::WriteSecret {
-                name: name.into(),
+                name: name.to_string(),
                 source,
             })?;
         }
 
         let mut file = OpenOptions::new()
             .write(true)
-            .create_new(true) // ошибка, если файл существует
+            .create_new(true)
             .open(&path)
-            .map_err(|source| SecretError::WriteSecret {
-                name: name.into(),
-                source,
+            .map_err(|source| {
+                if source.kind() == io::ErrorKind::AlreadyExists {
+                    SecretError::AlreadyExists {
+                        name: name.to_string(),
+                    }
+                } else {
+                    SecretError::WriteSecret {
+                        name: name.to_string(),
+                        source,
+                    }
+                }
             })?;
+
         file.write_all(yaml.as_bytes())
             .map_err(|source| SecretError::WriteSecret {
-                name: name.into(),
+                name: name.to_string(),
                 source,
             })?;
+
         file.sync_all().map_err(|source| SecretError::WriteSecret {
-            name: name.into(),
+            name: name.to_string(),
             source,
         })?;
 
         Ok(())
     }
 
-    pub fn encrypt(
+    fn encrypt(
         &self,
         name: &str,
         metadata: &SecretMetadata,
@@ -311,7 +329,9 @@ impl MasterKey {
 
         let ciphertext = cipher
             .encrypt(nonce, payload)
-            .map_err(|_| SecretError::Encrypt { name: name.into() })?;
+            .map_err(|_| SecretError::Encrypt {
+                name: name.to_string(),
+            })?;
 
         Ok(SecretFile {
             version: FILE_VERSION,
@@ -323,35 +343,51 @@ impl MasterKey {
 
     pub fn decrypt_from_file(&self, name: &str) -> Result<String, SecretError> {
         let path = get_secret_path(&self.secrets_dir, name);
-        let content = fs::read_to_string(&path).map_err(|source| SecretError::ReadSecret {
-            name: name.into(),
-            source,
+        let content = fs::read_to_string(&path).map_err(|source| {
+            if source.kind() == io::ErrorKind::NotFound {
+                SecretError::NotFound {
+                    name: name.to_string(),
+                }
+            } else {
+                SecretError::ReadSecret {
+                    name: name.to_string(),
+                    source,
+                }
+            }
         })?;
+
         let file: SecretFile =
             serde_yaml::from_str(&content).map_err(|source| SecretError::Deserialize {
-                name: name.into(),
+                name: name.to_string(),
                 source,
             })?;
+
         self.decrypt(name, &file)
     }
 
-    pub fn decrypt(&self, name: &str, file: &SecretFile) -> Result<String, SecretError> {
+    fn decrypt(&self, name: &str, file: &SecretFile) -> Result<String, SecretError> {
         if file.version != FILE_VERSION {
             return Err(SecretError::UnsupportedVersion {
-                name: name.into(),
+                name: name.to_string(),
                 version: file.version,
             });
         }
 
-        let nonce_bytes = B64
-            .decode(&file.nonce)
-            .map_err(|_| SecretError::Decrypt { name: name.into() })?;
+        let nonce_bytes = B64.decode(&file.nonce).map_err(|_| SecretError::Decrypt {
+            name: name.to_string(),
+        })?;
+
         if nonce_bytes.len() != NONCE_LEN {
-            return Err(SecretError::Decrypt { name: name.into() });
+            return Err(SecretError::Decrypt {
+                name: name.to_string(),
+            });
         }
+
         let ciphertext = B64
             .decode(&file.ciphertext)
-            .map_err(|_| SecretError::Decrypt { name: name.into() })?;
+            .map_err(|_| SecretError::Decrypt {
+                name: name.to_string(),
+            })?;
 
         let cipher = Aes256Gcm::new(&self.key.into());
         let nonce = Nonce::from_slice(&nonce_bytes);
@@ -367,7 +403,9 @@ impl MasterKey {
             .decrypt(nonce, payload)
             .map_err(|_| SecretError::Decrypt { name: name.into() })?;
 
-        String::from_utf8(plain).map_err(|_| SecretError::InvalidData)
+        String::from_utf8(plain).map_err(|_| SecretError::InvalidData {
+            name: name.to_string(),
+        })
     }
 }
 

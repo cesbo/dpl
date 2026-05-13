@@ -87,13 +87,8 @@ fn create(ctx: &MainContext, name: &str, source: Option<&str>) -> Result<()> {
 }
 
 fn cat(ctx: &MainContext, name: &str) -> Result<()> {
-    super::check_secret_name(ctx, name, true)?;
-
-    let key = secret::MasterKey::load(ctx.base()).with_context(|| "load master key")?;
-    let plaintext = key.decrypt_from_file(name).with_context(|| "load secret")?;
-
-    println!("{plaintext}");
-
+    let value = ctx.resolve_secret(name)?;
+    println!("{value}");
     Ok(())
 }
 
@@ -195,7 +190,7 @@ fn create_new_secret(ctx: &MainContext) -> Result<String> {
             .interact_text()?;
 
         if !validate::secret_name(&name) {
-            eprintln!("{}", secret::SecretError::InvalidName);
+            eprintln!("{}", secret::SecretError::InvalidName { name });
             continue;
         }
 

@@ -93,7 +93,7 @@ impl DbConfig {
             "name" => Ok(unit_name.to_owned()),
             "password" => ctx
                 .resolve_secret(&self.secret)
-                .map_err(|err| format!("decrypt secret '{}': {err}", self.secret)),
+                .map_err(|err| err.to_string()),
             "host" => Ok(self.server.clone()),
             "port" => {
                 let server = self.load_server(ctx)?;
@@ -103,7 +103,7 @@ impl DbConfig {
                 let server = self.load_server(ctx)?;
                 let password = ctx
                     .resolve_secret(&self.secret)
-                    .map_err(|err| format!("decrypt secret '{}': {err}", self.secret))?;
+                    .map_err(|err| err.to_string())?;
                 Ok(format!(
                     "{scheme}://{user}:{password}@{host}:{port}/{db}",
                     scheme = server.engine.url_scheme(),

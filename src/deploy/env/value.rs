@@ -187,7 +187,7 @@ impl Value {
             match ns {
                 Ns::Secret => {
                     if !ctx.secret_exists(name) {
-                        return Err(format!("{token}: secret not found"));
+                        return Err(format!("{token}: not found"));
                     }
                 }
                 Ns::Unit(unit_name) => {
