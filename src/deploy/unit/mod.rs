@@ -113,6 +113,7 @@ impl UnitConfig {
 
     pub fn has_export(&self, key: &str) -> bool {
         match self {
+            UnitConfig::App(_) => AppConfig::has_export(key),
             UnitConfig::Db(_) => DbConfig::has_export(key),
             _ => false,
         }
@@ -125,6 +126,7 @@ impl UnitConfig {
         key: &str,
     ) -> Result<String, String> {
         match self {
+            UnitConfig::App(config) => config.resolve_export(ctx, unit_name, key),
             UnitConfig::Db(config) => config.resolve_export(ctx, unit_name, key),
             _ => Err(format!("unit '{unit_name}' has no exports")),
         }
@@ -353,7 +355,7 @@ databases:
     }
 
     #[test]
-    fn validate_export_unknown_key_on_non_db() {
+    fn validate_export_unknown_key_on_domain() {
         use std::fs;
 
         use tempfile::TempDir;

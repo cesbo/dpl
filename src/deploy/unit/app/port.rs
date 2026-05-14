@@ -13,25 +13,32 @@ fn find_free_port() -> io::Result<u16> {
         .map(|addr| addr.port())
 }
 
-/// get_port returns the persisted host port for the unit, or picks a
+/// get_port returns the persisted port for the unit, or picks a
 /// random free port, persists it, and returns it.
 pub fn get_port(dir: &Path) -> io::Result<u16> {
-    let path = dir.join(PORT_FILE_NAME);
-    let port = match fs::read_to_string(&path) {
-        Ok(v) => Some(v),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => None,
-        Err(err) => {
-            return Err(err);
+    match read_port(dir)? {
+        Some(port) => Ok(port),
+        None => {
+            let port = find_free_port()?;
+            let path = dir.join(PORT_FILE_NAME);
+            fs::write(&path, port.to_string())?;
+            Ok(port)
         }
-    };
+    }
+}
 
-    if let Some(v) = port {
-        v.trim()
+/// read_port reads the persisted port from `port.txt` without any
+/// side effects. Returns `Ok(None)` when the file does not exist (unit
+/// not yet deployed).
+pub fn read_port(dir: &Path) -> io::Result<Option<u16>> {
+    let path = dir.join(PORT_FILE_NAME);
+    match fs::read_to_string(&path) {
+        Ok(v) => v
+            .trim()
             .parse::<u16>()
-            .map_err(|_| io::ErrorKind::InvalidData.into())
-    } else {
-        let port = find_free_port()?;
-        fs::write(&path, port.to_string())?;
-        Ok(port)
+            .map(Some)
+            .map_err(|_| io::ErrorKind::InvalidData.into()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err),
     }
 }
