@@ -75,3 +75,7 @@ Keep this split when adding functionality.
 - Prefer `tracing` macros (`info!`, `error!`, `debug!`) over `println!`.
 - Keep modules focused: one concern per file.
 - Function argument order: context/destination (`&Path`, config refs) → subject/data → mutable/owned state → options/callbacks.
+
+## Design Decisions
+
+@.claude/build-vs-buy.md
