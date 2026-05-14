@@ -198,6 +198,8 @@ mod tests {
         let config: UnitConfig = serde_yaml::from_str(
             r#"
 type: domain
+hosts:
+  - example.com
 proxy:
   type: cloudflare
 https: proxy
@@ -359,7 +361,11 @@ databases:
         let base = TempDir::new().unwrap();
         let dir = base.path().join("example-com");
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("config.yaml"), "type: domain\n").unwrap();
+        fs::write(
+            dir.join("config.yaml"),
+            "type: domain\nhosts:\n  - example.com\n",
+        )
+        .unwrap();
 
         let ctx = MainContext {
             base: base.path().to_path_buf(),

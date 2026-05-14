@@ -1,7 +1,7 @@
 # Generated with DPL. DO NOT EDIT
 
 server {
-    server_name {{ name }};
+    server_name {{ hosts | join(" ") }};
     listen 80;
     listen [::]:80;
 {% if proxy %}

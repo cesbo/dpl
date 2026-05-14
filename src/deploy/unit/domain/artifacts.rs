@@ -103,7 +103,7 @@ impl<'a> ArtifactsContext<'a> {
             &TEMPLATES,
             NGINX_CONFIG_TEMPLATE,
             context! {
-                name => self.name,
+                hosts => &self.config.hosts,
                 proxy => proxy,
                 custom_config => &self.config.custom_config,
                 routes => routes,

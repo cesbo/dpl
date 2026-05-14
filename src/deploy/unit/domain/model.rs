@@ -14,6 +14,7 @@ use crate::{
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct DomainConfig {
+    pub hosts: Vec<String>,
     #[serde(default)]
     pub proxy: Option<ProxyConfig>,
     #[serde(default)]
@@ -90,6 +91,16 @@ pub enum RouteTarget {
 
 impl ValidateConfig for DomainConfig {
     fn validate_config(&self) -> Result<(), String> {
+        if self.hosts.is_empty() {
+            return Err("hosts must not be empty".into());
+        }
+
+        for host in &self.hosts {
+            if host.trim().is_empty() {
+                return Err("host must not be empty".into());
+            }
+        }
+
         if let Some(proxy) = &self.proxy {
             proxy.validate_config()?;
         }
@@ -124,6 +135,9 @@ mod tests {
     fn parse_domain_config_with_custom_proxy() {
         let config: DomainConfig = serde_yaml::from_str(
             r#"
+hosts:
+  - example.com
+  - www.example.com
 proxy:
   type: custom
   header: X-Forwarded-For
@@ -145,6 +159,10 @@ routes:
         )
         .unwrap();
 
+        assert_eq!(
+            config.hosts,
+            vec!["example.com".to_string(), "www.example.com".to_string()],
+        );
         assert_eq!(
             config.proxy,
             Some(ProxyConfig::Custom {
@@ -174,6 +192,8 @@ routes:
     fn reject_custom_proxy_without_ip() {
         let config: DomainConfig = serde_yaml::from_str(
             r#"
+hosts:
+  - example.com
 proxy:
   type: custom
   header: X-Forwarded-For
@@ -190,6 +210,8 @@ https: acme
     fn parse_domain_config_without_proxy_and_https() {
         let config: DomainConfig = serde_yaml::from_str(
             r#"
+hosts:
+  - example.com
 custom_config: |
   add_header X-Domain test;
 routes:
@@ -204,5 +226,40 @@ routes:
         assert_eq!(config.proxy, None);
         assert_eq!(config.https, None);
         assert!(config.validate_config().is_ok());
+    }
+
+    #[test]
+    fn reject_missing_hosts() {
+        let result: Result<DomainConfig, _> = serde_yaml::from_str(
+            r#"
+routes:
+  - path: /
+    target:
+      kind: app
+      unit: backend
+"#,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn reject_empty_hosts() {
+        let config: DomainConfig = serde_yaml::from_str(
+            r#"
+hosts: []
+routes:
+  - path: /
+    target:
+      kind: app
+      unit: backend
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.validate_config(),
+            Err("hosts must not be empty".into()),
+        );
     }
 }
