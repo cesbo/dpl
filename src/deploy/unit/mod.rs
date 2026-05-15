@@ -120,7 +120,7 @@ impl UnitConfig {
         match self {
             UnitConfig::App(config) => config.resolve_export(ctx, unit_name, key),
             UnitConfig::Db(config) => config.resolve_export(ctx, unit_name, key),
-            _ => Err(format!("unit '{unit_name}' has no exports")),
+            _ => Err("has no exports".to_string()),
         }
     }
 }
@@ -129,6 +129,7 @@ pub fn resolve_export(ctx: &MainContext, unit_name: &str, key: &str) -> Result<S
     UnitConfig::load(ctx, unit_name)
         .map_err(|err| err.to_string())?
         .resolve_export(ctx, unit_name, key)
+        .map_err(|err| format!("unit '{unit_name}': {err}"))
 }
 
 /// Return all units satisfies `predicate`, sorted by name.
@@ -355,7 +356,7 @@ databases:
             master_key: None,
         };
         let err = resolve_export(&ctx, "example-com", "host").unwrap_err();
-        assert_eq!(err, "unit 'example-com' has no exports");
+        assert_eq!(err, "has no exports");
     }
 
     #[test]

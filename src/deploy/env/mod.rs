@@ -29,7 +29,11 @@ impl EnvList {
     pub fn resolve(&self, ctx: &MainContext) -> Result<BTreeMap<String, String>, EnvError> {
         self.0
             .iter()
-            .map(|(k, v)| Ok((k.clone(), v.render(ctx)?)))
+            .map(|(k, v)| {
+                let key = k.clone();
+                let value = v.render(ctx)?;
+                Ok((key, value))
+            })
             .collect()
     }
 }
@@ -76,5 +80,4 @@ mod tests {
         let list: EnvList = serde_yaml::from_str("BAD-NAME: x").unwrap();
         assert!(list.validate_config().is_err());
     }
-
 }

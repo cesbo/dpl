@@ -61,19 +61,8 @@ impl ValidateConfig for DbConfig {
 
 impl DbConfig {
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
-        ctx.resolve_secret(&self.secret)
-            .map_err(|err| err.to_string())?;
-
-        match UnitConfig::load(ctx, &self.server) {
-            Ok(UnitConfig::DbServer(_)) => {}
-            Ok(_) => {
-                return Err(format!("server: '{}' is not a db-server", self.server));
-            }
-            Err(err) => {
-                return Err(format!("server: {err}"));
-            }
-        }
-
+        self.resolve_password(ctx)?;
+        self.resolve_server(ctx)?.validate_references(ctx)?;
         Ok(())
     }
 
@@ -86,19 +75,14 @@ impl DbConfig {
         match key {
             "user" => Ok(self.user.clone()),
             "name" => Ok(unit_name.to_owned()),
-            "password" => ctx
-                .resolve_secret(&self.secret)
-                .map_err(|err| err.to_string()),
+            "password" => self.resolve_password(ctx),
             "host" => Ok(self.server.clone()),
-            "port" => {
-                let server = self.load_server(ctx)?;
-                Ok(server.engine.default_port().to_string())
-            }
+            "port" => self
+                .resolve_server(ctx)
+                .map(|server| server.engine.default_port().to_string()),
             "url" => {
-                let server = self.load_server(ctx)?;
-                let password = ctx
-                    .resolve_secret(&self.secret)
-                    .map_err(|err| err.to_string())?;
+                let server = self.resolve_server(ctx)?;
+                let password = self.resolve_password(ctx)?;
                 Ok(format!(
                     "{scheme}://{user}:{password}@{host}:{port}/{db}",
                     scheme = server.engine.url_scheme(),
@@ -113,10 +97,19 @@ impl DbConfig {
         }
     }
 
-    fn load_server(&self, ctx: &MainContext) -> Result<DbServerConfig, String> {
-        let server = UnitConfig::load(ctx, &self.server).map_err(|err| format!("server: {err}"))?;
+    fn resolve_password(&self, ctx: &MainContext) -> Result<String, String> {
+        ctx.resolve_secret(&self.secret)
+            .map_err(|err| format!("field 'secret' = '{secret}': {err}", secret = &self.secret))
+    }
+
+    fn resolve_server(&self, ctx: &MainContext) -> Result<DbServerConfig, String> {
+        let server = UnitConfig::load(ctx, &self.server)
+            .map_err(|err| format!("field 'server' = '{server}': {err}", server = &self.server))?;
         let UnitConfig::DbServer(server) = server else {
-            return Err(format!("server: '{}' is not a db-server", self.server));
+            return Err(format!(
+                "field 'server' = '{server}': is not a db-server",
+                server = &self.server
+            ));
         };
         Ok(server)
     }
@@ -204,9 +197,13 @@ impl DbServerEngine {
 
 impl DbServerConfig {
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
-        ctx.resolve_secret(&self.secret)
-            .map_err(|err| err.to_string())?;
+        self.resolve_password(ctx)?;
         Ok(())
+    }
+
+    fn resolve_password(&self, ctx: &MainContext) -> Result<String, String> {
+        ctx.resolve_secret(&self.secret)
+            .map_err(|err| format!("field 'secret' = '{secret}': {err}", secret = &self.secret))
     }
 }
 
