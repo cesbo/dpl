@@ -32,11 +32,6 @@ pub struct Args {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Validate a unit's config and secret references
-    Check {
-        /// Unit name
-        name: String,
-    },
     /// Trigger a deploy from a tar.gz archive (stdin if path is omitted)
     Deploy {
         /// Unit name
@@ -53,13 +48,12 @@ enum Cmd {
 
 pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
     match args.cmd {
-        Cmd::Check { name } => check(ctx, &name),
         Cmd::Deploy { name, path } => deploy(ctx, &name, path.as_deref()),
         Cmd::State { name } => state(ctx, &name),
     }
 }
 
-fn check(ctx: &MainContext, name: &str) -> Result<()> {
+pub fn check(ctx: &MainContext, name: &str) -> Result<()> {
     let _ = load_unit(ctx, name)?;
     println!("ok");
     Ok(())

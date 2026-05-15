@@ -149,7 +149,7 @@ Build layer fields:
   `name`, `user`, `password`, `host`, `port`, `url`. The `db` unit must appear
   in this app's `databases:` list and must already exist
 
-References are validated by `dpl unit check`.
+References are validated by `dpl check`.
 
 ### Files
 
@@ -291,7 +291,7 @@ systemd units, and the built image.
 ### Validate a unit
 
 ```bash
-dpl unit check myapp
+dpl check myapp
 ```
 
 Parses `{unit_dir}/config.yaml` and resolves every reference: each

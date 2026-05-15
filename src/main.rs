@@ -34,6 +34,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Validate a unit's config and reference graph
+    Check {
+        /// Unit name
+        name: String,
+    },
     /// Manage database units
     Db(cmd::db::Args),
     /// Manage encrypted runtime secrets
@@ -48,6 +53,7 @@ fn main() -> Result<()> {
     let ctx = MainContext::load(&cli.base).context("load main context")?;
 
     match cli.command {
+        Command::Check { name } => cmd::unit::check(&ctx, &name),
         Command::Db(args) => cmd::db::run(&ctx, args),
         Command::Secret(args) => cmd::secret::run(&ctx, args),
         Command::Unit(args) => cmd::unit::run(&ctx, args),

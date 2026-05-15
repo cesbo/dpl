@@ -14,4 +14,4 @@ dpl deliberately keeps its homegrown systemd templating, AES-GCM secret store, a
 
 - If a future conversation proposes "use Quadlet", "use sops", "use age", "use Kamal", "use Coolify" as a replacement for these subsystems — don't. The constraints (one static Rust binary, minimum runtime deps, Ubuntu LTS / Debian stable support) already excluded them.
 - New information that *would* reopen the question: dropping Ubuntu 22.04 / Debian 12 from supported targets (reopens Quadlet); accepting a runtime dep on `age` (reopens sops); accepting a server-side component (reopens Coolify-shaped alternatives).
-- The unit/reference model (`type: app|db-server|db|domain` + `${...}` validation via `unit check`) is the actual novel piece of dpl and should be preserved across any future refactor.
+- The unit/reference model (`type: app|db-server|db|domain` + `${...}` validation via `dpl check`) is the actual novel piece of dpl and should be preserved across any future refactor.
