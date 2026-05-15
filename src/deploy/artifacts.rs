@@ -4,7 +4,7 @@ use minijinja::Environment;
 use serde::Serialize;
 use thiserror::Error;
 
-pub fn render<S>(env: &Environment, name: &str, ctx: S) -> Result<String, ArtifactError>
+pub fn render_template<S>(env: &Environment, name: &str, ctx: S) -> Result<String, ArtifactError>
 where
     S: Serialize,
 {

@@ -18,7 +18,7 @@ use crate::{
     MainContext,
     deploy::artifacts::{
         ArtifactError,
-        render,
+        render_template,
     },
 };
 
@@ -186,7 +186,7 @@ fn write_artifact<S>(path: PathBuf, name: &str, ctx: S) -> Result<(), ArtifactEr
 where
     S: Serialize,
 {
-    let content = render(&TEMPLATES, name, ctx)?;
+    let content = render_template(&TEMPLATES, name, ctx)?;
 
     fs::write(&path, content).map_err(ArtifactError::Write)
 }

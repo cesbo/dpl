@@ -42,7 +42,7 @@ impl<'a> DomainUnit<'a> {
         let version = state.bump_version()?;
         state.save(&self.unit_dir)?;
 
-        if let Err(err) = self.render(version) {
+        if let Err(err) = self.write_artifacts(version) {
             let chain = format_error_chain(&err);
             eprintln!("render nginx config failed for {}: {chain}", self.name);
             state.set_error(format!("render nginx config failed: {chain}"));
@@ -57,7 +57,7 @@ impl<'a> DomainUnit<'a> {
         Ok(state)
     }
 
-    fn render(&self, version: u32) -> Result<(), DeployError> {
+    fn write_artifacts(&self, version: u32) -> Result<(), DeployError> {
         let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
         fs::create_dir_all(&deploy_dir).map_err(|source| DeployError::UnitError {
             info: "failed to create deploy directory".to_string(),

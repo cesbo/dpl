@@ -22,7 +22,7 @@ use crate::{
         EnvError,
         artifacts::{
             ArtifactError,
-            render,
+            render_template,
         },
     },
 };
@@ -63,7 +63,7 @@ impl<'a> ArtifactsContext<'a> {
         }
 
         let path = artifacts_dir.join(format!("{}.conf", self.name));
-        let content = render(
+        let content = render_template(
             &TEMPLATES,
             NGINX_CONFIG_TEMPLATE,
             context! {

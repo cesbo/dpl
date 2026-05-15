@@ -12,7 +12,7 @@ use minijinja::{
 use crate::deploy::{
     artifacts::{
         ArtifactError,
-        render,
+        render_template,
     },
     unit::db::DbServerEngine,
 };
@@ -45,7 +45,7 @@ pub fn create_service_file(
     version: &str,
     password: &str,
 ) -> Result<String, ArtifactError> {
-    let content = render(
+    let content = render_template(
         &TEMPLATES,
         DB_SERVICE_TEMPLATE,
         context! {
