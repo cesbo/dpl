@@ -9,7 +9,6 @@ use minijinja::{
     context,
 };
 use serde::Serialize;
-use thiserror::Error;
 
 use super::model::{
     DomainConfig,
@@ -60,10 +59,7 @@ impl<'a> ArtifactsContext<'a> {
 
         let mut routes = Vec::new();
         for route in &self.config.routes {
-            routes.push(
-                RenderRoute::new(self.ctx, route)
-                    .map_err(|err| ArtifactError::Resolve(err.into()))?,
-            );
+            routes.push(RenderRoute::new(self.ctx, route)?);
         }
 
         let path = artifacts_dir.join(format!("{}.conf", self.name));
@@ -91,7 +87,7 @@ struct RenderProxy<'a> {
 }
 
 impl<'a> RenderProxy<'a> {
-    fn new(proxy: &ProxyConfig) -> RenderProxy<'_> {
+    fn new(proxy: &'a ProxyConfig) -> RenderProxy<'a> {
         match proxy {
             ProxyConfig::Cloudflare => RenderProxy {
                 header: "",
@@ -109,15 +105,6 @@ impl<'a> RenderProxy<'a> {
     }
 }
 
-#[derive(Debug, Error)]
-enum ResolveError {
-    #[error("route '{path}': {source}")]
-    Render {
-        path: String,
-        #[source]
-        source: EnvError,
-    },
-}
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum RenderAction {
@@ -126,33 +113,26 @@ enum RenderAction {
 }
 
 #[derive(Serialize)]
-struct RenderRoute {
-    path: String,
+struct RenderRoute<'a> {
+    path: &'a str,
     #[serde(flatten)]
     action: RenderAction,
 }
 
-impl RenderRoute {
-    fn new(ctx: &MainContext, route: &RouteConfig) -> Result<Self, ResolveError> {
-        let render = |value: &crate::deploy::env::Value| {
-            value.render(ctx).map_err(|source| ResolveError::Render {
-                path: route.path.clone(),
-                source,
-            })
-        };
-
+impl<'a> RenderRoute<'a> {
+    fn new(ctx: &MainContext, route: &'a RouteConfig) -> Result<RenderRoute<'a>, EnvError> {
         let action = match &route.action {
             RouteAction::ReverseProxy { target } => RenderAction::ReverseProxy {
-                target: render(target)?,
+                target: target.render(ctx)?,
             },
             RouteAction::ServeFiles { root, spa } => RenderAction::ServeFiles {
-                root: render(root)?,
+                root: root.render(ctx)?,
                 spa: *spa,
             },
         };
 
         Ok(RenderRoute {
-            path: route.path.clone(),
+            path: &route.path,
             action,
         })
     }
