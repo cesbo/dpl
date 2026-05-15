@@ -41,6 +41,11 @@ enum Command {
     },
     /// Manage database units
     Db(cmd::db::Args),
+    /// Show runtime state of a unit
+    Inspect {
+        /// Unit name
+        name: String,
+    },
     /// Manage encrypted runtime secrets
     Secret(cmd::secret::Args),
     /// Manage units
@@ -55,6 +60,7 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Check { name } => cmd::unit::check(&ctx, &name),
         Command::Db(args) => cmd::db::run(&ctx, args),
+        Command::Inspect { name } => cmd::unit::inspect(&ctx, &name),
         Command::Secret(args) => cmd::secret::run(&ctx, args),
         Command::Unit(args) => cmd::unit::run(&ctx, args),
     }

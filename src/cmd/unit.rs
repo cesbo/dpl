@@ -39,17 +39,11 @@ enum Cmd {
         /// Path to tar.gz archive; reads from stdin if omitted
         path: Option<PathBuf>,
     },
-    /// Show deploy state for a unit
-    State {
-        /// Unit name
-        name: String,
-    },
 }
 
 pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
     match args.cmd {
         Cmd::Deploy { name, path } => deploy(ctx, &name, path.as_deref()),
-        Cmd::State { name } => state(ctx, &name),
     }
 }
 
@@ -95,8 +89,12 @@ fn deploy(ctx: &MainContext, name: &str, path: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
-fn state(ctx: &MainContext, name: &str) -> Result<()> {
-    let _unit = UnitConfig::load(ctx, name)?;
+pub fn inspect(ctx: &MainContext, name: &str) -> Result<()> {
+    let unit = UnitConfig::load(ctx, name)?;
+
+    let UnitConfig::App(_) = unit else {
+        bail!("inspect not yet supported for unit '{name}'");
+    };
 
     let unit_dir = ctx.base().join(name);
     let state = DeployState::load(&unit_dir).context("load deploy state")?;
