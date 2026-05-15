@@ -8,8 +8,10 @@ use serde::{
     Serialize,
 };
 
-pub use self::error::EnvError;
-use self::value::Value;
+pub use self::{
+    error::EnvError,
+    value::Value,
+};
 use crate::{
     MainContext,
     config::ValidateConfig,
