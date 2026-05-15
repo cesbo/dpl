@@ -177,28 +177,6 @@ impl Value {
         }
         Ok(out)
     }
-
-    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
-        for seg in &self.0 {
-            let Segment::Ref { ns, name } = seg else {
-                continue;
-            };
-            let token = format!("${{{}:{}}}", ns.as_str(), name);
-            match ns {
-                Ns::Secret => {
-                    if let Err(err) = ctx.check_secret(name) {
-                        return Err(format!("{token}: {err}"));
-                    }
-                }
-                Ns::Unit(unit_name) => {
-                    if let Err(err) = unit::validate_export(ctx, unit_name, name) {
-                        return Err(format!("{token}: {err}"));
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 fn parse_ref(body: &str, pos: usize) -> Result<Segment, ValueError> {
@@ -472,6 +450,95 @@ mod tests {
                 (&Ns::Secret, "x"),
                 (&Ns::Unit("pg-main".to_owned()), "port"),
             ]
+        );
+    }
+
+    fn write_db_unit(base: &std::path::Path) {
+        let dir = base.join("app-db");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("config.yaml"),
+            "type: db\nserver: pg-main\nuser: app1\nsecret: app1-pass\n",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn render_missing_secret() {
+        use tempfile::TempDir;
+
+        use crate::secret::MasterKey;
+
+        let base = TempDir::new().unwrap();
+        let key = MasterKey::generate(base.path());
+        key.save().unwrap();
+
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: Some(MasterKey::load(base.path()).unwrap()),
+        };
+
+        let v = Value::parse("${secret:nope}").unwrap();
+        let err = v.render(&ctx).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("nope"),
+            "expected error to mention 'nope': {msg}"
+        );
+    }
+
+    #[test]
+    fn render_unit_ref() {
+        use tempfile::TempDir;
+
+        let base = TempDir::new().unwrap();
+        write_db_unit(base.path());
+
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: None,
+        };
+
+        let user = Value::parse("${app-db:user}").unwrap();
+        assert_eq!(user.render(&ctx).unwrap(), "app1");
+
+        let name = Value::parse("${app-db:name}").unwrap();
+        assert_eq!(name.render(&ctx).unwrap(), "app-db");
+    }
+
+    #[test]
+    fn render_unknown_unit() {
+        let v = Value::parse("${nope:user}").unwrap();
+        let err = v.render(&MainContext::default()).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("${nope:user}"),
+            "expected error to mention '${{nope:user}}': {msg}"
+        );
+    }
+
+    #[test]
+    fn render_unknown_export() {
+        use tempfile::TempDir;
+
+        let base = TempDir::new().unwrap();
+        write_db_unit(base.path());
+
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: None,
+        };
+
+        let v = Value::parse("${app-db:unknown}").unwrap();
+        let err = v.render(&ctx).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("${app-db:unknown}"),
+            "expected error to mention '${{app-db:unknown}}': {msg}"
+        );
+        assert!(
+            msg.contains("unknown export"),
+            "expected error to say 'unknown export': {msg}"
         );
     }
 }

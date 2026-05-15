@@ -119,7 +119,7 @@ impl DomainConfig {
                 RouteAction::ServeFiles { root, .. } => root,
             };
             value
-                .validate_references(ctx)
+                .render(ctx)
                 .map_err(|err| format!("route '{}': {err}", route.path))?;
         }
         Ok(())

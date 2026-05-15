@@ -61,7 +61,7 @@ impl ValidateConfig for DbConfig {
 
 impl DbConfig {
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
-        ctx.check_secret(&self.secret)
+        ctx.resolve_secret(&self.secret)
             .map_err(|err| err.to_string())?;
 
         match UnitConfig::load(ctx, &self.server) {
@@ -75,10 +75,6 @@ impl DbConfig {
         }
 
         Ok(())
-    }
-
-    pub fn has_export(key: &str) -> bool {
-        matches!(key, "user" | "name" | "password" | "host" | "port" | "url")
     }
 
     pub fn resolve_export(
@@ -208,7 +204,7 @@ impl DbServerEngine {
 
 impl DbServerConfig {
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
-        ctx.check_secret(&self.secret)
+        ctx.resolve_secret(&self.secret)
             .map_err(|err| err.to_string())?;
         Ok(())
     }
@@ -308,18 +304,6 @@ secret: app1-pass
             secret: "Bad/Secret/".into(),
         };
         assert!(bad_secret.validate_config().is_err());
-    }
-
-    #[test]
-    fn db_has_export() {
-        assert!(DbConfig::has_export("user"));
-        assert!(DbConfig::has_export("name"));
-        assert!(DbConfig::has_export("password"));
-        assert!(DbConfig::has_export("host"));
-        assert!(DbConfig::has_export("port"));
-        assert!(DbConfig::has_export("url"));
-        assert!(!DbConfig::has_export("unknown"));
-        assert!(!DbConfig::has_export(""));
     }
 
     #[test]

@@ -111,14 +111,6 @@ impl UnitConfig {
         }
     }
 
-    pub fn has_export(&self, key: &str) -> bool {
-        match self {
-            UnitConfig::App(_) => AppConfig::has_export(key),
-            UnitConfig::Db(_) => DbConfig::has_export(key),
-            _ => false,
-        }
-    }
-
     pub fn resolve_export(
         &self,
         ctx: &MainContext,
@@ -130,16 +122,6 @@ impl UnitConfig {
             UnitConfig::Db(config) => config.resolve_export(ctx, unit_name, key),
             _ => Err(format!("unit '{unit_name}' has no exports")),
         }
-    }
-}
-
-pub fn validate_export(ctx: &MainContext, unit_name: &str, key: &str) -> Result<(), String> {
-    let unit = UnitConfig::load(ctx, unit_name).map_err(|err| err.to_string())?;
-
-    if unit.has_export(key) {
-        Ok(())
-    } else {
-        Err("variable is not available".into())
     }
 }
 
@@ -348,13 +330,13 @@ databases:
     }
 
     #[test]
-    fn validate_export_unknown_unit() {
-        let err = validate_export(&MainContext::default(), "nope", "user").unwrap_err();
+    fn resolve_export_unknown_unit() {
+        let err = resolve_export(&MainContext::default(), "nope", "user").unwrap_err();
         assert_eq!(err, "unit 'nope' not found");
     }
 
     #[test]
-    fn validate_export_unknown_key_on_domain() {
+    fn resolve_export_on_domain_has_no_exports() {
         use std::fs;
 
         use tempfile::TempDir;
@@ -372,8 +354,8 @@ databases:
             base: base.path().to_path_buf(),
             master_key: None,
         };
-        let err = validate_export(&ctx, "example-com", "host").unwrap_err();
-        assert_eq!(err, "variable is not available");
+        let err = resolve_export(&ctx, "example-com", "host").unwrap_err();
+        assert_eq!(err, "unit 'example-com' has no exports");
     }
 
     #[test]

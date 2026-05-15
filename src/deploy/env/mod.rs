@@ -32,13 +32,6 @@ impl EnvList {
             .map(|(k, v)| Ok((k.clone(), v.render(ctx)?)))
             .collect()
     }
-
-    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
-        for value in self.0.values() {
-            value.validate_references(ctx)?;
-        }
-        Ok(())
-    }
 }
 
 impl ValidateConfig for EnvList {
@@ -84,91 +77,4 @@ mod tests {
         assert!(list.validate_config().is_err());
     }
 
-    #[test]
-    fn validate_references_reports_missing_secret() {
-        let list: EnvList = serde_yaml::from_str(r#"X: "${secret:nope}""#).unwrap();
-        let err = list
-            .validate_references(&MainContext::default())
-            .unwrap_err();
-        assert!(
-            err.contains("${secret:nope}"),
-            "expected error to mention '${{secret:nope}}': {err}"
-        );
-    }
-
-    #[test]
-    fn resolve_unit_ref_to_db_user_and_name() {
-        use std::fs;
-
-        use tempfile::TempDir;
-
-        let base = TempDir::new().unwrap();
-        let dir = base.path().join("app-db");
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join("config.yaml"),
-            "type: db\nserver: pg-main\nuser: app1\nsecret: app1-pass\n",
-        )
-        .unwrap();
-
-        let ctx = MainContext {
-            base: base.path().to_path_buf(),
-            master_key: None,
-        };
-
-        let list: EnvList = serde_yaml::from_str(
-            r#"DB_USER: "${app-db:user}"
-DB_NAME: "${app-db:name}"
-"#,
-        )
-        .unwrap();
-        list.validate_references(&ctx).unwrap();
-        let resolved = list.resolve(&ctx).unwrap();
-        assert_eq!(resolved.get("DB_USER").map(String::as_str), Some("app1"));
-        assert_eq!(resolved.get("DB_NAME").map(String::as_str), Some("app-db"));
-    }
-
-    #[test]
-    fn validate_references_reports_unknown_unit() {
-        let list: EnvList = serde_yaml::from_str(r#"X: "${nope:user}""#).unwrap();
-        let err = list
-            .validate_references(&MainContext::default())
-            .unwrap_err();
-        assert!(
-            err.contains("${nope:user}"),
-            "expected error to mention '${{nope:user}}': {err}"
-        );
-    }
-
-    #[test]
-    fn validate_references_reports_unknown_export() {
-        use std::fs;
-
-        use tempfile::TempDir;
-
-        let base = TempDir::new().unwrap();
-        let dir = base.path().join("app-db");
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join("config.yaml"),
-            "type: db\nserver: pg-main\nuser: app1\nsecret: app1-pass\n",
-        )
-        .unwrap();
-
-        let ctx = MainContext {
-            base: base.path().to_path_buf(),
-            master_key: None,
-        };
-
-        let list: EnvList = serde_yaml::from_str(r#"X: "${app-db:unknown}""#).unwrap();
-        let err = list.validate_references(&ctx).unwrap_err();
-        assert!(
-            err.contains("${app-db:unknown}"),
-            "expected error to mention '${{app-db:unknown}}': {err}"
-        );
-        assert!(
-            err.contains("not available"),
-            "expected error to say 'not available': {err}"
-        );
-    }
 }

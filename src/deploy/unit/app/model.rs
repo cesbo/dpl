@@ -117,14 +117,16 @@ impl ValidateConfig for TimerConfig {
 
 impl AppConfig {
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
-        if let Err(err) = self.runtime.env.validate_references(ctx) {
-            return Err(format!("runtime env: {err}"));
-        }
+        self.runtime
+            .env
+            .resolve(ctx)
+            .map_err(|err| format!("runtime env: {err}"))?;
 
         for layer in &self.build {
-            if let Err(err) = layer.env.validate_references(ctx) {
-                return Err(format!("build env: {err}"));
-            }
+            layer
+                .env
+                .resolve(ctx)
+                .map_err(|err| format!("build env: {err}"))?;
         }
 
         for db in &self.databases {
@@ -140,10 +142,6 @@ impl AppConfig {
         }
 
         Ok(())
-    }
-
-    pub fn has_export(key: &str) -> bool {
-        matches!(key, "url")
     }
 
     pub fn resolve_export(
@@ -212,12 +210,6 @@ mod tests {
     }
 
     #[test]
-    fn app_has_export() {
-        assert!(AppConfig::has_export("url"));
-        assert!(!AppConfig::has_export("unknown"));
-    }
-
-    #[test]
     fn app_resolve_export_url() {
         let base = TempDir::new().unwrap();
         let unit_dir = base.path().join("web");
@@ -243,7 +235,7 @@ mod tests {
             master_key: None,
         };
         let config = sample_config();
-        let err = config.resolve_export(&ctx, "web", "port").unwrap_err();
+        let err = config.resolve_export(&ctx, "web", "url").unwrap_err();
         assert!(
             err.contains("is not deployed yet"),
             "unexpected error: {err}"
