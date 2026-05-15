@@ -160,19 +160,24 @@ impl Value {
             match seg {
                 Segment::Literal(s) => out.push_str(s),
                 Segment::Dollar => out.push('$'),
-                Segment::Ref { ns, name } => match ns {
-                    Ns::Secret => out.push_str(&ctx.resolve_secret(name)?),
-                    Ns::Unit(unit_name) => {
-                        let value =
-                            unit::resolve_export(ctx, unit_name, name).map_err(|reason| {
-                                EnvError::ResolveRef {
-                                    token: format!("${{{unit_name}:{name}}}"),
+                Segment::Ref { ns, name } => {
+                    let token = || format!("${{{}:{}}}", ns.as_str(), name);
+                    let value =
+                        match ns {
+                            Ns::Secret => {
+                                ctx.resolve_secret(name).map_err(|e| EnvError::ResolveRef {
+                                    token: token(),
+                                    reason: e.to_string(),
+                                })?
+                            }
+                            Ns::Unit(unit_name) => unit::resolve_export(ctx, unit_name, name)
+                                .map_err(|reason| EnvError::ResolveRef {
+                                    token: token(),
                                     reason,
-                                }
-                            })?;
-                        out.push_str(&value);
-                    }
-                },
+                                })?,
+                        };
+                    out.push_str(&value);
+                }
             }
         }
         Ok(out)
