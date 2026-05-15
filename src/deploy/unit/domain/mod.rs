@@ -68,7 +68,6 @@ impl<'a> DomainUnit<'a> {
             ctx: self.ctx,
             name: &self.name,
             config: &self.config,
-            version,
         };
         artifacts.save(&deploy_dir)?;
 

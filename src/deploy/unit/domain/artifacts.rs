@@ -1,6 +1,5 @@
 use std::{
     fs,
-    io,
     path::Path,
     sync::LazyLock,
 };
@@ -15,19 +14,16 @@ use thiserror::Error;
 use super::model::{
     DomainConfig,
     ProxyConfig,
+    RouteAction,
     RouteConfig,
-    RouteTarget,
 };
 use crate::{
     MainContext,
     deploy::{
+        EnvError,
         artifacts::{
             ArtifactError,
             render,
-        },
-        state::{
-            DeployState,
-            DeployStateError,
         },
     },
 };
@@ -53,34 +49,6 @@ pub struct ArtifactsContext<'a> {
     pub ctx: &'a MainContext,
     pub name: &'a str,
     pub config: &'a DomainConfig,
-    pub version: u32,
-}
-
-#[derive(Serialize)]
-struct RenderProxy<'a> {
-    header: &'a str,
-    proxies: &'a [String],
-}
-
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum RenderTarget {
-    App {
-        /// Application port on the host
-        port: u16,
-    },
-    Static {
-        /// Path to root directory. Eg. /opt/dpl/unit-name/deplout_xx/exports
-        root: String,
-        /// Single Page Application (SPA) flag
-        spa: bool,
-    },
-}
-
-#[derive(Serialize)]
-struct RenderRoute {
-    path: String,
-    target: RenderTarget,
 }
 
 impl<'a> ArtifactsContext<'a> {
@@ -88,12 +56,12 @@ impl<'a> ArtifactsContext<'a> {
         let artifacts_dir = deploy_dir.join("artifacts");
         fs::create_dir_all(&artifacts_dir).map_err(ArtifactError::CreateDir)?;
 
-        let proxy = self.config.proxy.as_ref().map(render_proxy);
+        let proxy = self.config.proxy.as_ref().map(RenderProxy::new);
 
         let mut routes = Vec::new();
         for route in &self.config.routes {
             routes.push(
-                resolve_route(self.ctx, route)
+                RenderRoute::new(self.ctx, route)
                     .map_err(|err| ArtifactError::Resolve(err.into()))?,
             );
         }
@@ -116,73 +84,76 @@ impl<'a> ArtifactsContext<'a> {
     }
 }
 
-fn render_proxy(proxy: &ProxyConfig) -> RenderProxy<'_> {
-    match proxy {
-        ProxyConfig::Cloudflare => RenderProxy {
-            header: "",
-            proxies: &[],
-        },
-        ProxyConfig::Fastly => RenderProxy {
-            header: "",
-            proxies: &[],
-        },
-        ProxyConfig::Custom { header, proxies } => RenderProxy {
-            header: header.as_str(),
-            proxies: proxies.as_slice(),
-        },
+#[derive(Serialize)]
+struct RenderProxy<'a> {
+    header: &'a str,
+    proxies: &'a [String],
+}
+
+impl<'a> RenderProxy<'a> {
+    fn new(proxy: &ProxyConfig) -> RenderProxy<'_> {
+        match proxy {
+            ProxyConfig::Cloudflare => RenderProxy {
+                header: "",
+                proxies: &[],
+            },
+            ProxyConfig::Fastly => RenderProxy {
+                header: "",
+                proxies: &[],
+            },
+            ProxyConfig::Custom { header, proxies } => RenderProxy {
+                header: header.as_str(),
+                proxies: proxies.as_slice(),
+            },
+        }
     }
 }
 
 #[derive(Debug, Error)]
 enum ResolveError {
-    #[error("unit state")]
-    UnitState(DeployStateError),
-    #[error("read unit port")]
-    ReadUnitPort(#[source] io::Error),
-    #[error("parse unit port")]
-    ParseUnitPort(#[source] std::num::ParseIntError),
+    #[error("route '{path}': {source}")]
+    Render {
+        path: String,
+        #[source]
+        source: EnvError,
+    },
+}
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum RenderAction {
+    ReverseProxy { target: String },
+    ServeFiles { root: String, spa: bool },
 }
 
-fn resolve_route(ctx: &MainContext, route: &RouteConfig) -> Result<RenderRoute, ResolveError> {
-    let target = match &route.target {
-        RouteTarget::App { unit } => resolve_route_app(ctx, unit)?,
-        RouteTarget::Static { unit, spa } => resolve_route_static(ctx, unit, *spa)?,
-    };
-
-    Ok(RenderRoute {
-        path: route.path.clone(),
-        target,
-    })
+#[derive(Serialize)]
+struct RenderRoute {
+    path: String,
+    #[serde(flatten)]
+    action: RenderAction,
 }
 
-fn resolve_route_app(ctx: &MainContext, unit: &str) -> Result<RenderTarget, ResolveError> {
-    let unit_dir = ctx.base().join(unit);
-    let _version = DeployState::get_active_version(&unit_dir).map_err(ResolveError::UnitState)?;
+impl RenderRoute {
+    fn new(ctx: &MainContext, route: &RouteConfig) -> Result<Self, ResolveError> {
+        let render = |value: &crate::deploy::env::Value| {
+            value.render(ctx).map_err(|source| ResolveError::Render {
+                path: route.path.clone(),
+                source,
+            })
+        };
 
-    let path = unit_dir.join("port.txt");
-    let port = fs::read_to_string(&path)
-        .map_err(ResolveError::ReadUnitPort)?
-        .trim()
-        .parse::<u16>()
-        .map_err(ResolveError::ParseUnitPort)?;
+        let action = match &route.action {
+            RouteAction::ReverseProxy { target } => RenderAction::ReverseProxy {
+                target: render(target)?,
+            },
+            RouteAction::ServeFiles { root, spa } => RenderAction::ServeFiles {
+                root: render(root)?,
+                spa: *spa,
+            },
+        };
 
-    Ok(RenderTarget::App { port })
-}
-
-fn resolve_route_static(
-    ctx: &MainContext,
-    unit: &str,
-    spa: bool,
-) -> Result<RenderTarget, ResolveError> {
-    let unit_dir = ctx.base().join(unit);
-    let version = DeployState::get_active_version(&unit_dir).map_err(ResolveError::UnitState)?;
-
-    Ok(RenderTarget::Static {
-        root: unit_dir
-            .join(format!("deploy_{version}"))
-            .join("exports")
-            .display()
-            .to_string(),
-        spa,
-    })
+        Ok(RenderRoute {
+            path: route.path.clone(),
+            action,
+        })
+    }
 }

@@ -96,7 +96,7 @@ impl UnitConfig {
             UnitConfig::App(config) => config.validate_references(ctx)?,
             UnitConfig::Db(config) => config.validate_references(ctx)?,
             UnitConfig::DbServer(config) => config.validate_references(ctx)?,
-            UnitConfig::Domain(_) => {}
+            UnitConfig::Domain(config) => config.validate_references(ctx)?,
         };
 
         Ok(())
@@ -207,9 +207,8 @@ proxy:
 https: proxy
 routes:
   - path: /api
-    target:
-      kind: app
-      unit: backend
+    kind: reverse_proxy
+    target: "${backend:url}"
 "#,
         )
         .unwrap();

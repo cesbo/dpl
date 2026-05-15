@@ -4,11 +4,10 @@ use serde::{
 };
 
 use crate::{
+    MainContext,
     config::ValidateConfig,
-    validate::{
-        resource_name,
-        url_path,
-    },
+    deploy::env::Value,
+    validate::url_path,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -63,27 +62,24 @@ pub enum HttpsConfig {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct RouteConfig {
     /// URL path prefix (e.g. "/billing", "/billing/static")
     pub path: String,
-    /// Where the route points to
-    pub target: RouteTarget,
+    #[serde(flatten)]
+    pub action: RouteAction,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum RouteTarget {
-    /// Proxy pass to an app unit socket
-    App {
-        /// Name of the app unit
-        unit: String,
+pub enum RouteAction {
+    ReverseProxy {
+        /// Upstream URL (e.g. "http://127.0.0.1:8000")
+        target: Value,
     },
-    /// Serve static files from `{deploy_dir}/exports`
-    Static {
-        /// Name of the app unit that exports the files
-        unit: String,
-        /// Single Page Application (SPA) flag
+    ServeFiles {
+        /// Filesystem root
+        root: Value,
+        /// Single Page Application fallback
         #[serde(default)]
         spa: bool,
     },
@@ -109,19 +105,23 @@ impl ValidateConfig for DomainConfig {
             if !url_path(&route.path) {
                 return Err(format!("invalid route path: '{}'", route.path));
             }
-
-            let unit = match &route.target {
-                RouteTarget::App { unit } | RouteTarget::Static { unit, .. } => unit,
-            };
-
-            if !resource_name(unit) {
-                return Err(format!(
-                    "invalid unit name '{}' in route '{}'",
-                    unit, route.path
-                ));
-            }
         }
 
+        Ok(())
+    }
+}
+
+impl DomainConfig {
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
+        for route in &self.routes {
+            let value = match &route.action {
+                RouteAction::ReverseProxy { target } => target,
+                RouteAction::ServeFiles { root, .. } => root,
+            };
+            value
+                .validate_references(ctx)
+                .map_err(|err| format!("route '{}': {err}", route.path))?;
+        }
         Ok(())
     }
 }
@@ -148,13 +148,12 @@ custom_config: |
   add_header X-Test true;
 routes:
   - path: /api
-    target:
-      kind: app
-      unit: backend
+    kind: reverse_proxy
+    target: "${backend:url}"
   - path: /static
-    target:
-      kind: static
-      unit: backend
+    kind: serve_files
+    root: "/var/www/site"
+    spa: true
 "#,
         )
         .unwrap();
@@ -172,19 +171,16 @@ routes:
         );
         assert_eq!(config.https, Some(HttpsConfig::Proxy));
         assert_eq!(config.routes.len(), 2);
-        assert_eq!(
-            config.routes[0].target,
-            RouteTarget::App {
-                unit: "backend".into()
-            }
-        );
-        assert_eq!(
-            config.routes[1].target,
-            RouteTarget::Static {
-                unit: "backend".into(),
-                spa: false,
-            }
-        );
+
+        assert!(matches!(
+            config.routes[0].action,
+            RouteAction::ReverseProxy { .. }
+        ));
+        match &config.routes[1].action {
+            RouteAction::ServeFiles { spa, .. } => assert!(*spa),
+            _ => panic!("expected serve_files action"),
+        }
+
         assert!(config.validate_config().is_ok());
     }
 
@@ -216,9 +212,8 @@ custom_config: |
   add_header X-Domain test;
 routes:
   - path: /
-    target:
-      kind: app
-      unit: backend
+    kind: reverse_proxy
+    target: "${backend:url}"
 "#,
         )
         .unwrap();
@@ -234,9 +229,8 @@ routes:
             r#"
 routes:
   - path: /
-    target:
-      kind: app
-      unit: backend
+    kind: reverse_proxy
+    target: "${backend:url}"
 "#,
         );
 
@@ -250,9 +244,8 @@ routes:
 hosts: []
 routes:
   - path: /
-    target:
-      kind: app
-      unit: backend
+    kind: reverse_proxy
+    target: "${backend:url}"
 "#,
         )
         .unwrap();
@@ -261,5 +254,68 @@ routes:
             config.validate_config(),
             Err("hosts must not be empty".into()),
         );
+    }
+
+    #[test]
+    fn reject_route_with_no_action() {
+        let result: Result<DomainConfig, _> = serde_yaml::from_str(
+            r#"
+hosts:
+  - example.com
+routes:
+  - path: /api
+"#,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn reject_route_with_unknown_kind() {
+        let result: Result<DomainConfig, _> = serde_yaml::from_str(
+            r#"
+hosts:
+  - example.com
+routes:
+  - path: /api
+    kind: redirect
+    target: "https://example.com"
+"#,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn reject_serve_files_without_root() {
+        let result: Result<DomainConfig, _> = serde_yaml::from_str(
+            r#"
+hosts:
+  - example.com
+routes:
+  - path: /static
+    kind: serve_files
+    spa: true
+"#,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn reject_unknown_field_on_serve_files() {
+        let result: Result<DomainConfig, _> = serde_yaml::from_str(
+            r#"
+hosts:
+  - example.com
+routes:
+  - path: /static
+    kind: serve_files
+    root: "/var/www"
+    bogus: true
+"#,
+        );
+
+        assert!(result.is_err());
     }
 }
