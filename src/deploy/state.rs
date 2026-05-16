@@ -19,7 +19,7 @@ use serde::{
 use thiserror::Error;
 
 const LOCK_FILE_NAME: &str = ".deploy.lock";
-const STATE_FILE_NAME: &str = "state.yaml";
+const STATE_FILE_NAME: &str = "state.json";
 
 #[derive(Debug, Error)]
 pub enum DeployStateError {
@@ -92,13 +92,13 @@ impl DeployState {
             Err(err) => return Err(DeployStateError::Read(err)),
         };
 
-        serde_yaml::from_str(&content)
+        serde_json::from_str(&content)
             .map_err(|err| DeployStateError::Read(io::Error::new(io::ErrorKind::InvalidData, err)))
     }
 
     pub fn save(&self, unit_dir: &Path) -> Result<(), DeployStateError> {
         let path = unit_dir.join(STATE_FILE_NAME);
-        let content = serde_yaml::to_string(self).map_err(|err| {
+        let content = serde_json::to_string_pretty(self).map_err(|err| {
             DeployStateError::Write(io::Error::new(io::ErrorKind::InvalidData, err))
         })?;
 
