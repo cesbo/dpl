@@ -111,7 +111,7 @@ impl<'a> ArtifactsContext<'a> {
             path,
             RUN_SH_TEMPLATE,
             context! {
-                env => self.config.runtime.env.resolve(self.ctx)?,
+                env => self.config.runtime.env.resolve(self.ctx, "runtime.env")?,
                 init => &self.config.runtime.init,
                 cmd => &self.config.runtime.cmd,
                 timers => &self.config.timers,
@@ -124,11 +124,12 @@ impl<'a> ArtifactsContext<'a> {
             };
 
             let path = artifacts_dir.join(format!("build-{}.sh", index + 1));
+            let prefix = format!("build[{index}].env");
             write_artifact(
                 path,
                 BUILD_SH_TEMPLATE,
                 context! {
-                    env => layer.env.resolve(self.ctx)?,
+                    env => layer.env.resolve(self.ctx, &prefix)?,
                     script => script,
                 },
             )?;

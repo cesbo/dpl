@@ -7,6 +7,10 @@ use crate::{
     MainContext,
     config::ValidateConfig,
     deploy::env::Value,
+    error::{
+        Location,
+        RefError,
+    },
     validate::url_path,
 };
 
@@ -112,15 +116,15 @@ impl ValidateConfig for DomainConfig {
 }
 
 impl DomainConfig {
-    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
-        for route in &self.routes {
-            let value = match &route.action {
-                RouteAction::ReverseProxy { target } => target,
-                RouteAction::ServeFiles { root, .. } => root,
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
+        for (index, route) in self.routes.iter().enumerate() {
+            let (value, leaf) = match &route.action {
+                RouteAction::ReverseProxy { target } => (target, "target"),
+                RouteAction::ServeFiles { root, .. } => (root, "root"),
             };
             value
                 .render(ctx)
-                .map_err(|err| format!("route '{}': {err}", route.path))?;
+                .map_err(|err| err.at(Location::field(format!("routes[{index}].{leaf}"))))?;
         }
         Ok(())
     }

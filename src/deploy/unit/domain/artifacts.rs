@@ -18,13 +18,11 @@ use super::model::{
 };
 use crate::{
     MainContext,
-    deploy::{
-        EnvError,
-        artifacts::{
-            ArtifactError,
-            render_template,
-        },
+    deploy::artifacts::{
+        ArtifactError,
+        render_template,
     },
+    error::RefError,
 };
 
 const NGINX_CONFIG_TEMPLATE: &str = "nginx-config";
@@ -120,7 +118,7 @@ struct RenderRoute<'a> {
 }
 
 impl<'a> RenderRoute<'a> {
-    fn new(ctx: &MainContext, route: &'a RouteConfig) -> Result<RenderRoute<'a>, EnvError> {
+    fn new(ctx: &MainContext, route: &'a RouteConfig) -> Result<RenderRoute<'a>, RefError> {
         let action = match &route.action {
             RouteAction::ReverseProxy { target } => RenderAction::ReverseProxy {
                 target: target.render(ctx)?,

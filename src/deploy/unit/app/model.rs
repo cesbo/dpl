@@ -10,6 +10,10 @@ use crate::{
         EnvList,
         UnitConfig,
     },
+    error::{
+        Location,
+        RefError,
+    },
     validate,
 };
 
@@ -116,29 +120,26 @@ impl ValidateConfig for TimerConfig {
 }
 
 impl AppConfig {
-    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
-        self.runtime
-            .env
-            .resolve(ctx)
-            .map_err(|err| format!("runtime env: {err}"))?;
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
+        self.runtime.env.resolve(ctx, "runtime.env")?;
 
-        for layer in &self.build {
-            layer
-                .env
-                .resolve(ctx)
-                .map_err(|err| format!("build env: {err}"))?;
+        for (index, layer) in self.build.iter().enumerate() {
+            layer.env.resolve(ctx, &format!("build[{index}].env"))?;
         }
 
-        for db in &self.databases {
-            match UnitConfig::load(ctx, db) {
-                Ok(UnitConfig::Db(_)) => {}
-                Ok(_) => {
-                    return Err(format!("databases: unit '{db}' is not a database"));
+        for (index, db) in self.databases.iter().enumerate() {
+            let inner = match UnitConfig::load(ctx, db) {
+                Ok(UnitConfig::Db(config)) => {
+                    config.validate_references(ctx)?;
+                    continue;
                 }
-                Err(err) => {
-                    return Err(format!("databases: {err}"));
-                }
-            }
+                Ok(_) => RefError::WrongUnitType {
+                    unit: db.clone(),
+                    expected: "db",
+                },
+                Err(err) => err.into(),
+            };
+            return Err(inner.at(Location::field(format!("databases[{index}]"))));
         }
 
         Ok(())
@@ -149,16 +150,22 @@ impl AppConfig {
         ctx: &MainContext,
         unit_name: &str,
         key: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, RefError> {
         match key {
             "url" => {
                 let unit_dir = ctx.base().join(unit_name);
                 let port = super::port::read_port(&unit_dir)
-                    .map_err(|err| format!("resolve app port: {err}"))?
-                    .ok_or_else(|| format!("app '{unit_name}' is not deployed yet"))?;
+                    .map_err(|err| RefError::Export {
+                        reason: format!("resolve app port: {err}"),
+                    })?
+                    .ok_or_else(|| RefError::Export {
+                        reason: format!("app '{unit_name}' is not deployed yet"),
+                    })?;
                 Ok(format!("http://127.0.0.1:{port}"))
             }
-            _ => Err(format!("unknown export '{key}'")),
+            _ => Err(RefError::UnknownExport {
+                key: key.to_owned(),
+            }),
         }
     }
 }
@@ -236,9 +243,12 @@ mod tests {
         };
         let config = sample_config();
         let err = config.resolve_export(&ctx, "web", "url").unwrap_err();
+        let RefError::Export { reason } = err else {
+            panic!("expected Export variant, got {err:?}");
+        };
         assert!(
-            err.contains("is not deployed yet"),
-            "unexpected error: {err}"
+            reason.contains("is not deployed yet"),
+            "unexpected reason: {reason}"
         );
     }
 }

@@ -6,10 +6,13 @@ use serde::{
 };
 use thiserror::Error;
 
-use super::error::EnvError;
 use crate::{
     MainContext,
     deploy::unit,
+    error::{
+        Location,
+        RefError,
+    },
     validate,
 };
 
@@ -154,28 +157,22 @@ impl Value {
         })
     }
 
-    pub fn render(&self, ctx: &MainContext) -> Result<String, EnvError> {
+    pub fn render(&self, ctx: &MainContext) -> Result<String, RefError> {
         let mut out = String::new();
         for seg in &self.0 {
             match seg {
                 Segment::Literal(s) => out.push_str(s),
                 Segment::Dollar => out.push('$'),
                 Segment::Ref { ns, name } => {
-                    let token = || format!("${{{}:{}}}", ns.as_str(), name);
-                    let value =
-                        match ns {
-                            Ns::Secret => {
-                                ctx.resolve_secret(name).map_err(|e| EnvError::ResolveRef {
-                                    token: token(),
-                                    reason: e.to_string(),
-                                })?
-                            }
-                            Ns::Unit(unit_name) => unit::resolve_export(ctx, unit_name, name)
-                                .map_err(|reason| EnvError::ResolveRef {
-                                    token: token(),
-                                    reason,
-                                })?,
-                        };
+                    let token = format!("${{{}:{}}}", ns.as_str(), name);
+                    let value = match ns {
+                        Ns::Secret => ctx
+                            .resolve_secret(name)
+                            .map_err(RefError::from)
+                            .map_err(|e| e.at(Location::token(&token)))?,
+                        Ns::Unit(unit_name) => unit::resolve_export(ctx, unit_name, name)
+                            .map_err(|e| e.at(Location::token(&token)))?,
+                    };
                     out.push_str(&value);
                 }
             }
@@ -269,6 +266,7 @@ impl<'de> Deserialize<'de> for Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::secret::SecretError;
 
     fn lit(s: &str) -> Segment {
         Segment::Literal(s.to_owned())
@@ -485,10 +483,12 @@ mod tests {
 
         let v = Value::parse("${secret:nope}").unwrap();
         let err = v.render(&ctx).unwrap_err();
-        let msg = err.to_string();
+        let RefError::At { location, inner } = err else {
+            panic!("expected At wrapper, got {err:?}");
+        };
+        assert!(matches!(&location, Location::Token { raw } if raw == "${secret:nope}"));
         assert!(
-            msg.contains("nope"),
-            "expected error to mention 'nope': {msg}"
+            matches!(*inner, RefError::Secret(SecretError::NotFound { ref name }) if name == "nope")
         );
     }
 
@@ -515,11 +515,23 @@ mod tests {
     fn render_unknown_unit() {
         let v = Value::parse("${nope:user}").unwrap();
         let err = v.render(&MainContext::default()).unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("${nope:user}"),
-            "expected error to mention '${{nope:user}}': {msg}"
-        );
+        let RefError::At {
+            location: token_loc,
+            inner: unit_layer,
+        } = err
+        else {
+            panic!("expected At(Token), got {err:?}");
+        };
+        assert!(matches!(&token_loc, Location::Token { raw } if raw == "${nope:user}"));
+        let RefError::At {
+            location: unit_loc,
+            inner: leaf,
+        } = *unit_layer
+        else {
+            panic!("expected At(Unit) below token");
+        };
+        assert!(matches!(&unit_loc, Location::Unit { name } if name == "nope"));
+        assert!(matches!(*leaf, RefError::UnknownUnit { ref name } if name == "nope"));
     }
 
     #[test]
@@ -536,14 +548,22 @@ mod tests {
 
         let v = Value::parse("${app-db:unknown}").unwrap();
         let err = v.render(&ctx).unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("${app-db:unknown}"),
-            "expected error to mention '${{app-db:unknown}}': {msg}"
-        );
-        assert!(
-            msg.contains("unknown export"),
-            "expected error to say 'unknown export': {msg}"
-        );
+        let RefError::At {
+            location: token_loc,
+            inner: unit_layer,
+        } = err
+        else {
+            panic!("expected At(Token), got {err:?}");
+        };
+        assert!(matches!(&token_loc, Location::Token { raw } if raw == "${app-db:unknown}"));
+        let RefError::At {
+            location: unit_loc,
+            inner: leaf,
+        } = *unit_layer
+        else {
+            panic!("expected At(Unit) below token");
+        };
+        assert!(matches!(&unit_loc, Location::Unit { name } if name == "app-db"));
+        assert!(matches!(*leaf, RefError::UnknownExport { ref key } if key == "unknown"));
     }
 }

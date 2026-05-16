@@ -1,6 +1,13 @@
-use std::error::Error;
+use std::fmt;
 
-pub fn format_error_chain(e: &(dyn Error + 'static)) -> String {
+use thiserror::Error;
+
+use crate::{
+    config::ConfigError,
+    secret::SecretError,
+};
+
+pub fn format_error_chain(e: &(dyn std::error::Error + 'static)) -> String {
     let mut out = e.to_string();
     let mut src = e.source();
     while let Some(s) = src {
@@ -9,4 +16,79 @@ pub fn format_error_chain(e: &(dyn Error + 'static)) -> String {
         src = s.source();
     }
     out
+}
+
+#[derive(Debug, Error)]
+pub enum RefError {
+    #[error("unit '{name}' not found")]
+    UnknownUnit { name: String },
+
+    #[error("unit '{unit}' is not a {expected}")]
+    WrongUnitType {
+        unit: String,
+        expected: &'static str,
+    },
+
+    #[error("unknown export '{key}'")]
+    UnknownExport { key: String },
+
+    #[error("load config for unit '{name}'")]
+    LoadConfig {
+        name: String,
+        #[source]
+        source: ConfigError,
+    },
+
+    #[error("{reason}")]
+    Export { reason: String },
+
+    #[error(transparent)]
+    Secret(#[from] SecretError),
+
+    #[error("at {location}")]
+    At {
+        location: Location,
+        #[source]
+        inner: Box<RefError>,
+    },
+}
+
+impl RefError {
+    pub fn at(self, location: Location) -> Self {
+        RefError::At {
+            location,
+            inner: Box::new(self),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum Location {
+    Unit { name: String },
+    Field { path: String },
+    Token { raw: String },
+}
+
+impl Location {
+    pub fn unit(name: impl Into<String>) -> Self {
+        Self::Unit { name: name.into() }
+    }
+
+    pub fn field(path: impl Into<String>) -> Self {
+        Self::Field { path: path.into() }
+    }
+
+    pub fn token(raw: impl Into<String>) -> Self {
+        Self::Token { raw: raw.into() }
+    }
+}
+
+impl fmt::Display for Location {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unit { name } => write!(f, "unit '{name}'"),
+            Self::Field { path } => write!(f, "field '{path}'"),
+            Self::Token { raw } => write!(f, "token '{raw}'"),
+        }
+    }
 }

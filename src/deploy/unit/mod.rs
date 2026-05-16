@@ -24,6 +24,10 @@ use crate::{
         load_config,
         save_config,
     },
+    error::{
+        Location,
+        RefError,
+    },
 };
 
 #[derive(Debug, Error)]
@@ -34,8 +38,22 @@ pub enum UnitConfigError {
     #[error("unit '{name}' not found")]
     NotFound { name: String },
 
-    #[error(transparent)]
-    Config(#[from] ConfigError),
+    #[error("load config for unit '{name}'")]
+    Config {
+        name: String,
+        #[source]
+        source: ConfigError,
+    },
+}
+
+impl From<UnitConfigError> for RefError {
+    fn from(err: UnitConfigError) -> Self {
+        match err {
+            UnitConfigError::NotFound { name } => RefError::UnknownUnit { name },
+            UnitConfigError::InvalidName { name } => RefError::UnknownUnit { name },
+            UnitConfigError::Config { name, source } => RefError::LoadConfig { name, source },
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -73,7 +91,10 @@ impl UnitConfig {
                     name: name.to_string(),
                 }
             } else {
-                UnitConfigError::Config(err)
+                UnitConfigError::Config {
+                    name: name.to_string(),
+                    source: err,
+                }
             }
         })
     }
@@ -86,20 +107,24 @@ impl UnitConfig {
         }
 
         let dir = ctx.base().join(name);
-        fs::create_dir_all(&dir).map_err(|err| UnitConfigError::Config(ConfigError::Write(err)))?;
+        fs::create_dir_all(&dir).map_err(|err| UnitConfigError::Config {
+            name: name.to_string(),
+            source: ConfigError::Write(err),
+        })?;
         let path = dir.join("config.yaml");
-        save_config(&path, self).map_err(UnitConfigError::Config)
+        save_config(&path, self).map_err(|source| UnitConfigError::Config {
+            name: name.to_string(),
+            source,
+        })
     }
 
-    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
         match self {
-            UnitConfig::App(config) => config.validate_references(ctx)?,
-            UnitConfig::Db(config) => config.validate_references(ctx)?,
-            UnitConfig::DbServer(config) => config.validate_references(ctx)?,
-            UnitConfig::Domain(config) => config.validate_references(ctx)?,
-        };
-
-        Ok(())
+            UnitConfig::App(config) => config.validate_references(ctx),
+            UnitConfig::Db(config) => config.validate_references(ctx),
+            UnitConfig::DbServer(config) => config.validate_references(ctx),
+            UnitConfig::Domain(config) => config.validate_references(ctx),
+        }
     }
 
     pub(crate) fn kind(&self) -> &'static str {
@@ -116,20 +141,22 @@ impl UnitConfig {
         ctx: &MainContext,
         unit_name: &str,
         key: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, RefError> {
         match self {
             UnitConfig::App(config) => config.resolve_export(ctx, unit_name, key),
             UnitConfig::Db(config) => config.resolve_export(ctx, unit_name, key),
-            _ => Err("has no exports".to_string()),
+            _ => Err(RefError::UnknownExport {
+                key: key.to_owned(),
+            }),
         }
     }
 }
 
-pub fn resolve_export(ctx: &MainContext, unit_name: &str, key: &str) -> Result<String, String> {
+pub fn resolve_export(ctx: &MainContext, unit_name: &str, key: &str) -> Result<String, RefError> {
     UnitConfig::load(ctx, unit_name)
-        .map_err(|err| err.to_string())?
-        .resolve_export(ctx, unit_name, key)
-        .map_err(|err| format!("unit '{unit_name}': {err}"))
+        .map_err(RefError::from)
+        .and_then(|cfg| cfg.resolve_export(ctx, unit_name, key))
+        .map_err(|err| err.at(Location::unit(unit_name)))
 }
 
 /// Return all units satisfies `predicate`, sorted by name.
@@ -267,11 +294,44 @@ databases:
         let unit = UnitConfig::load(&ctx, "app-x").unwrap();
         assert!(matches!(unit, UnitConfig::App(_)));
 
-        // validate_references surfaces the missing unit.
+        // validate_references surfaces the missing unit through the typed chain.
         let err = unit.validate_references(&ctx).unwrap_err();
+        let RefError::At {
+            location: field_loc,
+            inner: env_inner,
+        } = err
+        else {
+            panic!("expected outer At(Field), got {err:?}");
+        };
         assert!(
-            err.contains("${nope:user}"),
-            "expected error to mention '${{nope:user}}': {err}"
+            matches!(&field_loc, Location::Field { path } if path == "runtime.env.OTHER"),
+            "unexpected outer location: {field_loc:?}",
+        );
+        let RefError::At {
+            location: token_loc,
+            inner: unit_layer,
+        } = *env_inner
+        else {
+            panic!("expected At(Token) below field");
+        };
+        assert!(
+            matches!(&token_loc, Location::Token { raw } if raw == "${nope:user}"),
+            "unexpected token location: {token_loc:?}",
+        );
+        let RefError::At {
+            location: unit_loc,
+            inner: leaf,
+        } = *unit_layer
+        else {
+            panic!("expected At(Unit) below token");
+        };
+        assert!(
+            matches!(&unit_loc, Location::Unit { name } if name == "nope"),
+            "unexpected unit location: {unit_loc:?}",
+        );
+        assert!(
+            matches!(*leaf, RefError::UnknownUnit { ref name } if name == "nope"),
+            "unexpected leaf: {leaf:?}",
         );
     }
 
@@ -331,9 +391,118 @@ databases:
     }
 
     #[test]
+    fn validate_references_full_chain() {
+        use std::fs;
+
+        use tempfile::TempDir;
+
+        use crate::secret::{
+            MasterKey,
+            SecretError,
+        };
+
+        // Layout:
+        //   app `foo` → runtime.env.X = "${db-test:password}"
+        //   db  `db-test` → server: pg-main, secret: foo-db-test-password
+        //   db-server `pg-main` (referenced by db-test, with its own secret to satisfy
+        //   recursive validation — gets a real secret on disk so the only missing
+        //   piece is `foo-db-test-password`).
+        let base = TempDir::new().unwrap();
+
+        let app_dir = base.path().join("foo");
+        fs::create_dir_all(&app_dir).unwrap();
+        fs::write(
+            app_dir.join("config.yaml"),
+            "type: app\nimage: alpine\nport: 8080\nbuild: []\nruntime:\n  env:\n    X: \"${db-test:password}\"\n  cmd: ./run\n",
+        )
+        .unwrap();
+
+        let db_dir = base.path().join("db-test");
+        fs::create_dir_all(&db_dir).unwrap();
+        fs::write(
+            db_dir.join("config.yaml"),
+            "type: db\nserver: pg-main\nuser: app1\nsecret: foo-db-test-password\n",
+        )
+        .unwrap();
+
+        let server_dir = base.path().join("pg-main");
+        fs::create_dir_all(&server_dir).unwrap();
+        fs::write(
+            server_dir.join("config.yaml"),
+            "type: db-server\nengine: postgresql\nversion: \"18\"\nsecret: pg-pass\n",
+        )
+        .unwrap();
+
+        let key = MasterKey::generate(base.path());
+        key.save().unwrap();
+        // Provide pg-main's password so recursive server-validation succeeds.
+        key.encrypt_to_file("pg-pass", "pg-secret").unwrap();
+        // `foo-db-test-password` is intentionally absent — this is the leaf failure.
+
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: Some(MasterKey::load(base.path()).unwrap()),
+        };
+
+        let foo = UnitConfig::load(&ctx, "foo").unwrap();
+        let err = foo.validate_references(&ctx).unwrap_err();
+
+        // Expected chain (outer → inner):
+        //   At(Field "runtime.env.X")
+        //     At(Token "${db-test:password}")
+        //       At(Unit "db-test")
+        //         At(Field "secret")
+        //           Secret(NotFound { name: "foo-db-test-password" })
+        let RefError::At {
+            location: l1,
+            inner: i1,
+        } = err
+        else {
+            panic!("layer 1: expected At, got {err:?}");
+        };
+        assert!(matches!(&l1, Location::Field { path } if path == "runtime.env.X"));
+
+        let RefError::At {
+            location: l2,
+            inner: i2,
+        } = *i1
+        else {
+            panic!("layer 2: expected At");
+        };
+        assert!(matches!(&l2, Location::Token { raw } if raw == "${db-test:password}"));
+
+        let RefError::At {
+            location: l3,
+            inner: i3,
+        } = *i2
+        else {
+            panic!("layer 3: expected At");
+        };
+        assert!(matches!(&l3, Location::Unit { name } if name == "db-test"));
+
+        let RefError::At {
+            location: l4,
+            inner: i4,
+        } = *i3
+        else {
+            panic!("layer 4: expected At");
+        };
+        assert!(matches!(&l4, Location::Field { path } if path == "secret"));
+
+        assert!(
+            matches!(*i4, RefError::Secret(SecretError::NotFound { ref name }) if name == "foo-db-test-password"),
+            "unexpected leaf: {i4:?}",
+        );
+    }
+
+    #[test]
     fn resolve_export_unknown_unit() {
         let err = resolve_export(&MainContext::default(), "nope", "user").unwrap_err();
-        assert_eq!(err, "unit 'nope' not found");
+        let RefError::At { location, inner } = err else {
+            panic!("expected At wrapper, got {err:?}");
+        };
+        assert!(matches!(&location, Location::Unit { name } if name == "nope"));
+        assert!(matches!(*inner, RefError::UnknownUnit { ref name } if name == "nope"));
     }
 
     #[test]
@@ -356,7 +525,11 @@ databases:
             master_key: None,
         };
         let err = resolve_export(&ctx, "example-com", "host").unwrap_err();
-        assert_eq!(err, "has no exports");
+        let RefError::At { location, inner } = err else {
+            panic!("expected At wrapper, got {err:?}");
+        };
+        assert!(matches!(&location, Location::Unit { name } if name == "example-com"));
+        assert!(matches!(*inner, RefError::UnknownExport { ref key } if key == "host"));
     }
 
     #[test]

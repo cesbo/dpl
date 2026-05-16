@@ -117,7 +117,6 @@ fn load_unit(ctx: &MainContext, name: &str) -> Result<UnitConfig> {
     let unit = UnitConfig::load(ctx, name)?;
 
     unit.validate_references(ctx)
-        .map_err(anyhow::Error::msg)
         .with_context(|| format!("unit '{name}' has invalid references"))?;
 
     Ok(unit)

@@ -12,6 +12,10 @@ use crate::{
     MainContext,
     config::ValidateConfig,
     deploy::unit::UnitConfig,
+    error::{
+        Location,
+        RefError,
+    },
     validate::{
         resource_name,
         secret_name,
@@ -60,7 +64,7 @@ impl ValidateConfig for DbConfig {
 }
 
 impl DbConfig {
-    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
         self.resolve_password(ctx)?;
         self.resolve_server(ctx)?.validate_references(ctx)?;
         Ok(())
@@ -71,7 +75,7 @@ impl DbConfig {
         ctx: &MainContext,
         unit_name: &str,
         key: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, RefError> {
         match key {
             "user" => Ok(self.user.clone()),
             "name" => Ok(unit_name.to_owned()),
@@ -93,25 +97,29 @@ impl DbConfig {
                     db = unit_name,
                 ))
             }
-            _ => Err(format!("unknown export '{key}'")),
+            _ => Err(RefError::UnknownExport {
+                key: key.to_owned(),
+            }),
         }
     }
 
-    fn resolve_password(&self, ctx: &MainContext) -> Result<String, String> {
+    fn resolve_password(&self, ctx: &MainContext) -> Result<String, RefError> {
         ctx.resolve_secret(&self.secret)
-            .map_err(|err| format!("field 'secret' = '{secret}': {err}", secret = &self.secret))
+            .map_err(RefError::from)
+            .map_err(|err| err.at(Location::field("secret")))
     }
 
-    fn resolve_server(&self, ctx: &MainContext) -> Result<DbServerConfig, String> {
-        let server = UnitConfig::load(ctx, &self.server)
-            .map_err(|err| format!("field 'server' = '{server}': {err}", server = &self.server))?;
-        let UnitConfig::DbServer(server) = server else {
-            return Err(format!(
-                "field 'server' = '{server}': is not a db-server",
-                server = &self.server
-            ));
-        };
-        Ok(server)
+    fn resolve_server(&self, ctx: &MainContext) -> Result<DbServerConfig, RefError> {
+        UnitConfig::load(ctx, &self.server)
+            .map_err(RefError::from)
+            .and_then(|cfg| match cfg {
+                UnitConfig::DbServer(server) => Ok(server),
+                _ => Err(RefError::WrongUnitType {
+                    unit: self.server.clone(),
+                    expected: "db-server",
+                }),
+            })
+            .map_err(|err| err.at(Location::field("server")))
     }
 }
 
@@ -196,14 +204,15 @@ impl DbServerEngine {
 }
 
 impl DbServerConfig {
-    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), String> {
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
         self.resolve_password(ctx)?;
         Ok(())
     }
 
-    fn resolve_password(&self, ctx: &MainContext) -> Result<String, String> {
+    fn resolve_password(&self, ctx: &MainContext) -> Result<String, RefError> {
         ctx.resolve_secret(&self.secret)
-            .map_err(|err| format!("field 'secret' = '{secret}': {err}", secret = &self.secret))
+            .map_err(RefError::from)
+            .map_err(|err| err.at(Location::field("secret")))
     }
 }
 
@@ -313,7 +322,10 @@ secret: app1-pass
         let err = config
             .resolve_export(&MainContext::default(), "app-db", "unknown")
             .unwrap_err();
-        assert_eq!(err, "unknown export 'unknown'");
+        assert!(
+            matches!(&err, RefError::UnknownExport { key } if key == "unknown"),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]

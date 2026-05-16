@@ -6,10 +6,7 @@ mod error;
 mod state;
 pub mod unit;
 
-use env::{
-    EnvError,
-    EnvList,
-};
+use env::EnvList;
 pub use error::DeployError;
 pub use state::DeployState;
 pub use unit::UnitConfig;

@@ -28,7 +28,7 @@ pub enum ArtifactError {
     CurrentExe(#[source] io::Error),
 
     #[error("resolve env")]
-    Env(#[from] super::EnvError),
+    Env(#[from] crate::error::RefError),
 
     #[error("resolve template data")]
     Resolve(#[source] Box<dyn std::error::Error + Send + Sync>),
