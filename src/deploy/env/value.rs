@@ -1,3 +1,8 @@
+use kdl::{
+    KdlNode,
+    KdlValue,
+};
+use miette::SourceSpan;
 use serde::{
     Deserialize,
     Deserializer,
@@ -17,7 +22,7 @@ use crate::{
 };
 
 #[derive(Debug, Error, PartialEq, Eq)]
-pub enum ValueError {
+pub enum TemplateError {
     #[error("unterminated reference at position {pos}: missing '}}'")]
     UnterminatedRef { pos: usize },
 
@@ -35,6 +40,28 @@ pub enum ValueError {
         pos: usize,
         ns: String,
         name: String,
+    },
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ValueError {
+    #[error("expected exactly one value")]
+    EntryCount { span: SourceSpan },
+
+    #[error("named entries are not allowed")]
+    NamedEntry { span: SourceSpan },
+
+    #[error("child blocks are not allowed")]
+    HasChildren { span: SourceSpan },
+
+    #[error("null is not a valid value")]
+    Null { span: SourceSpan },
+
+    #[error("invalid template: {source}")]
+    InvalidTemplate {
+        span: SourceSpan,
+        #[source]
+        source: TemplateError,
     },
 }
 
@@ -83,7 +110,7 @@ pub enum Segment {
 pub struct Value(Vec<Segment>);
 
 impl Value {
-    pub fn parse(input: &str) -> Result<Self, ValueError> {
+    pub fn parse(input: &str) -> Result<Self, TemplateError> {
         let bytes = input.as_bytes();
         let mut segments: Vec<Segment> = Vec::new();
         let mut literal = String::new();
@@ -115,12 +142,12 @@ impl Value {
                     let end = bytes[body_start ..]
                         .iter()
                         .position(|&c| c == b'}')
-                        .ok_or(ValueError::UnterminatedRef { pos: start })?;
+                        .ok_or(TemplateError::UnterminatedRef { pos: start })?;
                     let body = &input[body_start .. body_start + end];
                     segments.push(parse_ref(body, start)?);
                     i = body_start + end + 1;
                 }
-                _ => return Err(ValueError::BareDollar { pos: i }),
+                _ => return Err(TemplateError::BareDollar { pos: i }),
             }
         }
 
@@ -129,6 +156,10 @@ impl Value {
         }
 
         Ok(Self(segments))
+    }
+
+    pub(crate) fn literal(s: String) -> Self {
+        Self(vec![Segment::Literal(s)])
     }
 
     /// Render back to the wire string form.
@@ -181,22 +212,22 @@ impl Value {
     }
 }
 
-fn parse_ref(body: &str, pos: usize) -> Result<Segment, ValueError> {
+fn parse_ref(body: &str, pos: usize) -> Result<Segment, TemplateError> {
     let (ns_raw, name) = body
         .split_once(':')
-        .ok_or(ValueError::MalformedRef { pos })?;
+        .ok_or(TemplateError::MalformedRef { pos })?;
 
     if ns_raw.is_empty() || name.is_empty() {
-        return Err(ValueError::MalformedRef { pos });
+        return Err(TemplateError::MalformedRef { pos });
     }
 
-    let ns = Ns::parse(ns_raw).ok_or_else(|| ValueError::UnknownNamespace {
+    let ns = Ns::parse(ns_raw).ok_or_else(|| TemplateError::UnknownNamespace {
         pos,
         ns: ns_raw.to_owned(),
     })?;
 
     if !ns.validate_name(name) {
-        return Err(ValueError::InvalidName {
+        return Err(TemplateError::InvalidName {
             pos,
             ns: ns.as_str().to_owned(),
             name: name.to_owned(),
@@ -241,25 +272,55 @@ impl<'de> Deserialize<'de> for Value {
             }
 
             fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Value, E> {
-                Ok(Value(vec![Segment::Literal(v.to_string())]))
+                Ok(Value::literal(v.to_string()))
             }
 
             fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Value, E> {
-                Ok(Value(vec![Segment::Literal(v.to_string())]))
+                Ok(Value::literal(v.to_string()))
             }
 
             fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Value, E> {
-                Ok(Value(vec![Segment::Literal(v.to_string())]))
+                Ok(Value::literal(v.to_string()))
             }
 
             fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Value, E> {
-                Ok(Value(vec![Segment::Literal(
-                    if v { "true" } else { "false" }.to_owned(),
-                )]))
+                Ok(Value::literal(if v { "true" } else { "false" }.to_owned()))
             }
         }
 
         deserializer.deserialize_any(ValueVisitor)
+    }
+}
+
+impl TryFrom<&KdlNode> for Value {
+    type Error = ValueError;
+
+    fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
+        if node.children().is_some() {
+            return Err(ValueError::HasChildren { span: node.span() });
+        }
+
+        let entries = node.entries();
+        for entry in entries {
+            if entry.name().is_some() {
+                return Err(ValueError::NamedEntry { span: entry.span() });
+            }
+        }
+
+        let [entry] = entries else {
+            return Err(ValueError::EntryCount { span: node.span() });
+        };
+
+        match entry.value() {
+            KdlValue::String(s) => Value::parse(s).map_err(|source| ValueError::InvalidTemplate {
+                span: entry.span(),
+                source,
+            }),
+            KdlValue::Integer(i) => Ok(Value::literal(i.to_string())),
+            KdlValue::Float(f) => Ok(Value::literal(f.to_string())),
+            KdlValue::Bool(b) => Ok(Value::literal(if *b { "true" } else { "false" }.to_owned())),
+            KdlValue::Null => Err(ValueError::Null { span: entry.span() }),
+        }
     }
 }
 
@@ -338,7 +399,7 @@ mod tests {
     fn parse_unterminated_ref() {
         assert!(matches!(
             Value::parse("foo ${secret:bar"),
-            Err(ValueError::UnterminatedRef { pos: 4 })
+            Err(TemplateError::UnterminatedRef { pos: 4 })
         ));
     }
 
@@ -346,12 +407,12 @@ mod tests {
     fn parse_bare_dollar() {
         assert!(matches!(
             Value::parse("price $5"),
-            Err(ValueError::BareDollar { pos: 6 })
+            Err(TemplateError::BareDollar { pos: 6 })
         ));
 
         assert!(matches!(
             Value::parse("end$"),
-            Err(ValueError::BareDollar { pos: 3 })
+            Err(TemplateError::BareDollar { pos: 3 })
         ));
     }
 
@@ -359,7 +420,7 @@ mod tests {
     fn parse_secret_empty_name() {
         assert!(matches!(
             Value::parse("${secret:}"),
-            Err(ValueError::MalformedRef { .. })
+            Err(TemplateError::MalformedRef { .. })
         ));
     }
 
@@ -367,7 +428,7 @@ mod tests {
     fn parse_empty_ns() {
         assert!(matches!(
             Value::parse("${:foo}"),
-            Err(ValueError::MalformedRef { .. })
+            Err(TemplateError::MalformedRef { .. })
         ));
     }
 
@@ -375,14 +436,14 @@ mod tests {
     fn parse_no_colon() {
         assert!(matches!(
             Value::parse("${secret}"),
-            Err(ValueError::MalformedRef { .. })
+            Err(TemplateError::MalformedRef { .. })
         ));
     }
 
     #[test]
     fn parse_invalid_secret_name() {
         let err = Value::parse("${secret:Bad Name}").unwrap_err();
-        assert!(matches!(err, ValueError::InvalidName { ref ns, .. } if ns == "secret"));
+        assert!(matches!(err, TemplateError::InvalidName { ref ns, .. } if ns == "secret"));
     }
 
     #[test]
@@ -423,7 +484,7 @@ mod tests {
     #[test]
     fn parse_unit_ref_invalid_ns_rejected() {
         let err = Value::parse("${PgMain:port}").unwrap_err();
-        assert!(matches!(err, ValueError::UnknownNamespace { ref ns, .. } if ns == "PgMain"));
+        assert!(matches!(err, TemplateError::UnknownNamespace { ref ns, .. } if ns == "PgMain"));
     }
 
     #[test]
@@ -565,5 +626,83 @@ mod tests {
         };
         assert!(matches!(&unit_loc, Location::Unit { name } if name == "app-db"));
         assert!(matches!(*leaf, RefError::UnknownExport { ref key } if key == "unknown"));
+    }
+
+    fn first_node(src: &str) -> kdl::KdlNode {
+        let doc: kdl::KdlDocument = src.parse().expect("test KDL must parse");
+        doc.nodes()
+            .first()
+            .expect("test KDL must have at least one node")
+            .clone()
+    }
+
+    #[test]
+    fn try_from_node_string() {
+        let v = Value::try_from(&first_node(r#"key "127.0.0.1""#)).unwrap();
+        assert_eq!(v.as_template(), "127.0.0.1");
+    }
+
+    #[test]
+    fn try_from_node_integer() {
+        let v = Value::try_from(&first_node("key 8000")).unwrap();
+        assert_eq!(v.as_template(), "8000");
+    }
+
+    #[test]
+    fn try_from_node_float() {
+        let v = Value::try_from(&first_node("key 0.5")).unwrap();
+        assert_eq!(v.as_template(), "0.5");
+    }
+
+    #[test]
+    fn try_from_node_template_ref() {
+        let v = Value::try_from(&first_node(r#"key "${secret:nexus/secret-key}""#)).unwrap();
+        let refs: Vec<(&Ns, &str)> = v.references().collect();
+        assert_eq!(refs, vec![(&Ns::Secret, "nexus/secret-key")]);
+    }
+
+    #[test]
+    fn try_from_node_no_args() {
+        let err = Value::try_from(&first_node("key")).unwrap_err();
+        assert!(matches!(err, ValueError::EntryCount { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn try_from_node_too_many_args() {
+        let err = Value::try_from(&first_node(r#"key "a" "b""#)).unwrap_err();
+        assert!(matches!(err, ValueError::EntryCount { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn try_from_node_named_entry() {
+        let err = Value::try_from(&first_node(r#"key value="x""#)).unwrap_err();
+        assert!(matches!(err, ValueError::NamedEntry { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn try_from_node_child_block() {
+        let err = Value::try_from(&first_node(r#"key "x" { extra }"#)).unwrap_err();
+        assert!(matches!(err, ValueError::HasChildren { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn try_from_node_null() {
+        let err = Value::try_from(&first_node("key #null")).unwrap_err();
+        assert!(matches!(err, ValueError::Null { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn try_from_node_invalid_template() {
+        let err = Value::try_from(&first_node(r#"key "${secret:}""#)).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValueError::InvalidTemplate {
+                    source: TemplateError::MalformedRef { .. },
+                    ..
+                },
+            ),
+            "{err:?}",
+        );
     }
 }

@@ -2,10 +2,7 @@ mod value;
 
 use std::collections::BTreeMap;
 
-use kdl::{
-    KdlNode,
-    KdlValue,
-};
+use kdl::KdlNode;
 use miette::SourceSpan;
 use serde::{
     Deserialize,
@@ -18,13 +15,13 @@ pub use self::value::{
     ValueError,
 };
 use crate::{
-    MainContext,
     config::ValidateConfig,
     error::{
         Location,
         RefError,
     },
     validate,
+    MainContext,
 };
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -35,13 +32,9 @@ pub enum EnvListError {
     #[error("env block must not have arguments or properties")]
     EnvNodeHasArgs { span: SourceSpan },
 
-    #[error("invalid syntax for env var '{key}'")]
-    InvalidSyntax { key: String, span: SourceSpan },
-
-    #[error("invalid template in env var '{key}': {source}")]
-    InvalidTemplate {
+    #[error("invalid env var '{key}': {source}")]
+    InvalidEntry {
         key: String,
-        span: SourceSpan,
         #[source]
         source: ValueError,
     },
@@ -62,54 +55,10 @@ impl TryFrom<&KdlNode> for EnvList {
         let mut map = BTreeMap::new();
         for child in children.nodes() {
             let key = child.name().value().to_owned();
-
-            if child.children().is_some() {
-                return Err(EnvListError::InvalidSyntax {
-                    key,
-                    span: child.span(),
-                });
-            }
-
-            let entries = child.entries();
-            for entry in entries {
-                if entry.name().is_some() {
-                    return Err(EnvListError::InvalidSyntax {
-                        key,
-                        span: entry.span(),
-                    });
-                }
-            }
-
-            if entries.len() != 1 {
-                return Err(EnvListError::InvalidSyntax {
-                    key,
-                    span: child.span(),
-                });
-            }
-
-            let entry = &entries[0];
-            let value = match entry.value() {
-                KdlValue::String(s) => {
-                    Value::parse(s).map_err(|source| EnvListError::InvalidTemplate {
-                        key: key.clone(),
-                        span: entry.span(),
-                        source,
-                    })?
-                }
-                KdlValue::Integer(i) => Value::parse(&i.to_string())
-                    .expect("integer literal cannot contain template syntax"),
-                KdlValue::Float(f) => Value::parse(&f.to_string())
-                    .expect("float literal cannot contain template syntax"),
-                KdlValue::Bool(b) => Value::parse(if *b { "true" } else { "false" })
-                    .expect("bool literal cannot contain template syntax"),
-                KdlValue::Null => {
-                    return Err(EnvListError::InvalidSyntax {
-                        key,
-                        span: entry.span(),
-                    });
-                }
-            };
-
+            let value = Value::try_from(child).map_err(|source| EnvListError::InvalidEntry {
+                key: key.clone(),
+                source,
+            })?;
             map.insert(key, value);
         }
 
@@ -156,7 +105,10 @@ mod tests {
     use kdl::KdlDocument;
 
     use super::*;
-    use crate::deploy::env::value::Ns;
+    use crate::deploy::env::value::{
+        Ns,
+        TemplateError,
+    };
 
     fn parse_env(src: &str) -> Result<EnvList, EnvListError> {
         let doc: KdlDocument = src.parse().expect("test KDL must parse");
@@ -252,60 +204,32 @@ mod tests {
     }
 
     #[test]
-    fn kdl_missing_value_rejected() {
+    fn kdl_entry_error_carries_key_and_shape() {
         let err = parse_env("env { KEY }").unwrap_err();
         assert!(
-            matches!(&err, EnvListError::InvalidSyntax { key, .. } if key == "KEY"),
+            matches!(
+                &err,
+                EnvListError::InvalidEntry {
+                    key,
+                    source: ValueError::EntryCount { .. },
+                } if key == "KEY",
+            ),
             "unexpected error: {err:?}",
         );
     }
 
     #[test]
-    fn kdl_too_many_values_rejected() {
-        let err = parse_env(r#"env { KEY "a" "b" }"#).unwrap_err();
-        assert!(
-            matches!(&err, EnvListError::InvalidSyntax { key, .. } if key == "KEY"),
-            "unexpected error: {err:?}",
-        );
-    }
-
-    #[test]
-    fn kdl_named_entry_rejected() {
-        let err = parse_env(r#"env { KEY value="x" }"#).unwrap_err();
-        assert!(
-            matches!(&err, EnvListError::InvalidSyntax { key, .. } if key == "KEY"),
-            "unexpected error: {err:?}",
-        );
-    }
-
-    #[test]
-    fn kdl_child_block_rejected() {
-        let err = parse_env(r#"env { KEY "x" { extra } }"#).unwrap_err();
-        assert!(
-            matches!(&err, EnvListError::InvalidSyntax { key, .. } if key == "KEY"),
-            "unexpected error: {err:?}",
-        );
-    }
-
-    #[test]
-    fn kdl_null_value_rejected() {
-        let err = parse_env("env { KEY #null }").unwrap_err();
-        assert!(
-            matches!(&err, EnvListError::InvalidSyntax { key, .. } if key == "KEY"),
-            "unexpected error: {err:?}",
-        );
-    }
-
-    #[test]
-    fn kdl_invalid_template_rejected() {
+    fn kdl_entry_error_carries_template_failure() {
         let err = parse_env(r#"env { BAD "${secret:}" }"#).unwrap_err();
         assert!(
             matches!(
                 &err,
-                EnvListError::InvalidTemplate {
+                EnvListError::InvalidEntry {
                     key,
-                    source: ValueError::MalformedRef { .. },
-                    ..
+                    source: ValueError::InvalidTemplate {
+                        source: TemplateError::MalformedRef { .. },
+                        ..
+                    },
                 } if key == "BAD",
             ),
             "unexpected error: {err:?}",
