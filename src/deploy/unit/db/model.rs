@@ -1,3 +1,4 @@
+use kdl::KdlNode;
 use percent_encoding::{
     AsciiSet,
     NON_ALPHANUMERIC,
@@ -10,7 +11,13 @@ use serde::{
 
 use crate::{
     MainContext,
-    config::ValidateConfig,
+    config::{
+        ConfigNodeError,
+        FromConfigNode,
+        ValidateConfig,
+        parse_string_child,
+        set_field,
+    },
     deploy::unit::UnitConfig,
     error::{
         Location,
@@ -123,6 +130,51 @@ impl DbConfig {
     }
 }
 
+impl TryFrom<&KdlNode> for DbConfig {
+    type Error = ConfigNodeError;
+
+    fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
+        if let Some(entry) = node.entries().first() {
+            return Err(ConfigNodeError::WrapperHasArgs { span: entry.span() });
+        }
+
+        let mut server: Option<String> = None;
+        let mut user: Option<String> = None;
+        let mut secret: Option<String> = None;
+
+        if let Some(children) = node.children() {
+            for child in children.nodes() {
+                match child.name().value() {
+                    "server" => set_field(&mut server, child, "server")?,
+                    "user" => set_field(&mut user, child, "user")?,
+                    "secret" => set_field(&mut secret, child, "secret")?,
+                    other => {
+                        return Err(ConfigNodeError::UnknownField {
+                            name: other.to_owned(),
+                            span: child.span(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(DbConfig {
+            server: server.ok_or(ConfigNodeError::MissingField {
+                name: "server",
+                span: node.span(),
+            })?,
+            user: user.ok_or(ConfigNodeError::MissingField {
+                name: "user",
+                span: node.span(),
+            })?,
+            secret: secret.ok_or(ConfigNodeError::MissingField {
+                name: "secret",
+                span: node.span(),
+            })?,
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum DbServerEngine {
@@ -203,6 +255,30 @@ impl DbServerEngine {
     }
 }
 
+impl FromConfigNode for DbServerEngine {
+    fn from_config_node(node: &KdlNode, name: &'static str) -> Result<Self, ConfigNodeError> {
+        let value = parse_string_child(node).map_err(|source| ConfigNodeError::InvalidField {
+            name: name.to_owned(),
+            span: node.span(),
+            source,
+        })?;
+
+        match value {
+            "postgresql" => Ok(Self::Postgresql),
+            "mariadb" => Ok(Self::Mariadb),
+            other => Err(ConfigNodeError::UnknownVariant {
+                field: name,
+                value: other.to_owned(),
+                span: node
+                    .entries()
+                    .first()
+                    .map(|e| e.span())
+                    .unwrap_or_else(|| node.span()),
+            }),
+        }
+    }
+}
+
 impl DbServerConfig {
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
         self.resolve_password(ctx)?;
@@ -213,6 +289,51 @@ impl DbServerConfig {
         ctx.resolve_secret(&self.secret)
             .map_err(RefError::from)
             .map_err(|err| err.at(Location::field("secret")))
+    }
+}
+
+impl TryFrom<&KdlNode> for DbServerConfig {
+    type Error = ConfigNodeError;
+
+    fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
+        if let Some(entry) = node.entries().first() {
+            return Err(ConfigNodeError::WrapperHasArgs { span: entry.span() });
+        }
+
+        let mut engine: Option<DbServerEngine> = None;
+        let mut version: Option<String> = None;
+        let mut secret: Option<String> = None;
+
+        if let Some(children) = node.children() {
+            for child in children.nodes() {
+                match child.name().value() {
+                    "engine" => set_field(&mut engine, child, "engine")?,
+                    "version" => set_field(&mut version, child, "version")?,
+                    "secret" => set_field(&mut secret, child, "secret")?,
+                    other => {
+                        return Err(ConfigNodeError::UnknownField {
+                            name: other.to_owned(),
+                            span: child.span(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(DbServerConfig {
+            engine: engine.ok_or(ConfigNodeError::MissingField {
+                name: "engine",
+                span: node.span(),
+            })?,
+            version: version.ok_or(ConfigNodeError::MissingField {
+                name: "version",
+                span: node.span(),
+            })?,
+            secret: secret.ok_or(ConfigNodeError::MissingField {
+                name: "secret",
+                span: node.span(),
+            })?,
+        })
     }
 }
 
@@ -232,7 +353,214 @@ impl ValidateConfig for DbServerConfig {
 
 #[cfg(test)]
 mod tests {
+    use kdl::KdlDocument;
+
     use super::*;
+    use crate::config::FieldError;
+
+    fn parse_db(src: &str) -> Result<DbConfig, ConfigNodeError> {
+        let doc: KdlDocument = src.parse().expect("test KDL must parse");
+        DbConfig::try_from(doc.nodes().first().expect("test KDL must have a node"))
+    }
+
+    fn parse_db_server(src: &str) -> Result<DbServerConfig, ConfigNodeError> {
+        let doc: KdlDocument = src.parse().expect("test KDL must parse");
+        DbServerConfig::try_from(doc.nodes().first().expect("test KDL must have a node"))
+    }
+
+    #[test]
+    fn kdl_db_basic() {
+        let cfg = parse_db(
+            r#"
+            db {
+                server "pg-main"
+                user "app1"
+                secret "app1-pass"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.server, "pg-main");
+        assert_eq!(cfg.user, "app1");
+        assert_eq!(cfg.secret, "app1-pass");
+    }
+
+    #[test]
+    fn kdl_db_server_basic_postgres() {
+        let cfg = parse_db_server(
+            r#"
+            db-server {
+                engine "postgresql"
+                version "18-alpine"
+                secret "pg-pass"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.engine, DbServerEngine::Postgresql);
+        assert_eq!(cfg.version, "18-alpine");
+        assert_eq!(cfg.secret, "pg-pass");
+    }
+
+    #[test]
+    fn kdl_db_server_basic_mariadb() {
+        let cfg = parse_db_server(
+            r#"
+            db-server {
+                engine "mariadb"
+                version "12"
+                secret "maria-pass"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.engine, DbServerEngine::Mariadb);
+    }
+
+    #[test]
+    fn kdl_db_server_unknown_engine() {
+        let err = parse_db_server(
+            r#"
+            db-server {
+                engine "sqlite"
+                version "1"
+                secret "s"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ConfigNodeError::UnknownVariant { field, value, .. }
+                    if *field == "engine" && value == "sqlite",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_db_missing_field() {
+        let err = parse_db(
+            r#"
+            db {
+                server "pg-main"
+                user "app1"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ConfigNodeError::MissingField { name, .. } if *name == "secret"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_db_unknown_field() {
+        let err = parse_db(
+            r#"
+            db {
+                server "pg-main"
+                user "app1"
+                secret "s"
+                host "x"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ConfigNodeError::UnknownField { name, .. } if name == "host"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_db_duplicate_field() {
+        let err = parse_db(
+            r#"
+            db {
+                server "pg-main"
+                server "pg-other"
+                user "app1"
+                secret "s"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ConfigNodeError::DuplicateField { name, .. } if name == "server"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_db_wrapper_with_args_rejected() {
+        let err = parse_db(
+            r#"
+            db "stray" {
+                server "pg-main"
+                user "app1"
+                secret "s"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ConfigNodeError::WrapperHasArgs { .. }),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_db_field_not_a_string() {
+        let err = parse_db(
+            r#"
+            db {
+                server 5
+                user "app1"
+                secret "s"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ConfigNodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidType { expected: "string", .. },
+                    ..
+                } if name == "server",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_db_field_with_children_rejected() {
+        let err = parse_db(
+            r#"
+            db {
+                server "pg-main"
+                user "app1"
+                secret "s" { extra }
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ConfigNodeError::InvalidField {
+                    name,
+                    source: FieldError::HasChildren { .. },
+                    ..
+                } if name == "secret",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
 
     #[test]
     fn parse_db_config() {
