@@ -144,13 +144,14 @@ impl TryFrom<&KdlNode> for DbConfig {
 
         if let Some(children) = node.children() {
             for child in children.nodes() {
-                match child.name().value() {
-                    "server" => set_field(&mut server, child, "server")?,
-                    "user" => set_field(&mut user, child, "user")?,
-                    "secret" => set_field(&mut secret, child, "secret")?,
-                    other => {
+                let name = child.name().value();
+                match name {
+                    "server" => set_field(&mut server, child, name)?,
+                    "user" => set_field(&mut user, child, name)?,
+                    "secret" => set_field(&mut secret, child, name)?,
+                    _ => {
                         return Err(ConfigNodeError::UnknownField {
-                            name: other.to_owned(),
+                            name: name.to_owned(),
                             span: child.span(),
                         });
                     }
@@ -256,7 +257,7 @@ impl DbServerEngine {
 }
 
 impl FromConfigNode for DbServerEngine {
-    fn from_config_node(node: &KdlNode, name: &'static str) -> Result<Self, ConfigNodeError> {
+    fn from_config_node(node: &KdlNode, name: &str) -> Result<Self, ConfigNodeError> {
         let value = parse_string_child(node).map_err(|source| ConfigNodeError::InvalidField {
             name: name.to_owned(),
             span: node.span(),
@@ -267,7 +268,7 @@ impl FromConfigNode for DbServerEngine {
             "postgresql" => Ok(Self::Postgresql),
             "mariadb" => Ok(Self::Mariadb),
             other => Err(ConfigNodeError::UnknownVariant {
-                field: name,
+                field: name.to_owned(),
                 value: other.to_owned(),
                 span: node
                     .entries()
@@ -306,13 +307,14 @@ impl TryFrom<&KdlNode> for DbServerConfig {
 
         if let Some(children) = node.children() {
             for child in children.nodes() {
-                match child.name().value() {
-                    "engine" => set_field(&mut engine, child, "engine")?,
-                    "version" => set_field(&mut version, child, "version")?,
-                    "secret" => set_field(&mut secret, child, "secret")?,
-                    other => {
+                let name = child.name().value();
+                match name {
+                    "engine" => set_field(&mut engine, child, name)?,
+                    "version" => set_field(&mut version, child, name)?,
+                    "secret" => set_field(&mut secret, child, name)?,
+                    _ => {
                         return Err(ConfigNodeError::UnknownField {
-                            name: other.to_owned(),
+                            name: name.to_owned(),
                             span: child.span(),
                         });
                     }

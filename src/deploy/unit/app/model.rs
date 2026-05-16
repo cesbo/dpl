@@ -1,3 +1,4 @@
+use kdl::KdlNode;
 use serde::{
     Deserialize,
     Serialize,
@@ -5,7 +6,12 @@ use serde::{
 
 use crate::{
     MainContext,
-    config::ValidateConfig,
+    config::{
+        ConfigNodeError,
+        ValidateConfig,
+        parse_string_arg,
+        set_field,
+    },
     deploy::{
         EnvList,
         UnitConfig,
@@ -67,8 +73,6 @@ pub struct RuntimeConfig {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct VolumeConfig {
-    /// Description
-    pub description: Option<String>,
     /// Source is a podman volume name or full path to the host directory
     pub source: String,
     /// Path inside the container where the volume will be mounted
@@ -79,8 +83,6 @@ pub struct VolumeConfig {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ExportConfig {
-    /// Description
-    pub description: Option<String>,
     /// Path inside the container where static files located
     pub source: String,
     /// URL path where the exported files will be accessible
@@ -93,8 +95,6 @@ pub struct ExportConfig {
 pub struct TimerConfig {
     /// Name
     pub name: String,
-    /// Description
-    pub description: Option<String>,
     /// Schedule in systemd OnCalendar format
     pub schedule: String,
     /// Script to run
@@ -116,6 +116,130 @@ impl ValidateConfig for TimerConfig {
         }
 
         Ok(())
+    }
+}
+
+impl TryFrom<&KdlNode> for VolumeConfig {
+    type Error = ConfigNodeError;
+
+    fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
+        let source = parse_string_arg(node)
+            .map(str::to_owned)
+            .map_err(|source| ConfigNodeError::InvalidField {
+                name: "source".to_owned(),
+                span: node.span(),
+                source,
+            })?;
+
+        let mut path: Option<String> = None;
+
+        if let Some(children) = node.children() {
+            for child in children.nodes() {
+                let name = child.name().value();
+                match name {
+                    "path" => set_field(&mut path, child, name)?,
+                    _ => {
+                        return Err(ConfigNodeError::UnknownField {
+                            name: name.to_owned(),
+                            span: child.span(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(VolumeConfig {
+            source,
+            path: path.ok_or(ConfigNodeError::MissingField {
+                name: "path",
+                span: node.span(),
+            })?,
+        })
+    }
+}
+
+impl TryFrom<&KdlNode> for ExportConfig {
+    type Error = ConfigNodeError;
+
+    fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
+        if let Some(entry) = node.entries().first() {
+            return Err(ConfigNodeError::WrapperHasArgs { span: entry.span() });
+        }
+
+        let mut source: Option<String> = None;
+        let mut path: Option<String> = None;
+
+        if let Some(children) = node.children() {
+            for child in children.nodes() {
+                let name = child.name().value();
+                match name {
+                    "source" => set_field(&mut source, child, name)?,
+                    "path" => set_field(&mut path, child, name)?,
+                    _ => {
+                        return Err(ConfigNodeError::UnknownField {
+                            name: name.to_owned(),
+                            span: child.span(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(ExportConfig {
+            source: source.ok_or(ConfigNodeError::MissingField {
+                name: "source",
+                span: node.span(),
+            })?,
+            path: path.ok_or(ConfigNodeError::MissingField {
+                name: "path",
+                span: node.span(),
+            })?,
+        })
+    }
+}
+
+impl TryFrom<&KdlNode> for TimerConfig {
+    type Error = ConfigNodeError;
+
+    fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
+        let name = parse_string_arg(node)
+            .map(str::to_owned)
+            .map_err(|source| ConfigNodeError::InvalidField {
+                name: "name".to_owned(),
+                span: node.span(),
+                source,
+            })?;
+
+        let mut schedule: Option<String> = None;
+        let mut script: Option<String> = None;
+
+        if let Some(children) = node.children() {
+            for child in children.nodes() {
+                let name = child.name().value();
+                match name {
+                    "schedule" => set_field(&mut schedule, child, name)?,
+                    "script" => set_field(&mut script, child, name)?,
+                    _ => {
+                        return Err(ConfigNodeError::UnknownField {
+                            name: name.to_owned(),
+                            span: child.span(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(TimerConfig {
+            name,
+            schedule: schedule.ok_or(ConfigNodeError::MissingField {
+                name: "schedule",
+                span: node.span(),
+            })?,
+            script: script.ok_or(ConfigNodeError::MissingField {
+                name: "script",
+                span: node.span(),
+            })?,
+        })
     }
 }
 
@@ -195,9 +319,26 @@ impl ValidateConfig for AppConfig {
 mod tests {
     use std::fs;
 
+    use kdl::KdlDocument;
     use tempfile::TempDir;
 
     use super::*;
+    use crate::config::FieldError;
+
+    fn parse_volume(src: &str) -> Result<VolumeConfig, ConfigNodeError> {
+        let doc: KdlDocument = src.parse().expect("test KDL must parse");
+        VolumeConfig::try_from(doc.nodes().first().expect("test KDL must have a node"))
+    }
+
+    fn parse_export(src: &str) -> Result<ExportConfig, ConfigNodeError> {
+        let doc: KdlDocument = src.parse().expect("test KDL must parse");
+        ExportConfig::try_from(doc.nodes().first().expect("test KDL must have a node"))
+    }
+
+    fn parse_timer(src: &str) -> Result<TimerConfig, ConfigNodeError> {
+        let doc: KdlDocument = src.parse().expect("test KDL must parse");
+        TimerConfig::try_from(doc.nodes().first().expect("test KDL must have a node"))
+    }
 
     fn sample_config() -> AppConfig {
         AppConfig {
@@ -249,6 +390,547 @@ mod tests {
         assert!(
             reason.contains("is not deployed yet"),
             "unexpected reason: {reason}"
+        );
+    }
+
+    #[test]
+    fn kdl_volume_basic() {
+        let cfg = parse_volume(
+            r#"
+            volume "/var/lib/app/uploads" {
+                path "/app/uploads"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.source, "/var/lib/app/uploads");
+        assert_eq!(cfg.path, "/app/uploads");
+    }
+
+    #[test]
+    fn kdl_volume_named_volume() {
+        let cfg = parse_volume(
+            r#"
+            volume "uploads-data" {
+                path "/app/uploads"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.source, "uploads-data");
+        assert_eq!(cfg.path, "/app/uploads");
+    }
+
+    #[test]
+    fn kdl_volume_missing_source() {
+        let err = parse_volume(
+            r#"
+            volume {
+                path "/app/uploads"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ConfigNodeError::InvalidField {
+                    name,
+                    source: FieldError::EntryCount { .. },
+                    ..
+                } if name == "source",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_volume_missing_path() {
+        let err = parse_volume(
+            r#"
+            volume "/var/lib/app/uploads"
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ConfigNodeError::MissingField { name, .. } if *name == "path"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_volume_unknown_field() {
+        let err = parse_volume(
+            r#"
+            volume "/s" {
+                path "/p"
+                mode "rw"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ConfigNodeError::UnknownField { name, .. } if name == "mode"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_volume_duplicate_field() {
+        let err = parse_volume(
+            r#"
+            volume "/s" {
+                path "/p1"
+                path "/p2"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ConfigNodeError::DuplicateField { name, .. } if name == "path"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_volume_extra_args_rejected() {
+        let err = parse_volume(
+            r#"
+            volume "/s" "/extra" {
+                path "/p"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ConfigNodeError::InvalidField {
+                    name,
+                    source: FieldError::EntryCount { .. },
+                    ..
+                } if name == "source",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_volume_source_not_a_string() {
+        let err = parse_volume(
+            r#"
+            volume 5 {
+                path "/p"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ConfigNodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidType { expected: "string", .. },
+                    ..
+                } if name == "source",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_volume_field_not_a_string() {
+        let err = parse_volume(
+            r#"
+            volume "/s" {
+                path 7
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ConfigNodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidType { expected: "string", .. },
+                    ..
+                } if name == "path",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_export_basic() {
+        let cfg = parse_export(
+            r#"
+            export {
+                source "/app/staticfiles"
+                path "/static"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.source, "/app/staticfiles");
+        assert_eq!(cfg.path, "/static");
+    }
+
+    #[test]
+    fn kdl_export_without_description() {
+        let cfg = parse_export(
+            r#"
+            export {
+                source "/app/staticfiles"
+                path "/static"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.source, "/app/staticfiles");
+        assert_eq!(cfg.path, "/static");
+    }
+
+    #[test]
+    fn kdl_export_missing_source() {
+        let err = parse_export(
+            r#"
+            export {
+                path "/static"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ConfigNodeError::MissingField { name, .. } if *name == "source"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_export_missing_path() {
+        let err = parse_export(
+            r#"
+            export {
+                source "/app/staticfiles"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ConfigNodeError::MissingField { name, .. } if *name == "path"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_export_unknown_field() {
+        let err = parse_export(
+            r#"
+            export {
+                source "/s"
+                path "/p"
+                kind "static"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ConfigNodeError::UnknownField { name, .. } if name == "kind"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_export_duplicate_field() {
+        let err = parse_export(
+            r#"
+            export {
+                source "/s"
+                path "/p1"
+                path "/p2"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ConfigNodeError::DuplicateField { name, .. } if name == "path"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_export_wrapper_with_args_rejected() {
+        let err = parse_export(
+            r#"
+            export "stray" {
+                source "/s"
+                path "/p"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ConfigNodeError::WrapperHasArgs { .. }),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_export_field_not_a_string() {
+        let err = parse_export(
+            r#"
+            export {
+                source "/s"
+                path 7
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ConfigNodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidType { expected: "string", .. },
+                    ..
+                } if name == "path",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_timer_basic() {
+        let cfg = parse_timer(
+            r#"
+            timer "run-tasks" {
+                schedule "minutely"
+                script "python manage.py run_tasks"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.name, "run-tasks");
+        assert_eq!(cfg.schedule, "minutely");
+        assert_eq!(cfg.script, "python manage.py run_tasks");
+    }
+
+    #[test]
+    fn kdl_timer_without_description() {
+        let cfg = parse_timer(
+            r#"
+            timer "run-tasks" {
+                schedule "minutely"
+                script "python manage.py run_tasks"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.name, "run-tasks");
+    }
+
+    #[test]
+    fn kdl_timer_multiline_script() {
+        let cfg = parse_timer(
+            r#"
+            timer "run-tasks" {
+                schedule "minutely"
+                script """
+                    python manage.py run_tasks
+                    """
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.script, "python manage.py run_tasks");
+    }
+
+    #[test]
+    fn kdl_timer_missing_schedule() {
+        let err = parse_timer(
+            r#"
+            timer "run-tasks" {
+                script "x"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ConfigNodeError::MissingField { name, .. } if *name == "schedule"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_timer_missing_script() {
+        let err = parse_timer(
+            r#"
+            timer "run-tasks" {
+                schedule "minutely"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ConfigNodeError::MissingField { name, .. } if *name == "script"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_timer_unknown_field() {
+        let err = parse_timer(
+            r#"
+            timer "run-tasks" {
+                schedule "minutely"
+                script "x"
+                user "root"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ConfigNodeError::UnknownField { name, .. } if name == "user"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_timer_duplicate_field() {
+        let err = parse_timer(
+            r#"
+            timer "run-tasks" {
+                schedule "minutely"
+                schedule "hourly"
+                script "x"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ConfigNodeError::DuplicateField { name, .. } if name == "schedule"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_timer_without_name_rejected() {
+        let err = parse_timer(
+            r#"
+            timer {
+                schedule "minutely"
+                script "x"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ConfigNodeError::InvalidField {
+                    name,
+                    source: FieldError::EntryCount { .. },
+                    ..
+                } if name == "name",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_timer_multiple_args_rejected() {
+        let err = parse_timer(
+            r#"
+            timer "run-tasks" "extra" {
+                schedule "minutely"
+                script "x"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ConfigNodeError::InvalidField {
+                    name,
+                    source: FieldError::EntryCount { .. },
+                    ..
+                } if name == "name",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_timer_named_arg_rejected() {
+        let err = parse_timer(
+            r#"
+            timer name="run-tasks" {
+                schedule "minutely"
+                script "x"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ConfigNodeError::InvalidField {
+                    name,
+                    source: FieldError::NamedEntry { .. },
+                    ..
+                } if name == "name",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_timer_name_not_a_string() {
+        let err = parse_timer(
+            r#"
+            timer 5 {
+                schedule "minutely"
+                script "x"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ConfigNodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidType { expected: "string", .. },
+                    ..
+                } if name == "name",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_timer_field_not_a_string() {
+        let err = parse_timer(
+            r#"
+            timer "run-tasks" {
+                schedule 5
+                script "x"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ConfigNodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidType { expected: "string", .. },
+                    ..
+                } if name == "schedule",
+            ),
+            "unexpected error: {err:?}",
         );
     }
 }

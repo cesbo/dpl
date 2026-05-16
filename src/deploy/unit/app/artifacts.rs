@@ -247,13 +247,11 @@ mod tests {
             timers: vec![
                 TimerConfig {
                     name: "cleanup".into(),
-                    description: None,
                     schedule: "*-*-* 03:00:00".into(),
                     script: "echo cleanup".into(),
                 },
                 TimerConfig {
                     name: "sync".into(),
-                    description: None,
                     schedule: "hourly".into(),
                     script: "echo sync".into(),
                 },

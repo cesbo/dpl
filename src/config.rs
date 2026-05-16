@@ -89,7 +89,7 @@ pub enum ConfigNodeError {
 
     #[error("unknown value '{value}' for field '{field}'")]
     UnknownVariant {
-        field: &'static str,
+        field: String,
         value: String,
         span: SourceSpan,
     },
@@ -123,16 +123,43 @@ pub(crate) fn parse_string_child(node: &KdlNode) -> Result<&str, FieldError> {
     }
 }
 
+/// Parse the single positional string argument of a wrapper node, e.g. the
+/// `"run-tasks"` in `timer "run-tasks" { ... }`. Rejects zero or multiple
+/// entries, named entries, and non-string values. Unlike
+/// `parse_string_child`, this does not reject child blocks — wrapper nodes
+/// typically carry their body as children.
+pub(crate) fn parse_string_arg(node: &KdlNode) -> Result<&str, FieldError> {
+    let entries = node.entries();
+
+    for entry in entries {
+        if entry.name().is_some() {
+            return Err(FieldError::NamedEntry { span: entry.span() });
+        }
+    }
+
+    let [entry] = entries else {
+        return Err(FieldError::EntryCount { span: node.span() });
+    };
+
+    match entry.value() {
+        KdlValue::String(s) => Ok(s.as_str()),
+        _ => Err(FieldError::InvalidType {
+            expected: "string",
+            span: entry.span(),
+        }),
+    }
+}
+
 /// Convert a single child node (e.g. `engine "postgresql"`) into a typed
 /// field value. Implementors decide which `ConfigNodeError` shape is the
 /// most precise — `FieldError`-wrapping shapes for scalar mismatches,
 /// `UnknownVariant` for enums, etc.
 pub(crate) trait FromConfigNode: Sized {
-    fn from_config_node(node: &KdlNode, name: &'static str) -> Result<Self, ConfigNodeError>;
+    fn from_config_node(node: &KdlNode, name: &str) -> Result<Self, ConfigNodeError>;
 }
 
 impl FromConfigNode for String {
-    fn from_config_node(node: &KdlNode, name: &'static str) -> Result<Self, ConfigNodeError> {
+    fn from_config_node(node: &KdlNode, name: &str) -> Result<Self, ConfigNodeError> {
         parse_string_child(node)
             .map(str::to_owned)
             .map_err(|source| ConfigNodeError::InvalidField {
@@ -148,7 +175,7 @@ impl FromConfigNode for String {
 pub(crate) fn set_field<T: FromConfigNode>(
     target: &mut Option<T>,
     child: &KdlNode,
-    name: &'static str,
+    name: &str,
 ) -> Result<(), ConfigNodeError> {
     if target.is_some() {
         return Err(ConfigNodeError::DuplicateField {
