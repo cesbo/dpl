@@ -2,17 +2,19 @@ use kdl::{
     KdlNode,
     KdlValue,
 };
-use miette::SourceSpan;
 use serde::{
     Deserialize,
     Deserializer,
     Serialize,
     Serializer,
 };
-use thiserror::Error;
 
 use crate::{
     MainContext,
+    config::{
+        FieldError,
+        TemplateError,
+    },
     deploy::unit,
     error::{
         Location,
@@ -20,50 +22,6 @@ use crate::{
     },
     validate,
 };
-
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum TemplateError {
-    #[error("unterminated reference at position {pos}: missing '}}'")]
-    UnterminatedRef { pos: usize },
-
-    #[error("bare '$' at position {pos}")]
-    BareDollar { pos: usize },
-
-    #[error("malformed reference at position {pos}: expected '${{ns:name}}'")]
-    MalformedRef { pos: usize },
-
-    #[error("unknown namespace '{ns}' at position {pos}")]
-    UnknownNamespace { pos: usize, ns: String },
-
-    #[error("invalid name '{name}' for namespace '{ns}' at position {pos}")]
-    InvalidName {
-        pos: usize,
-        ns: String,
-        name: String,
-    },
-}
-
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum ValueError {
-    #[error("expected exactly one value")]
-    EntryCount { span: SourceSpan },
-
-    #[error("named entries are not allowed")]
-    NamedEntry { span: SourceSpan },
-
-    #[error("child blocks are not allowed")]
-    HasChildren { span: SourceSpan },
-
-    #[error("null is not a valid value")]
-    Null { span: SourceSpan },
-
-    #[error("invalid template: {source}")]
-    InvalidTemplate {
-        span: SourceSpan,
-        #[source]
-        source: TemplateError,
-    },
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Ns {
@@ -293,33 +251,36 @@ impl<'de> Deserialize<'de> for Value {
 }
 
 impl TryFrom<&KdlNode> for Value {
-    type Error = ValueError;
+    type Error = FieldError;
 
     fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
         if node.children().is_some() {
-            return Err(ValueError::HasChildren { span: node.span() });
+            return Err(FieldError::HasChildren { span: node.span() });
         }
 
         let entries = node.entries();
         for entry in entries {
             if entry.name().is_some() {
-                return Err(ValueError::NamedEntry { span: entry.span() });
+                return Err(FieldError::NamedEntry { span: entry.span() });
             }
         }
 
         let [entry] = entries else {
-            return Err(ValueError::EntryCount { span: node.span() });
+            return Err(FieldError::EntryCount { span: node.span() });
         };
 
         match entry.value() {
-            KdlValue::String(s) => Value::parse(s).map_err(|source| ValueError::InvalidTemplate {
+            KdlValue::String(s) => Value::parse(s).map_err(|source| FieldError::InvalidTemplate {
                 span: entry.span(),
                 source,
             }),
             KdlValue::Integer(i) => Ok(Value::literal(i.to_string())),
             KdlValue::Float(f) => Ok(Value::literal(f.to_string())),
             KdlValue::Bool(b) => Ok(Value::literal(if *b { "true" } else { "false" }.to_owned())),
-            KdlValue::Null => Err(ValueError::Null { span: entry.span() }),
+            KdlValue::Null => Err(FieldError::InvalidType {
+                expected: "non-null value",
+                span: entry.span(),
+            }),
         }
     }
 }
@@ -664,31 +625,40 @@ mod tests {
     #[test]
     fn try_from_node_no_args() {
         let err = Value::try_from(&first_node("key")).unwrap_err();
-        assert!(matches!(err, ValueError::EntryCount { .. }), "{err:?}");
+        assert!(matches!(err, FieldError::EntryCount { .. }), "{err:?}");
     }
 
     #[test]
     fn try_from_node_too_many_args() {
         let err = Value::try_from(&first_node(r#"key "a" "b""#)).unwrap_err();
-        assert!(matches!(err, ValueError::EntryCount { .. }), "{err:?}");
+        assert!(matches!(err, FieldError::EntryCount { .. }), "{err:?}");
     }
 
     #[test]
     fn try_from_node_named_entry() {
         let err = Value::try_from(&first_node(r#"key value="x""#)).unwrap_err();
-        assert!(matches!(err, ValueError::NamedEntry { .. }), "{err:?}");
+        assert!(matches!(err, FieldError::NamedEntry { .. }), "{err:?}");
     }
 
     #[test]
     fn try_from_node_child_block() {
         let err = Value::try_from(&first_node(r#"key "x" { extra }"#)).unwrap_err();
-        assert!(matches!(err, ValueError::HasChildren { .. }), "{err:?}");
+        assert!(matches!(err, FieldError::HasChildren { .. }), "{err:?}");
     }
 
     #[test]
     fn try_from_node_null() {
         let err = Value::try_from(&first_node("key #null")).unwrap_err();
-        assert!(matches!(err, ValueError::Null { .. }), "{err:?}");
+        assert!(
+            matches!(
+                err,
+                FieldError::InvalidType {
+                    expected: "non-null value",
+                    ..
+                }
+            ),
+            "{err:?}",
+        );
     }
 
     #[test]
@@ -697,7 +667,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                ValueError::InvalidTemplate {
+                FieldError::InvalidTemplate {
                     source: TemplateError::MalformedRef { .. },
                     ..
                 },

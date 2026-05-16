@@ -16,6 +16,28 @@ use serde::{
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
+pub enum TemplateError {
+    #[error("unterminated reference at position {pos}: missing '}}'")]
+    UnterminatedRef { pos: usize },
+
+    #[error("bare '$' at position {pos}")]
+    BareDollar { pos: usize },
+
+    #[error("malformed reference at position {pos}: expected '${{ns:name}}'")]
+    MalformedRef { pos: usize },
+
+    #[error("unknown namespace '{ns}' at position {pos}")]
+    UnknownNamespace { pos: usize, ns: String },
+
+    #[error("invalid name '{name}' for namespace '{ns}' at position {pos}")]
+    InvalidName {
+        pos: usize,
+        ns: String,
+        name: String,
+    },
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum FieldError {
     #[error("expected exactly one positional value")]
     EntryCount { span: SourceSpan },
@@ -30,6 +52,13 @@ pub enum FieldError {
     InvalidType {
         expected: &'static str,
         span: SourceSpan,
+    },
+
+    #[error("invalid template: {source}")]
+    InvalidTemplate {
+        span: SourceSpan,
+        #[source]
+        source: TemplateError,
     },
 }
 

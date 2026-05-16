@@ -3,49 +3,34 @@ mod value;
 use std::collections::BTreeMap;
 
 use kdl::KdlNode;
-use miette::SourceSpan;
 use serde::{
     Deserialize,
     Serialize,
 };
-use thiserror::Error;
 
-pub use self::value::{
-    Value,
-    ValueError,
-};
+pub use self::value::Value;
 use crate::{
-    config::ValidateConfig,
+    MainContext,
+    config::{
+        ConfigNodeError,
+        ValidateConfig,
+    },
     error::{
         Location,
         RefError,
     },
     validate,
-    MainContext,
 };
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct EnvList(BTreeMap<String, Value>);
 
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum EnvListError {
-    #[error("env block must not have arguments or properties")]
-    EnvNodeHasArgs { span: SourceSpan },
-
-    #[error("invalid env var '{key}': {source}")]
-    InvalidEntry {
-        key: String,
-        #[source]
-        source: ValueError,
-    },
-}
-
 impl TryFrom<&KdlNode> for EnvList {
-    type Error = EnvListError;
+    type Error = ConfigNodeError;
 
     fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
         if let Some(stray) = node.entries().first() {
-            return Err(EnvListError::EnvNodeHasArgs { span: stray.span() });
+            return Err(ConfigNodeError::WrapperHasArgs { span: stray.span() });
         }
 
         let Some(children) = node.children() else {
@@ -55,8 +40,9 @@ impl TryFrom<&KdlNode> for EnvList {
         let mut map = BTreeMap::new();
         for child in children.nodes() {
             let key = child.name().value().to_owned();
-            let value = Value::try_from(child).map_err(|source| EnvListError::InvalidEntry {
-                key: key.clone(),
+            let value = Value::try_from(child).map_err(|source| ConfigNodeError::InvalidField {
+                name: key.clone(),
+                span: child.span(),
                 source,
             })?;
             map.insert(key, value);
@@ -105,12 +91,15 @@ mod tests {
     use kdl::KdlDocument;
 
     use super::*;
-    use crate::deploy::env::value::{
-        Ns,
-        TemplateError,
+    use crate::{
+        config::{
+            FieldError,
+            TemplateError,
+        },
+        deploy::env::value::Ns,
     };
 
-    fn parse_env(src: &str) -> Result<EnvList, EnvListError> {
+    fn parse_env(src: &str) -> Result<EnvList, ConfigNodeError> {
         let doc: KdlDocument = src.parse().expect("test KDL must parse");
         let node = doc
             .nodes()
@@ -189,7 +178,7 @@ mod tests {
     fn kdl_env_node_with_arg_rejected() {
         let err = parse_env(r#"env "stray" { DB_HOST "x" }"#).unwrap_err();
         assert!(
-            matches!(&err, EnvListError::EnvNodeHasArgs { .. }),
+            matches!(&err, ConfigNodeError::WrapperHasArgs { .. }),
             "unexpected error: {err:?}",
         );
     }
@@ -198,7 +187,7 @@ mod tests {
     fn kdl_env_node_with_property_rejected() {
         let err = parse_env(r#"env strict=#true { DB_HOST "x" }"#).unwrap_err();
         assert!(
-            matches!(&err, EnvListError::EnvNodeHasArgs { .. }),
+            matches!(&err, ConfigNodeError::WrapperHasArgs { .. }),
             "unexpected error: {err:?}",
         );
     }
@@ -209,10 +198,11 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                EnvListError::InvalidEntry {
-                    key,
-                    source: ValueError::EntryCount { .. },
-                } if key == "KEY",
+                ConfigNodeError::InvalidField {
+                    name,
+                    source: FieldError::EntryCount { .. },
+                    ..
+                } if name == "KEY",
             ),
             "unexpected error: {err:?}",
         );
@@ -224,13 +214,14 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                EnvListError::InvalidEntry {
-                    key,
-                    source: ValueError::InvalidTemplate {
+                ConfigNodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidTemplate {
                         source: TemplateError::MalformedRef { .. },
                         ..
                     },
-                } if key == "BAD",
+                    ..
+                } if name == "BAD",
             ),
             "unexpected error: {err:?}",
         );
