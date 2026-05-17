@@ -4,8 +4,8 @@ use kdl::{
 };
 
 use super::{
-    ConfigNodeError,
     FieldError,
+    NodeError,
 };
 
 /// Parse a child node shaped like `name "value"` and return the borrowed
@@ -37,18 +37,18 @@ pub fn parse_string_child(node: &KdlNode) -> Result<&str, FieldError> {
 }
 
 /// Convert a single child node (e.g. `engine "postgresql"`) into a typed
-/// field value. Implementors decide which `ConfigNodeError` shape is the
+/// field value. Implementors decide which `NodeError` shape is the
 /// most precise — `FieldError`-wrapping shapes for scalar mismatches,
 /// `UnknownVariant` for enums, etc.
-pub(crate) trait FromConfigNode: Sized {
-    fn from_config_node(node: &KdlNode, name: &str) -> Result<Self, ConfigNodeError>;
+pub(crate) trait FromKdlNode: Sized {
+    fn from_kdl_node(node: &KdlNode, name: &str) -> Result<Self, NodeError>;
 }
 
-impl FromConfigNode for String {
-    fn from_config_node(node: &KdlNode, name: &str) -> Result<Self, ConfigNodeError> {
+impl FromKdlNode for String {
+    fn from_kdl_node(node: &KdlNode, name: &str) -> Result<Self, NodeError> {
         parse_string_child(node)
             .map(str::to_owned)
-            .map_err(|source| ConfigNodeError::InvalidField {
+            .map_err(|source| NodeError::InvalidField {
                 name: name.to_owned(),
                 span: node.span(),
                 source,
@@ -56,20 +56,20 @@ impl FromConfigNode for String {
     }
 }
 
-/// Assign `child` into `target`, dispatching to `T::from_config_node`.
+/// Assign `child` into `target`, dispatching to `T::from_kdl_node`.
 /// Rejects re-assignment with `DuplicateField`.
-pub fn set_field<T: FromConfigNode>(
+pub fn set_field<T: FromKdlNode>(
     target: &mut Option<T>,
     child: &KdlNode,
     name: &str,
-) -> Result<(), ConfigNodeError> {
+) -> Result<(), NodeError> {
     if target.is_some() {
-        return Err(ConfigNodeError::DuplicateField {
+        return Err(NodeError::DuplicateField {
             name: name.to_owned(),
             span: child.span(),
         });
     }
 
-    *target = Some(T::from_config_node(child, name)?);
+    *target = Some(T::from_kdl_node(child, name)?);
     Ok(())
 }

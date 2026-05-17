@@ -7,9 +7,8 @@ use serde::{
 use crate::{
     MainContext,
     config::{
-        ConfigNodeError,
+        NodeError,
         ValidateConfig,
-        parse_string_arg,
         set_field,
     },
     deploy::{
@@ -20,6 +19,7 @@ use crate::{
         Location,
         RefError,
     },
+    kdl_args,
     validate,
 };
 
@@ -120,16 +120,10 @@ impl ValidateConfig for TimerConfig {
 }
 
 impl TryFrom<&KdlNode> for VolumeConfig {
-    type Error = ConfigNodeError;
+    type Error = NodeError;
 
     fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
-        let source = parse_string_arg(node)
-            .map(str::to_owned)
-            .map_err(|source| ConfigNodeError::InvalidField {
-                name: "source".to_owned(),
-                span: node.span(),
-                source,
-            })?;
+        let source = kdl_args!(node, source: String)?;
 
         let mut path: Option<String> = None;
 
@@ -139,7 +133,7 @@ impl TryFrom<&KdlNode> for VolumeConfig {
                 match name {
                     "path" => set_field(&mut path, child, name)?,
                     _ => {
-                        return Err(ConfigNodeError::UnknownField {
+                        return Err(NodeError::UnknownField {
                             name: name.to_owned(),
                             span: child.span(),
                         });
@@ -150,7 +144,7 @@ impl TryFrom<&KdlNode> for VolumeConfig {
 
         Ok(VolumeConfig {
             source,
-            path: path.ok_or(ConfigNodeError::MissingField {
+            path: path.ok_or(NodeError::MissingField {
                 name: "path",
                 span: node.span(),
             })?,
@@ -159,12 +153,10 @@ impl TryFrom<&KdlNode> for VolumeConfig {
 }
 
 impl TryFrom<&KdlNode> for ExportConfig {
-    type Error = ConfigNodeError;
+    type Error = NodeError;
 
     fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
-        if let Some(entry) = node.entries().first() {
-            return Err(ConfigNodeError::WrapperHasArgs { span: entry.span() });
-        }
+        kdl_args!(node)?;
 
         let mut source: Option<String> = None;
         let mut path: Option<String> = None;
@@ -176,7 +168,7 @@ impl TryFrom<&KdlNode> for ExportConfig {
                     "source" => set_field(&mut source, child, name)?,
                     "path" => set_field(&mut path, child, name)?,
                     _ => {
-                        return Err(ConfigNodeError::UnknownField {
+                        return Err(NodeError::UnknownField {
                             name: name.to_owned(),
                             span: child.span(),
                         });
@@ -186,11 +178,11 @@ impl TryFrom<&KdlNode> for ExportConfig {
         }
 
         Ok(ExportConfig {
-            source: source.ok_or(ConfigNodeError::MissingField {
+            source: source.ok_or(NodeError::MissingField {
                 name: "source",
                 span: node.span(),
             })?,
-            path: path.ok_or(ConfigNodeError::MissingField {
+            path: path.ok_or(NodeError::MissingField {
                 name: "path",
                 span: node.span(),
             })?,
@@ -199,16 +191,10 @@ impl TryFrom<&KdlNode> for ExportConfig {
 }
 
 impl TryFrom<&KdlNode> for TimerConfig {
-    type Error = ConfigNodeError;
+    type Error = NodeError;
 
     fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
-        let name = parse_string_arg(node)
-            .map(str::to_owned)
-            .map_err(|source| ConfigNodeError::InvalidField {
-                name: "name".to_owned(),
-                span: node.span(),
-                source,
-            })?;
+        let name = kdl_args!(node, name: String)?;
 
         let mut schedule: Option<String> = None;
         let mut script: Option<String> = None;
@@ -220,7 +206,7 @@ impl TryFrom<&KdlNode> for TimerConfig {
                     "schedule" => set_field(&mut schedule, child, name)?,
                     "script" => set_field(&mut script, child, name)?,
                     _ => {
-                        return Err(ConfigNodeError::UnknownField {
+                        return Err(NodeError::UnknownField {
                             name: name.to_owned(),
                             span: child.span(),
                         });
@@ -231,11 +217,11 @@ impl TryFrom<&KdlNode> for TimerConfig {
 
         Ok(TimerConfig {
             name,
-            schedule: schedule.ok_or(ConfigNodeError::MissingField {
+            schedule: schedule.ok_or(NodeError::MissingField {
                 name: "schedule",
                 span: node.span(),
             })?,
-            script: script.ok_or(ConfigNodeError::MissingField {
+            script: script.ok_or(NodeError::MissingField {
                 name: "script",
                 span: node.span(),
             })?,
@@ -325,17 +311,17 @@ mod tests {
     use super::*;
     use crate::config::FieldError;
 
-    fn parse_volume(src: &str) -> Result<VolumeConfig, ConfigNodeError> {
+    fn parse_volume(src: &str) -> Result<VolumeConfig, NodeError> {
         let doc: KdlDocument = src.parse().expect("test KDL must parse");
         VolumeConfig::try_from(doc.nodes().first().expect("test KDL must have a node"))
     }
 
-    fn parse_export(src: &str) -> Result<ExportConfig, ConfigNodeError> {
+    fn parse_export(src: &str) -> Result<ExportConfig, NodeError> {
         let doc: KdlDocument = src.parse().expect("test KDL must parse");
         ExportConfig::try_from(doc.nodes().first().expect("test KDL must have a node"))
     }
 
-    fn parse_timer(src: &str) -> Result<TimerConfig, ConfigNodeError> {
+    fn parse_timer(src: &str) -> Result<TimerConfig, NodeError> {
         let doc: KdlDocument = src.parse().expect("test KDL must parse");
         TimerConfig::try_from(doc.nodes().first().expect("test KDL must have a node"))
     }
@@ -432,14 +418,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(
-                &err,
-                ConfigNodeError::InvalidField {
-                    name,
-                    source: FieldError::EntryCount { .. },
-                    ..
-                } if name == "source",
-            ),
+            matches!(err, NodeError::MissingArg { name: "source", .. }),
             "unexpected error: {err:?}",
         );
     }
@@ -453,7 +432,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(&err, ConfigNodeError::MissingField { name, .. } if *name == "path"),
+            matches!(&err, NodeError::MissingField { name, .. } if *name == "path"),
             "unexpected error: {err:?}",
         );
     }
@@ -470,7 +449,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(&err, ConfigNodeError::UnknownField { name, .. } if name == "mode"),
+            matches!(&err, NodeError::UnknownField { name, .. } if name == "mode"),
             "unexpected error: {err:?}",
         );
     }
@@ -487,7 +466,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(&err, ConfigNodeError::DuplicateField { name, .. } if name == "path"),
+            matches!(&err, NodeError::DuplicateField { name, .. } if name == "path"),
             "unexpected error: {err:?}",
         );
     }
@@ -503,14 +482,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(
-                &err,
-                ConfigNodeError::InvalidField {
-                    name,
-                    source: FieldError::EntryCount { .. },
-                    ..
-                } if name == "source",
-            ),
+            matches!(err, NodeError::UnexpectedArg { .. }),
             "unexpected error: {err:?}",
         );
     }
@@ -528,7 +500,7 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                ConfigNodeError::InvalidField {
+                NodeError::InvalidField {
                     name,
                     source: FieldError::InvalidType { expected: "string", .. },
                     ..
@@ -551,7 +523,7 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                ConfigNodeError::InvalidField {
+                NodeError::InvalidField {
                     name,
                     source: FieldError::InvalidType { expected: "string", .. },
                     ..
@@ -602,7 +574,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(&err, ConfigNodeError::MissingField { name, .. } if *name == "source"),
+            matches!(&err, NodeError::MissingField { name, .. } if *name == "source"),
             "unexpected error: {err:?}",
         );
     }
@@ -618,7 +590,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(&err, ConfigNodeError::MissingField { name, .. } if *name == "path"),
+            matches!(&err, NodeError::MissingField { name, .. } if *name == "path"),
             "unexpected error: {err:?}",
         );
     }
@@ -636,7 +608,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(&err, ConfigNodeError::UnknownField { name, .. } if name == "kind"),
+            matches!(&err, NodeError::UnknownField { name, .. } if name == "kind"),
             "unexpected error: {err:?}",
         );
     }
@@ -654,7 +626,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(&err, ConfigNodeError::DuplicateField { name, .. } if name == "path"),
+            matches!(&err, NodeError::DuplicateField { name, .. } if name == "path"),
             "unexpected error: {err:?}",
         );
     }
@@ -671,7 +643,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(&err, ConfigNodeError::WrapperHasArgs { .. }),
+            matches!(err, NodeError::UnexpectedArg { .. }),
             "unexpected error: {err:?}",
         );
     }
@@ -690,7 +662,7 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                ConfigNodeError::InvalidField {
+                NodeError::InvalidField {
                     name,
                     source: FieldError::InvalidType { expected: "string", .. },
                     ..
@@ -757,7 +729,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(&err, ConfigNodeError::MissingField { name, .. } if *name == "schedule"),
+            matches!(&err, NodeError::MissingField { name, .. } if *name == "schedule"),
             "unexpected error: {err:?}",
         );
     }
@@ -773,7 +745,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(&err, ConfigNodeError::MissingField { name, .. } if *name == "script"),
+            matches!(&err, NodeError::MissingField { name, .. } if *name == "script"),
             "unexpected error: {err:?}",
         );
     }
@@ -791,7 +763,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(&err, ConfigNodeError::UnknownField { name, .. } if name == "user"),
+            matches!(&err, NodeError::UnknownField { name, .. } if name == "user"),
             "unexpected error: {err:?}",
         );
     }
@@ -809,7 +781,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(&err, ConfigNodeError::DuplicateField { name, .. } if name == "schedule"),
+            matches!(&err, NodeError::DuplicateField { name, .. } if name == "schedule"),
             "unexpected error: {err:?}",
         );
     }
@@ -826,14 +798,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(
-                &err,
-                ConfigNodeError::InvalidField {
-                    name,
-                    source: FieldError::EntryCount { .. },
-                    ..
-                } if name == "name",
-            ),
+            matches!(err, NodeError::MissingArg { name: "name", .. }),
             "unexpected error: {err:?}",
         );
     }
@@ -850,14 +815,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(
-                &err,
-                ConfigNodeError::InvalidField {
-                    name,
-                    source: FieldError::EntryCount { .. },
-                    ..
-                } if name == "name",
-            ),
+            matches!(err, NodeError::UnexpectedArg { .. }),
             "unexpected error: {err:?}",
         );
     }
@@ -876,7 +834,7 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                ConfigNodeError::InvalidField {
+                NodeError::InvalidField {
                     name,
                     source: FieldError::NamedEntry { .. },
                     ..
@@ -900,7 +858,7 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                ConfigNodeError::InvalidField {
+                NodeError::InvalidField {
                     name,
                     source: FieldError::InvalidType { expected: "string", .. },
                     ..
@@ -924,7 +882,7 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                ConfigNodeError::InvalidField {
+                NodeError::InvalidField {
                     name,
                     source: FieldError::InvalidType { expected: "string", .. },
                     ..

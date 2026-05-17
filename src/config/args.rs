@@ -5,23 +5,22 @@ use kdl::{
 };
 
 use super::{
-    ConfigNodeError,
     FieldError,
+    NodeError,
 };
 
 /// Convert a single positional entry of a wrapper node (e.g. the `"run-tasks"`
 /// in `timer "run-tasks" { ... }`) into a typed value. Implementors are
 /// responsible for rejecting named entries and reporting type mismatches via
-/// `ConfigNodeError::InvalidField` with the caller-supplied field name.
-#[allow(dead_code)] // used via kdl_args! macro; call-site migration is the next PR
-pub(crate) trait FromConfigArg: Sized {
-    fn from_config_arg(entry: &KdlEntry, field: &str) -> Result<Self, ConfigNodeError>;
+/// `NodeError::InvalidField` with the caller-supplied field name.
+pub trait FromKdlArg: Sized {
+    fn from_kdl_arg(entry: &KdlEntry, field: &str) -> Result<Self, NodeError>;
 }
 
-impl FromConfigArg for String {
-    fn from_config_arg(entry: &KdlEntry, field: &str) -> Result<Self, ConfigNodeError> {
+impl FromKdlArg for String {
+    fn from_kdl_arg(entry: &KdlEntry, field: &str) -> Result<Self, NodeError> {
         if entry.name().is_some() {
-            return Err(ConfigNodeError::InvalidField {
+            return Err(NodeError::InvalidField {
                 name: field.to_owned(),
                 span: entry.span(),
                 source: FieldError::NamedEntry { span: entry.span() },
@@ -30,7 +29,7 @@ impl FromConfigArg for String {
 
         match entry.value() {
             KdlValue::String(s) => Ok(s.clone()),
-            _ => Err(ConfigNodeError::InvalidField {
+            _ => Err(NodeError::InvalidField {
                 name: field.to_owned(),
                 span: entry.span(),
                 source: FieldError::InvalidType {
@@ -45,16 +44,16 @@ impl FromConfigArg for String {
 pub fn kdl_args_check_arity<'a>(
     node: &'a KdlNode,
     names: &[&'static str],
-) -> Result<&'a [KdlEntry], ConfigNodeError> {
+) -> Result<&'a [KdlEntry], NodeError> {
     let entries = node.entries();
     let expected_len = names.len();
     if entries.len() < expected_len {
-        Err(ConfigNodeError::MissingArg {
+        Err(NodeError::MissingArg {
             name: names[entries.len()],
             span: node.span(),
         })
     } else if entries.len() > expected_len {
-        Err(ConfigNodeError::UnexpectedArg {
+        Err(NodeError::UnexpectedArg {
             span: entries[expected_len].span(),
         })
     } else {
@@ -72,10 +71,10 @@ pub fn kdl_args_check_arity<'a>(
 /// let (a, b) = kdl_args!(node, a: String, b: String)?;  // N ≥ 2, returns tuple
 /// ```
 ///
-/// Arity mismatches surface as `ConfigNodeError::MissingArg` (too few - names
-/// the first missing field) or `ConfigNodeError::UnexpectedArg` (too many -
+/// Arity mismatches surface as `NodeError::MissingArg` (too few - names
+/// the first missing field) or `NodeError::UnexpectedArg` (too many -
 /// span points at the first extra entry). Type and named-entry errors flow
-/// through `FromConfigArg` implementations as `ConfigNodeError::InvalidField`.
+/// through `FromKdlArg` implementations as `NodeError::InvalidField`.
 #[macro_export]
 macro_rules! kdl_args {
     // 0 args: reject any positional entry on the node.
@@ -89,7 +88,7 @@ macro_rules! kdl_args {
     ($node:expr, $name:ident : $ty:ty $(,)?) => {{
         const NAMES: &[&'static str] = &[stringify!($name)];
         $crate::config::kdl_args_check_arity($node, NAMES).and_then(|entries| {
-            <$ty as $crate::config::FromConfigArg>::from_config_arg(&entries[0], NAMES[0])
+            <$ty as $crate::config::FromKdlArg>::from_kdl_arg(&entries[0], NAMES[0])
         })
     }};
 
@@ -100,7 +99,7 @@ macro_rules! kdl_args {
             let mut __i = 0;
             let tuple = (
                 $({
-                    let v = <$ty as $crate::config::FromConfigArg>::from_config_arg(
+                    let v = <$ty as $crate::config::FromKdlArg>::from_kdl_arg(
                         &entries[__i],
                         NAMES[__i],
                     )?;
@@ -144,7 +143,7 @@ mod tests {
         let n = node(r#"wrapper "stray""#);
         let err = kdl_args!(&n).unwrap_err();
         assert!(
-            matches!(err, ConfigNodeError::UnexpectedArg { .. }),
+            matches!(err, NodeError::UnexpectedArg { .. }),
             "unexpected: {err:?}",
         );
     }
@@ -161,7 +160,7 @@ mod tests {
         let n = node("timer");
         let err = kdl_args!(&n, name: String).unwrap_err();
         assert!(
-            matches!(err, ConfigNodeError::MissingArg { name: "name", .. }),
+            matches!(err, NodeError::MissingArg { name: "name", .. }),
             "unexpected: {err:?}",
         );
     }
@@ -171,7 +170,7 @@ mod tests {
         let n = node(r#"timer "run-tasks" "extra""#);
         let err = kdl_args!(&n, name: String).unwrap_err();
         assert!(
-            matches!(err, ConfigNodeError::UnexpectedArg { .. }),
+            matches!(err, NodeError::UnexpectedArg { .. }),
             "unexpected: {err:?}",
         );
     }
@@ -183,7 +182,7 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                ConfigNodeError::InvalidField {
+                NodeError::InvalidField {
                     name,
                     source: FieldError::InvalidType { expected: "string", .. },
                     ..
@@ -200,7 +199,7 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                ConfigNodeError::InvalidField {
+                NodeError::InvalidField {
                     name,
                     source: FieldError::NamedEntry { .. },
                     ..
@@ -223,7 +222,7 @@ mod tests {
         let n = node(r#"route "reverse-proxy""#);
         let err = kdl_args!(&n, kind: String, path: String).unwrap_err();
         assert!(
-            matches!(err, ConfigNodeError::MissingArg { name: "path", .. }),
+            matches!(err, NodeError::MissingArg { name: "path", .. }),
             "unexpected: {err:?}",
         );
     }
@@ -233,7 +232,7 @@ mod tests {
         let n = node("route");
         let err = kdl_args!(&n, kind: String, path: String).unwrap_err();
         assert!(
-            matches!(err, ConfigNodeError::MissingArg { name: "kind", .. }),
+            matches!(err, NodeError::MissingArg { name: "kind", .. }),
             "unexpected: {err:?}",
         );
     }
@@ -243,7 +242,7 @@ mod tests {
         let n = node(r#"route "a" "b" "c""#);
         let err = kdl_args!(&n, kind: String, path: String).unwrap_err();
         assert!(
-            matches!(err, ConfigNodeError::UnexpectedArg { .. }),
+            matches!(err, NodeError::UnexpectedArg { .. }),
             "unexpected: {err:?}",
         );
     }
@@ -261,7 +260,7 @@ mod tests {
         let n = node(r#"x "a" "b""#);
         let err = kdl_args!(&n, a: String, b: String, c: String).unwrap_err();
         assert!(
-            matches!(err, ConfigNodeError::MissingArg { name: "c", .. }),
+            matches!(err, NodeError::MissingArg { name: "c", .. }),
             "unexpected: {err:?}",
         );
     }

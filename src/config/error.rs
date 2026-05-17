@@ -51,15 +51,10 @@ pub enum FieldError {
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
-pub enum ConfigNodeError {
-    #[error("config node must not have arguments or properties")]
-    WrapperHasArgs { span: SourceSpan },
-
-    #[allow(dead_code)] // constructed via kdl_args! macro; call-site migration is the next PR
+pub enum NodeError {
     #[error("unexpected argument")]
     UnexpectedArg { span: SourceSpan },
 
-    #[allow(dead_code)] // constructed via kdl_args! macro; call-site migration is the next PR
     #[error("missing argument '{name}'")]
     MissingArg {
         name: &'static str,

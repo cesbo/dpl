@@ -8,48 +8,16 @@ use std::{
     path::Path,
 };
 
-use kdl::{
-    KdlNode,
-    KdlValue,
-};
 use serde::{
     Serialize,
     de::DeserializeOwned,
 };
 
 pub use self::{
+    args::*,
     error::*,
     node::*,
 };
-#[allow(unused_imports)] // call-site migration in the next PR will use these
-pub(crate) use self::args::*;
-
-/// Parse the single positional string argument of a wrapper node, e.g. the
-/// `"run-tasks"` in `timer "run-tasks" { ... }`. Rejects zero or multiple
-/// entries, named entries, and non-string values. Unlike
-/// `parse_string_child`, this does not reject child blocks — wrapper nodes
-/// typically carry their body as children.
-pub(crate) fn parse_string_arg(node: &KdlNode) -> Result<&str, FieldError> {
-    let entries = node.entries();
-
-    for entry in entries {
-        if entry.name().is_some() {
-            return Err(FieldError::NamedEntry { span: entry.span() });
-        }
-    }
-
-    let [entry] = entries else {
-        return Err(FieldError::EntryCount { span: node.span() });
-    };
-
-    match entry.value() {
-        KdlValue::String(s) => Ok(s.as_str()),
-        _ => Err(FieldError::InvalidType {
-            expected: "string",
-            span: entry.span(),
-        }),
-    }
-}
 
 pub trait ValidateConfig {
     /// Config required by the default

@@ -12,7 +12,7 @@ pub use self::value::Value;
 use crate::{
     MainContext,
     config::{
-        ConfigNodeError,
+        NodeError,
         ValidateConfig,
     },
     error::{
@@ -26,12 +26,10 @@ use crate::{
 pub struct EnvList(BTreeMap<String, Value>);
 
 impl TryFrom<&KdlNode> for EnvList {
-    type Error = ConfigNodeError;
+    type Error = NodeError;
 
     fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
-        if let Some(stray) = node.entries().first() {
-            return Err(ConfigNodeError::WrapperHasArgs { span: stray.span() });
-        }
+        crate::kdl_args!(node)?;
 
         let Some(children) = node.children() else {
             return Ok(Self::default());
@@ -40,7 +38,7 @@ impl TryFrom<&KdlNode> for EnvList {
         let mut map = BTreeMap::new();
         for child in children.nodes() {
             let key = child.name().value().to_owned();
-            let value = Value::try_from(child).map_err(|source| ConfigNodeError::InvalidField {
+            let value = Value::try_from(child).map_err(|source| NodeError::InvalidField {
                 name: key.clone(),
                 span: child.span(),
                 source,
@@ -99,7 +97,7 @@ mod tests {
         deploy::env::value::Ns,
     };
 
-    fn parse_env(src: &str) -> Result<EnvList, ConfigNodeError> {
+    fn parse_env(src: &str) -> Result<EnvList, NodeError> {
         let doc: KdlDocument = src.parse().expect("test KDL must parse");
         let node = doc
             .nodes()
@@ -178,7 +176,7 @@ mod tests {
     fn kdl_env_node_with_arg_rejected() {
         let err = parse_env(r#"env "stray" { DB_HOST "x" }"#).unwrap_err();
         assert!(
-            matches!(&err, ConfigNodeError::WrapperHasArgs { .. }),
+            matches!(&err, NodeError::UnexpectedArg { .. }),
             "unexpected error: {err:?}",
         );
     }
@@ -187,7 +185,7 @@ mod tests {
     fn kdl_env_node_with_property_rejected() {
         let err = parse_env(r#"env strict=#true { DB_HOST "x" }"#).unwrap_err();
         assert!(
-            matches!(&err, ConfigNodeError::WrapperHasArgs { .. }),
+            matches!(&err, NodeError::UnexpectedArg { .. }),
             "unexpected error: {err:?}",
         );
     }
@@ -198,7 +196,7 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                ConfigNodeError::InvalidField {
+                NodeError::InvalidField {
                     name,
                     source: FieldError::EntryCount { .. },
                     ..
@@ -214,7 +212,7 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                ConfigNodeError::InvalidField {
+                NodeError::InvalidField {
                     name,
                     source: FieldError::InvalidTemplate {
                         source: TemplateError::MalformedRef { .. },

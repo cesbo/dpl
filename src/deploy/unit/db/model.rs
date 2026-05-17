@@ -12,8 +12,8 @@ use serde::{
 use crate::{
     MainContext,
     config::{
-        ConfigNodeError,
-        FromConfigNode,
+        FromKdlNode,
+        NodeError,
         ValidateConfig,
         parse_string_child,
         set_field,
@@ -23,6 +23,7 @@ use crate::{
         Location,
         RefError,
     },
+    kdl_args,
     validate::{
         resource_name,
         secret_name,
@@ -131,12 +132,10 @@ impl DbConfig {
 }
 
 impl TryFrom<&KdlNode> for DbConfig {
-    type Error = ConfigNodeError;
+    type Error = NodeError;
 
     fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
-        if let Some(entry) = node.entries().first() {
-            return Err(ConfigNodeError::WrapperHasArgs { span: entry.span() });
-        }
+        kdl_args!(node)?;
 
         let mut server: Option<String> = None;
         let mut user: Option<String> = None;
@@ -150,7 +149,7 @@ impl TryFrom<&KdlNode> for DbConfig {
                     "user" => set_field(&mut user, child, name)?,
                     "secret" => set_field(&mut secret, child, name)?,
                     _ => {
-                        return Err(ConfigNodeError::UnknownField {
+                        return Err(NodeError::UnknownField {
                             name: name.to_owned(),
                             span: child.span(),
                         });
@@ -160,15 +159,15 @@ impl TryFrom<&KdlNode> for DbConfig {
         }
 
         Ok(DbConfig {
-            server: server.ok_or(ConfigNodeError::MissingField {
+            server: server.ok_or(NodeError::MissingField {
                 name: "server",
                 span: node.span(),
             })?,
-            user: user.ok_or(ConfigNodeError::MissingField {
+            user: user.ok_or(NodeError::MissingField {
                 name: "user",
                 span: node.span(),
             })?,
-            secret: secret.ok_or(ConfigNodeError::MissingField {
+            secret: secret.ok_or(NodeError::MissingField {
                 name: "secret",
                 span: node.span(),
             })?,
@@ -256,9 +255,9 @@ impl DbServerEngine {
     }
 }
 
-impl FromConfigNode for DbServerEngine {
-    fn from_config_node(node: &KdlNode, name: &str) -> Result<Self, ConfigNodeError> {
-        let value = parse_string_child(node).map_err(|source| ConfigNodeError::InvalidField {
+impl FromKdlNode for DbServerEngine {
+    fn from_kdl_node(node: &KdlNode, name: &str) -> Result<Self, NodeError> {
+        let value = parse_string_child(node).map_err(|source| NodeError::InvalidField {
             name: name.to_owned(),
             span: node.span(),
             source,
@@ -267,7 +266,7 @@ impl FromConfigNode for DbServerEngine {
         match value {
             "postgresql" => Ok(Self::Postgresql),
             "mariadb" => Ok(Self::Mariadb),
-            other => Err(ConfigNodeError::UnknownVariant {
+            other => Err(NodeError::UnknownVariant {
                 field: name.to_owned(),
                 value: other.to_owned(),
                 span: node
@@ -294,12 +293,10 @@ impl DbServerConfig {
 }
 
 impl TryFrom<&KdlNode> for DbServerConfig {
-    type Error = ConfigNodeError;
+    type Error = NodeError;
 
     fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
-        if let Some(entry) = node.entries().first() {
-            return Err(ConfigNodeError::WrapperHasArgs { span: entry.span() });
-        }
+        kdl_args!(node)?;
 
         let mut engine: Option<DbServerEngine> = None;
         let mut version: Option<String> = None;
@@ -313,7 +310,7 @@ impl TryFrom<&KdlNode> for DbServerConfig {
                     "version" => set_field(&mut version, child, name)?,
                     "secret" => set_field(&mut secret, child, name)?,
                     _ => {
-                        return Err(ConfigNodeError::UnknownField {
+                        return Err(NodeError::UnknownField {
                             name: name.to_owned(),
                             span: child.span(),
                         });
@@ -323,15 +320,15 @@ impl TryFrom<&KdlNode> for DbServerConfig {
         }
 
         Ok(DbServerConfig {
-            engine: engine.ok_or(ConfigNodeError::MissingField {
+            engine: engine.ok_or(NodeError::MissingField {
                 name: "engine",
                 span: node.span(),
             })?,
-            version: version.ok_or(ConfigNodeError::MissingField {
+            version: version.ok_or(NodeError::MissingField {
                 name: "version",
                 span: node.span(),
             })?,
-            secret: secret.ok_or(ConfigNodeError::MissingField {
+            secret: secret.ok_or(NodeError::MissingField {
                 name: "secret",
                 span: node.span(),
             })?,
@@ -360,12 +357,12 @@ mod tests {
     use super::*;
     use crate::config::FieldError;
 
-    fn parse_db(src: &str) -> Result<DbConfig, ConfigNodeError> {
+    fn parse_db(src: &str) -> Result<DbConfig, NodeError> {
         let doc: KdlDocument = src.parse().expect("test KDL must parse");
         DbConfig::try_from(doc.nodes().first().expect("test KDL must have a node"))
     }
 
-    fn parse_db_server(src: &str) -> Result<DbServerConfig, ConfigNodeError> {
+    fn parse_db_server(src: &str) -> Result<DbServerConfig, NodeError> {
         let doc: KdlDocument = src.parse().expect("test KDL must parse");
         DbServerConfig::try_from(doc.nodes().first().expect("test KDL must have a node"))
     }
@@ -434,7 +431,7 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                ConfigNodeError::UnknownVariant { field, value, .. }
+                NodeError::UnknownVariant { field, value, .. }
                     if *field == "engine" && value == "sqlite",
             ),
             "unexpected error: {err:?}",
@@ -453,7 +450,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(&err, ConfigNodeError::MissingField { name, .. } if *name == "secret"),
+            matches!(&err, NodeError::MissingField { name, .. } if *name == "secret"),
             "unexpected error: {err:?}",
         );
     }
@@ -472,7 +469,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(&err, ConfigNodeError::UnknownField { name, .. } if name == "host"),
+            matches!(&err, NodeError::UnknownField { name, .. } if name == "host"),
             "unexpected error: {err:?}",
         );
     }
@@ -491,7 +488,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(&err, ConfigNodeError::DuplicateField { name, .. } if name == "server"),
+            matches!(&err, NodeError::DuplicateField { name, .. } if name == "server"),
             "unexpected error: {err:?}",
         );
     }
@@ -509,7 +506,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(&err, ConfigNodeError::WrapperHasArgs { .. }),
+            matches!(err, NodeError::UnexpectedArg { .. }),
             "unexpected error: {err:?}",
         );
     }
@@ -529,7 +526,7 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                ConfigNodeError::InvalidField {
+                NodeError::InvalidField {
                     name,
                     source: FieldError::InvalidType { expected: "string", .. },
                     ..
@@ -554,7 +551,7 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                ConfigNodeError::InvalidField {
+                NodeError::InvalidField {
                     name,
                     source: FieldError::HasChildren { .. },
                     ..
