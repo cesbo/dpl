@@ -1,3 +1,4 @@
+mod args;
 mod error;
 mod node;
 
@@ -20,6 +21,8 @@ pub use self::{
     error::*,
     node::*,
 };
+#[allow(unused_imports)] // call-site migration in the next PR will use these
+pub(crate) use self::args::*;
 
 /// Parse the single positional string argument of a wrapper node, e.g. the
 /// `"run-tasks"` in `timer "run-tasks" { ... }`. Rejects zero or multiple

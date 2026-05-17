@@ -55,6 +55,17 @@ pub enum ConfigNodeError {
     #[error("config node must not have arguments or properties")]
     WrapperHasArgs { span: SourceSpan },
 
+    #[allow(dead_code)] // constructed via kdl_args! macro; call-site migration is the next PR
+    #[error("unexpected argument")]
+    UnexpectedArg { span: SourceSpan },
+
+    #[allow(dead_code)] // constructed via kdl_args! macro; call-site migration is the next PR
+    #[error("missing argument '{name}'")]
+    MissingArg {
+        name: &'static str,
+        span: SourceSpan,
+    },
+
     #[error("unknown field '{name}'")]
     UnknownField { name: String, span: SourceSpan },
 
