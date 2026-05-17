@@ -189,6 +189,42 @@ impl FromKdlNode for BuildConfig {
     }
 }
 
+impl FromKdlNode for RuntimeConfig {
+    fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
+        kdl_args!(node)?;
+
+        let mut env: Option<EnvList> = None;
+        let mut init: Option<String> = None;
+        let mut cmd: Option<String> = None;
+
+        if let Some(children) = node.children() {
+            for child in children.nodes() {
+                let name = child.name().value();
+                match name {
+                    "env" => set_field(&mut env, child)?,
+                    "init" => set_field(&mut init, child)?,
+                    "cmd" => set_field(&mut cmd, child)?,
+                    _ => {
+                        return Err(NodeError::UnknownField {
+                            name: name.to_owned(),
+                            span: child.span(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(RuntimeConfig {
+            env: env.unwrap_or_default(),
+            init,
+            cmd: cmd.ok_or(NodeError::MissingField {
+                name: "cmd",
+                span: node.span(),
+            })?,
+        })
+    }
+}
+
 impl FromKdlNode for TimerConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         let name = kdl_args!(node, name: String)?;
@@ -326,6 +362,11 @@ mod tests {
     fn parse_build(src: &str) -> Result<BuildConfig, NodeError> {
         let doc: KdlDocument = src.parse().expect("test KDL must parse");
         BuildConfig::from_kdl_node(doc.nodes().first().expect("test KDL must have a node"))
+    }
+
+    fn parse_runtime(src: &str) -> Result<RuntimeConfig, NodeError> {
+        let doc: KdlDocument = src.parse().expect("test KDL must parse");
+        RuntimeConfig::from_kdl_node(doc.nodes().first().expect("test KDL must have a node"))
     }
 
     fn sample_config() -> AppConfig {
@@ -954,6 +995,213 @@ mod tests {
                     source: FieldError::InvalidType { expected: "string", .. },
                     ..
                 } if name == "description",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_runtime_basic() {
+        let cfg = parse_runtime(
+            r#"
+            runtime {
+                env {
+                    ALLOWED_HOSTS "app.example.com"
+                }
+                init "python manage.py migrate --noinput"
+                cmd "gunicorn app.wsgi:application --bind 0.0.0.0:8000"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.init.as_deref(),
+            Some("python manage.py migrate --noinput"),
+        );
+        assert_eq!(cfg.cmd, "gunicorn app.wsgi:application --bind 0.0.0.0:8000",);
+        let resolved = cfg.env.resolve(&MainContext::default(), "env").unwrap();
+        assert_eq!(
+            resolved.get("ALLOWED_HOSTS").map(String::as_str),
+            Some("app.example.com"),
+        );
+    }
+
+    #[test]
+    fn kdl_runtime_only_cmd() {
+        let cfg = parse_runtime(r#"runtime { cmd "./run" }"#).unwrap();
+        assert_eq!(cfg.cmd, "./run");
+        assert!(cfg.init.is_none());
+        assert_eq!(cfg.env, EnvList::default());
+    }
+
+    #[test]
+    fn kdl_runtime_multiline_cmd() {
+        let cfg = parse_runtime(
+            r#"
+            runtime {
+                cmd """
+                    gunicorn app.wsgi:application --bind 0.0.0.0:8000
+                    """
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.cmd, "gunicorn app.wsgi:application --bind 0.0.0.0:8000",);
+    }
+
+    #[test]
+    fn kdl_runtime_multiline_init() {
+        let cfg = parse_runtime(
+            r#"
+            runtime {
+                init """
+                    python manage.py migrate --noinput
+                    """
+                cmd "./run"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.init.as_deref(),
+            Some("python manage.py migrate --noinput"),
+        );
+    }
+
+    #[test]
+    fn kdl_runtime_env_with_template() {
+        let cfg = parse_runtime(
+            r#"
+            runtime {
+                env {
+                    SECRET_KEY "literal-key"
+                }
+                cmd "./run"
+            }
+            "#,
+        )
+        .unwrap();
+        let resolved = cfg.env.resolve(&MainContext::default(), "env").unwrap();
+        assert_eq!(
+            resolved.get("SECRET_KEY").map(String::as_str),
+            Some("literal-key"),
+        );
+    }
+
+    #[test]
+    fn kdl_runtime_missing_cmd() {
+        let err = parse_runtime(r#"runtime { init "x" }"#).unwrap_err();
+        assert!(
+            matches!(&err, NodeError::MissingField { name, .. } if *name == "cmd"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_runtime_bare_node() {
+        let err = parse_runtime("runtime").unwrap_err();
+        assert!(
+            matches!(&err, NodeError::MissingField { name, .. } if *name == "cmd"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_runtime_unknown_field() {
+        let err = parse_runtime(
+            r#"
+            runtime {
+                command "x"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::UnknownField { name, .. } if name == "command"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_runtime_duplicate_cmd() {
+        let err = parse_runtime(
+            r#"
+            runtime {
+                cmd "a"
+                cmd "b"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::DuplicateField { name, .. } if name == "cmd"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_runtime_duplicate_env() {
+        let err = parse_runtime(
+            r#"
+            runtime {
+                env { A "1" }
+                env { B "2" }
+                cmd "./run"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::DuplicateField { name, .. } if name == "env"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_runtime_duplicate_init() {
+        let err = parse_runtime(
+            r#"
+            runtime {
+                init "a"
+                init "b"
+                cmd "./run"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::DuplicateField { name, .. } if name == "init"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_runtime_positional_arg_rejected() {
+        let err = parse_runtime(r#"runtime "stray" { cmd "./run" }"#).unwrap_err();
+        assert!(
+            matches!(err, NodeError::UnexpectedArg { .. }),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_runtime_cmd_not_a_string() {
+        let err = parse_runtime(
+            r#"
+            runtime {
+                cmd 5
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidType { expected: "string", .. },
+                    ..
+                } if name == "cmd",
             ),
             "unexpected error: {err:?}",
         );
