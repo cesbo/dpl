@@ -1,5 +1,6 @@
 use kdl::{
     KdlEntry,
+    KdlNode,
     KdlValue,
 };
 
@@ -41,6 +42,26 @@ impl FromConfigArg for String {
     }
 }
 
+pub fn kdl_args_check_arity<'a>(
+    node: &'a KdlNode,
+    names: &[&'static str],
+) -> Result<&'a [KdlEntry], ConfigNodeError> {
+    let entries = node.entries();
+    let expected_len = names.len();
+    if entries.len() < expected_len {
+        Err(ConfigNodeError::MissingArg {
+            name: names[entries.len()],
+            span: node.span(),
+        })
+    } else if entries.len() > expected_len {
+        Err(ConfigNodeError::UnexpectedArg {
+            span: entries[expected_len].span(),
+        })
+    } else {
+        Ok(entries)
+    }
+}
+
 /// Extract positional arguments of a wrapper node into typed locals.
 ///
 /// Three forms:
@@ -51,79 +72,44 @@ impl FromConfigArg for String {
 /// let (a, b) = kdl_args!(node, a: String, b: String)?;  // N ≥ 2, returns tuple
 /// ```
 ///
-/// Arity mismatches surface as `ConfigNodeError::MissingArg` (too few — names
-/// the first missing field) or `ConfigNodeError::UnexpectedArg` (too many —
+/// Arity mismatches surface as `ConfigNodeError::MissingArg` (too few - names
+/// the first missing field) or `ConfigNodeError::UnexpectedArg` (too many -
 /// span points at the first extra entry). Type and named-entry errors flow
 /// through `FromConfigArg` implementations as `ConfigNodeError::InvalidField`.
 #[macro_export]
 macro_rules! kdl_args {
     // 0 args: reject any positional entry on the node.
     ($node:expr) => {{
-        let __node: &::kdl::KdlNode = $node;
-        match __node.entries().first() {
-            Some(entry) => Err::<(), $crate::config::ConfigNodeError>(
-                $crate::config::ConfigNodeError::UnexpectedArg { span: entry.span() },
-            ),
-            None => Ok::<(), $crate::config::ConfigNodeError>(()),
-        }
+        $crate::config::kdl_args_check_arity($node, &[]).and_then(|_| {
+            Ok(())
+        })
     }};
 
     // 1 arg: return T
     ($node:expr, $name:ident : $ty:ty $(,)?) => {{
-        let __node: &::kdl::KdlNode = $node;
-        let __entries = __node.entries();
-        const __NAME: &'static str = stringify!($name);
-        let __r: ::core::result::Result<_, $crate::config::ConfigNodeError> = (|| {
-            if __entries.is_empty() {
-                return Err($crate::config::ConfigNodeError::MissingArg {
-                    name: __NAME,
-                    span: __node.span(),
-                });
-            }
-            if __entries.len() > 1 {
-                return Err($crate::config::ConfigNodeError::UnexpectedArg {
-                    span: __entries[1].span(),
-                });
-            }
-           let __v= <$ty as $crate::config::FromConfigArg>::from_config_arg(&__entries[1], __NAME)?;
-            Ok(__v)
-        })();
-        __r
+        const NAMES: &[&'static str] = &[stringify!($name)];
+        $crate::config::kdl_args_check_arity($node, NAMES).and_then(|entries| {
+            <$ty as $crate::config::FromConfigArg>::from_config_arg(&entries[0], NAMES[0])
+        })
     }};
 
     // 2+ args: return tuple
-    ($node:expr, $($more_name:ident : $more_ty:ty),+ $(,)?) => {{
-        let __node: &::kdl::KdlNode = $node;
-        let __entries = __node.entries();
-        const __NAMES: &[&'static str] = &[
-            $(stringify!($more_name),)*
-        ];
-        const __EXPECTED: usize = __NAMES.len();
-        let __r: ::core::result::Result<_, $crate::config::ConfigNodeError> = (|| {
-            if __entries.len() < __EXPECTED {
-                return Err($crate::config::ConfigNodeError::MissingArg {
-                    name: __NAMES[__entries.len()],
-                    span: __node.span(),
-                });
-            }
-            if __entries.len() > __EXPECTED {
-                return Err($crate::config::ConfigNodeError::UnexpectedArg {
-                    span: __entries[__EXPECTED].span(),
-                });
-            }
-            let mut __i = 0_usize;
-            Ok((
+    ($node:expr, $($name:ident : $ty:ty),+ $(,)?) => {{
+        const NAMES: &[&'static str] = &[$(stringify!($name),)+];
+        $crate::config::kdl_args_check_arity($node, NAMES).and_then(|entries| {
+            let mut __i = 0;
+            let tuple = (
                 $({
-                    let __v = <$more_ty as $crate::config::FromConfigArg>::from_config_arg(
-                        &__entries[__i],
-                        __NAMES[__i],
+                    let v = <$ty as $crate::config::FromConfigArg>::from_config_arg(
+                        &entries[__i],
+                        NAMES[__i],
                     )?;
                     __i += 1;
-                    __v
-                },)*
-            ))
-        })();
-        __r
+                    v
+                },)+
+            );
+            Ok(tuple)
+        })
     }};
 }
 
