@@ -123,32 +123,17 @@ impl TryFrom<&KdlNode> for VolumeConfig {
     type Error = NodeError;
 
     fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
-        let source = kdl_args!(node, source: String)?;
+        let (source, path) = kdl_args!(node, source: String, path: String)?;
 
-        let mut path: Option<String> = None;
-
-        if let Some(children) = node.children() {
-            for child in children.nodes() {
-                let name = child.name().value();
-                match name {
-                    "path" => set_field(&mut path, child, name)?,
-                    _ => {
-                        return Err(NodeError::UnknownField {
-                            name: name.to_owned(),
-                            span: child.span(),
-                        });
-                    }
-                }
-            }
+        if let Some(child) = node.children().and_then(|c| c.nodes().first()) {
+            let name = child.name().value();
+            return Err(NodeError::UnknownField {
+                name: name.to_owned(),
+                span: child.span(),
+            });
         }
 
-        Ok(VolumeConfig {
-            source,
-            path: path.ok_or(NodeError::MissingField {
-                name: "path",
-                span: node.span(),
-            })?,
-        })
+        Ok(VolumeConfig { source, path })
     }
 }
 
@@ -156,37 +141,17 @@ impl TryFrom<&KdlNode> for ExportConfig {
     type Error = NodeError;
 
     fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
-        kdl_args!(node)?;
+        let (source, path) = kdl_args!(node, source: String, path: String)?;
 
-        let mut source: Option<String> = None;
-        let mut path: Option<String> = None;
-
-        if let Some(children) = node.children() {
-            for child in children.nodes() {
-                let name = child.name().value();
-                match name {
-                    "source" => set_field(&mut source, child, name)?,
-                    "path" => set_field(&mut path, child, name)?,
-                    _ => {
-                        return Err(NodeError::UnknownField {
-                            name: name.to_owned(),
-                            span: child.span(),
-                        });
-                    }
-                }
-            }
+        if let Some(child) = node.children().and_then(|c| c.nodes().first()) {
+            let name = child.name().value();
+            return Err(NodeError::UnknownField {
+                name: name.to_owned(),
+                span: child.span(),
+            });
         }
 
-        Ok(ExportConfig {
-            source: source.ok_or(NodeError::MissingField {
-                name: "source",
-                span: node.span(),
-            })?,
-            path: path.ok_or(NodeError::MissingField {
-                name: "path",
-                span: node.span(),
-            })?,
-        })
+        Ok(ExportConfig { source, path })
     }
 }
 
@@ -381,42 +346,21 @@ mod tests {
 
     #[test]
     fn kdl_volume_basic() {
-        let cfg = parse_volume(
-            r#"
-            volume "/var/lib/app/uploads" {
-                path "/app/uploads"
-            }
-            "#,
-        )
-        .unwrap();
+        let cfg = parse_volume(r#"volume "/var/lib/app/uploads" "/app/uploads""#).unwrap();
         assert_eq!(cfg.source, "/var/lib/app/uploads");
         assert_eq!(cfg.path, "/app/uploads");
     }
 
     #[test]
     fn kdl_volume_named_volume() {
-        let cfg = parse_volume(
-            r#"
-            volume "uploads-data" {
-                path "/app/uploads"
-            }
-            "#,
-        )
-        .unwrap();
+        let cfg = parse_volume(r#"volume "uploads-data" "/app/uploads""#).unwrap();
         assert_eq!(cfg.source, "uploads-data");
         assert_eq!(cfg.path, "/app/uploads");
     }
 
     #[test]
     fn kdl_volume_missing_source() {
-        let err = parse_volume(
-            r#"
-            volume {
-                path "/app/uploads"
-            }
-            "#,
-        )
-        .unwrap_err();
+        let err = parse_volume("volume").unwrap_err();
         assert!(
             matches!(err, NodeError::MissingArg { name: "source", .. }),
             "unexpected error: {err:?}",
@@ -425,14 +369,9 @@ mod tests {
 
     #[test]
     fn kdl_volume_missing_path() {
-        let err = parse_volume(
-            r#"
-            volume "/var/lib/app/uploads"
-            "#,
-        )
-        .unwrap_err();
+        let err = parse_volume(r#"volume "/var/lib/app/uploads""#).unwrap_err();
         assert!(
-            matches!(&err, NodeError::MissingField { name, .. } if *name == "path"),
+            matches!(err, NodeError::MissingArg { name: "path", .. }),
             "unexpected error: {err:?}",
         );
     }
@@ -441,8 +380,7 @@ mod tests {
     fn kdl_volume_unknown_field() {
         let err = parse_volume(
             r#"
-            volume "/s" {
-                path "/p"
+            volume "/s" "/p" {
                 mode "rw"
             }
             "#,
@@ -455,32 +393,8 @@ mod tests {
     }
 
     #[test]
-    fn kdl_volume_duplicate_field() {
-        let err = parse_volume(
-            r#"
-            volume "/s" {
-                path "/p1"
-                path "/p2"
-            }
-            "#,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(&err, NodeError::DuplicateField { name, .. } if name == "path"),
-            "unexpected error: {err:?}",
-        );
-    }
-
-    #[test]
     fn kdl_volume_extra_args_rejected() {
-        let err = parse_volume(
-            r#"
-            volume "/s" "/extra" {
-                path "/p"
-            }
-            "#,
-        )
-        .unwrap_err();
+        let err = parse_volume(r#"volume "/s" "/p" "/extra""#).unwrap_err();
         assert!(
             matches!(err, NodeError::UnexpectedArg { .. }),
             "unexpected error: {err:?}",
@@ -489,14 +403,7 @@ mod tests {
 
     #[test]
     fn kdl_volume_source_not_a_string() {
-        let err = parse_volume(
-            r#"
-            volume 5 {
-                path "/p"
-            }
-            "#,
-        )
-        .unwrap_err();
+        let err = parse_volume(r#"volume 5 "/p""#).unwrap_err();
         assert!(
             matches!(
                 &err,
@@ -511,15 +418,8 @@ mod tests {
     }
 
     #[test]
-    fn kdl_volume_field_not_a_string() {
-        let err = parse_volume(
-            r#"
-            volume "/s" {
-                path 7
-            }
-            "#,
-        )
-        .unwrap_err();
+    fn kdl_volume_path_not_a_string() {
+        let err = parse_volume(r#"volume "/s" 7"#).unwrap_err();
         assert!(
             matches!(
                 &err,
@@ -535,62 +435,25 @@ mod tests {
 
     #[test]
     fn kdl_export_basic() {
-        let cfg = parse_export(
-            r#"
-            export {
-                source "/app/staticfiles"
-                path "/static"
-            }
-            "#,
-        )
-        .unwrap();
-        assert_eq!(cfg.source, "/app/staticfiles");
-        assert_eq!(cfg.path, "/static");
-    }
-
-    #[test]
-    fn kdl_export_without_description() {
-        let cfg = parse_export(
-            r#"
-            export {
-                source "/app/staticfiles"
-                path "/static"
-            }
-            "#,
-        )
-        .unwrap();
+        let cfg = parse_export(r#"export "/app/staticfiles" "/static""#).unwrap();
         assert_eq!(cfg.source, "/app/staticfiles");
         assert_eq!(cfg.path, "/static");
     }
 
     #[test]
     fn kdl_export_missing_source() {
-        let err = parse_export(
-            r#"
-            export {
-                path "/static"
-            }
-            "#,
-        )
-        .unwrap_err();
+        let err = parse_export("export").unwrap_err();
         assert!(
-            matches!(&err, NodeError::MissingField { name, .. } if *name == "source"),
+            matches!(err, NodeError::MissingArg { name: "source", .. }),
             "unexpected error: {err:?}",
         );
     }
 
     #[test]
     fn kdl_export_missing_path() {
-        let err = parse_export(
-            r#"
-            export {
-                source "/app/staticfiles"
-            }
-            "#,
-        )
-        .unwrap_err();
+        let err = parse_export(r#"export "/app/staticfiles""#).unwrap_err();
         assert!(
-            matches!(&err, NodeError::MissingField { name, .. } if *name == "path"),
+            matches!(err, NodeError::MissingArg { name: "path", .. }),
             "unexpected error: {err:?}",
         );
     }
@@ -599,9 +462,7 @@ mod tests {
     fn kdl_export_unknown_field() {
         let err = parse_export(
             r#"
-            export {
-                source "/s"
-                path "/p"
+            export "/s" "/p" {
                 kind "static"
             }
             "#,
@@ -614,34 +475,8 @@ mod tests {
     }
 
     #[test]
-    fn kdl_export_duplicate_field() {
-        let err = parse_export(
-            r#"
-            export {
-                source "/s"
-                path "/p1"
-                path "/p2"
-            }
-            "#,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(&err, NodeError::DuplicateField { name, .. } if name == "path"),
-            "unexpected error: {err:?}",
-        );
-    }
-
-    #[test]
-    fn kdl_export_wrapper_with_args_rejected() {
-        let err = parse_export(
-            r#"
-            export "stray" {
-                source "/s"
-                path "/p"
-            }
-            "#,
-        )
-        .unwrap_err();
+    fn kdl_export_extra_args_rejected() {
+        let err = parse_export(r#"export "/s" "/p" "/extra""#).unwrap_err();
         assert!(
             matches!(err, NodeError::UnexpectedArg { .. }),
             "unexpected error: {err:?}",
@@ -649,16 +484,8 @@ mod tests {
     }
 
     #[test]
-    fn kdl_export_field_not_a_string() {
-        let err = parse_export(
-            r#"
-            export {
-                source "/s"
-                path 7
-            }
-            "#,
-        )
-        .unwrap_err();
+    fn kdl_export_path_not_a_string() {
+        let err = parse_export(r#"export "/s" 7"#).unwrap_err();
         assert!(
             matches!(
                 &err,
