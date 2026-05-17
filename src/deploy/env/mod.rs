@@ -12,6 +12,7 @@ pub use self::value::Value;
 use crate::{
     MainContext,
     config::{
+        FromKdlNode,
         NodeError,
         ValidateConfig,
     },
@@ -25,10 +26,8 @@ use crate::{
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct EnvList(BTreeMap<String, Value>);
 
-impl TryFrom<&KdlNode> for EnvList {
-    type Error = NodeError;
-
-    fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
+impl FromKdlNode for EnvList {
+    fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         crate::kdl_args!(node)?;
 
         let Some(children) = node.children() else {
@@ -103,7 +102,7 @@ mod tests {
             .nodes()
             .first()
             .expect("test KDL must have at least one node");
-        EnvList::try_from(node)
+        EnvList::from_kdl_node(node)
     }
 
     #[test]

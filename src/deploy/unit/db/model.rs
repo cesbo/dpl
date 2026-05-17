@@ -131,10 +131,8 @@ impl DbConfig {
     }
 }
 
-impl TryFrom<&KdlNode> for DbConfig {
-    type Error = NodeError;
-
-    fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
+impl FromKdlNode for DbConfig {
+    fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         kdl_args!(node)?;
 
         let mut server: Option<String> = None;
@@ -145,9 +143,9 @@ impl TryFrom<&KdlNode> for DbConfig {
             for child in children.nodes() {
                 let name = child.name().value();
                 match name {
-                    "server" => set_field(&mut server, child, name)?,
-                    "user" => set_field(&mut user, child, name)?,
-                    "secret" => set_field(&mut secret, child, name)?,
+                    "server" => set_field(&mut server, child)?,
+                    "user" => set_field(&mut user, child)?,
+                    "secret" => set_field(&mut secret, child)?,
                     _ => {
                         return Err(NodeError::UnknownField {
                             name: name.to_owned(),
@@ -256,7 +254,8 @@ impl DbServerEngine {
 }
 
 impl FromKdlNode for DbServerEngine {
-    fn from_kdl_node(node: &KdlNode, name: &str) -> Result<Self, NodeError> {
+    fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
+        let name = node.name().value();
         let value = parse_string_child(node).map_err(|source| NodeError::InvalidField {
             name: name.to_owned(),
             span: node.span(),
@@ -292,10 +291,8 @@ impl DbServerConfig {
     }
 }
 
-impl TryFrom<&KdlNode> for DbServerConfig {
-    type Error = NodeError;
-
-    fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
+impl FromKdlNode for DbServerConfig {
+    fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         kdl_args!(node)?;
 
         let mut engine: Option<DbServerEngine> = None;
@@ -306,9 +303,9 @@ impl TryFrom<&KdlNode> for DbServerConfig {
             for child in children.nodes() {
                 let name = child.name().value();
                 match name {
-                    "engine" => set_field(&mut engine, child, name)?,
-                    "version" => set_field(&mut version, child, name)?,
-                    "secret" => set_field(&mut secret, child, name)?,
+                    "engine" => set_field(&mut engine, child)?,
+                    "version" => set_field(&mut version, child)?,
+                    "secret" => set_field(&mut secret, child)?,
                     _ => {
                         return Err(NodeError::UnknownField {
                             name: name.to_owned(),
@@ -359,12 +356,12 @@ mod tests {
 
     fn parse_db(src: &str) -> Result<DbConfig, NodeError> {
         let doc: KdlDocument = src.parse().expect("test KDL must parse");
-        DbConfig::try_from(doc.nodes().first().expect("test KDL must have a node"))
+        DbConfig::from_kdl_node(doc.nodes().first().expect("test KDL must have a node"))
     }
 
     fn parse_db_server(src: &str) -> Result<DbServerConfig, NodeError> {
         let doc: KdlDocument = src.parse().expect("test KDL must parse");
-        DbServerConfig::try_from(doc.nodes().first().expect("test KDL must have a node"))
+        DbServerConfig::from_kdl_node(doc.nodes().first().expect("test KDL must have a node"))
     }
 
     #[test]

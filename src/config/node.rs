@@ -37,19 +37,26 @@ pub fn parse_string_child(node: &KdlNode) -> Result<&str, FieldError> {
 }
 
 /// Convert a single child node (e.g. `engine "postgresql"`) into a typed
-/// field value. Implementors decide which `NodeError` shape is the
+/// field value. The field name is read from `node.name().value()` for
+/// error context. Implementors decide which `NodeError` shape is the
 /// most precise — `FieldError`-wrapping shapes for scalar mismatches,
 /// `UnknownVariant` for enums, etc.
+///
+/// This is the single conversion trait used by `set_field` and
+/// `push_field`; local types should implement it directly instead of
+/// `TryFrom<&KdlNode>`. The String impl below is the reason a local
+/// trait exists at all (orphan rules block `impl TryFrom<&KdlNode> for
+/// String`).
 pub(crate) trait FromKdlNode: Sized {
-    fn from_kdl_node(node: &KdlNode, name: &str) -> Result<Self, NodeError>;
+    fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError>;
 }
 
 impl FromKdlNode for String {
-    fn from_kdl_node(node: &KdlNode, name: &str) -> Result<Self, NodeError> {
+    fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         parse_string_child(node)
             .map(str::to_owned)
             .map_err(|source| NodeError::InvalidField {
-                name: name.to_owned(),
+                name: node.name().value().to_owned(),
                 span: node.span(),
                 source,
             })
@@ -58,18 +65,22 @@ impl FromKdlNode for String {
 
 /// Assign `child` into `target`, dispatching to `T::from_kdl_node`.
 /// Rejects re-assignment with `DuplicateField`.
-pub fn set_field<T: FromKdlNode>(
-    target: &mut Option<T>,
-    child: &KdlNode,
-    name: &str,
-) -> Result<(), NodeError> {
+pub fn set_field<T: FromKdlNode>(target: &mut Option<T>, child: &KdlNode) -> Result<(), NodeError> {
     if target.is_some() {
         return Err(NodeError::DuplicateField {
-            name: name.to_owned(),
+            name: child.name().value().to_owned(),
             span: child.span(),
         });
     }
 
-    *target = Some(T::from_kdl_node(child, name)?);
+    *target = Some(T::from_kdl_node(child)?);
+    Ok(())
+}
+
+/// Append `child` to `target`, dispatching to `T::from_kdl_node`. Used for
+/// fields where the same child name may appear repeatedly (e.g. `file
+/// "a"; file "b"`).
+pub fn push_field<T: FromKdlNode>(target: &mut Vec<T>, child: &KdlNode) -> Result<(), NodeError> {
+    target.push(T::from_kdl_node(child)?);
     Ok(())
 }

@@ -7,8 +7,10 @@ use serde::{
 use crate::{
     MainContext,
     config::{
+        FromKdlNode,
         NodeError,
         ValidateConfig,
+        push_field,
         set_field,
     },
     deploy::{
@@ -119,10 +121,8 @@ impl ValidateConfig for TimerConfig {
     }
 }
 
-impl TryFrom<&KdlNode> for VolumeConfig {
-    type Error = NodeError;
-
-    fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
+impl FromKdlNode for VolumeConfig {
+    fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         let (source, path) = kdl_args!(node, source: String, path: String)?;
 
         if let Some(child) = node.children().and_then(|c| c.nodes().first()) {
@@ -137,10 +137,8 @@ impl TryFrom<&KdlNode> for VolumeConfig {
     }
 }
 
-impl TryFrom<&KdlNode> for ExportConfig {
-    type Error = NodeError;
-
-    fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
+impl FromKdlNode for ExportConfig {
+    fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         let (source, path) = kdl_args!(node, source: String, path: String)?;
 
         if let Some(child) = node.children().and_then(|c| c.nodes().first()) {
@@ -155,10 +153,44 @@ impl TryFrom<&KdlNode> for ExportConfig {
     }
 }
 
-impl TryFrom<&KdlNode> for TimerConfig {
-    type Error = NodeError;
+impl FromKdlNode for BuildLayerConfig {
+    fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
+        kdl_args!(node)?;
 
-    fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
+        let mut description: Option<String> = None;
+        let mut files: Vec<String> = Vec::new();
+        let mut env: Option<EnvList> = None;
+        let mut script: Option<String> = None;
+
+        if let Some(children) = node.children() {
+            for child in children.nodes() {
+                let name = child.name().value();
+                match name {
+                    "description" => set_field(&mut description, child)?,
+                    "file" => push_field(&mut files, child)?,
+                    "env" => set_field(&mut env, child)?,
+                    "script" => set_field(&mut script, child)?,
+                    _ => {
+                        return Err(NodeError::UnknownField {
+                            name: name.to_owned(),
+                            span: child.span(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(BuildLayerConfig {
+            description,
+            files,
+            env: env.unwrap_or_default(),
+            script,
+        })
+    }
+}
+
+impl FromKdlNode for TimerConfig {
+    fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         let name = kdl_args!(node, name: String)?;
 
         let mut schedule: Option<String> = None;
@@ -168,8 +200,8 @@ impl TryFrom<&KdlNode> for TimerConfig {
             for child in children.nodes() {
                 let name = child.name().value();
                 match name {
-                    "schedule" => set_field(&mut schedule, child, name)?,
-                    "script" => set_field(&mut script, child, name)?,
+                    "schedule" => set_field(&mut schedule, child)?,
+                    "script" => set_field(&mut script, child)?,
                     _ => {
                         return Err(NodeError::UnknownField {
                             name: name.to_owned(),
@@ -278,17 +310,22 @@ mod tests {
 
     fn parse_volume(src: &str) -> Result<VolumeConfig, NodeError> {
         let doc: KdlDocument = src.parse().expect("test KDL must parse");
-        VolumeConfig::try_from(doc.nodes().first().expect("test KDL must have a node"))
+        VolumeConfig::from_kdl_node(doc.nodes().first().expect("test KDL must have a node"))
     }
 
     fn parse_export(src: &str) -> Result<ExportConfig, NodeError> {
         let doc: KdlDocument = src.parse().expect("test KDL must parse");
-        ExportConfig::try_from(doc.nodes().first().expect("test KDL must have a node"))
+        ExportConfig::from_kdl_node(doc.nodes().first().expect("test KDL must have a node"))
     }
 
     fn parse_timer(src: &str) -> Result<TimerConfig, NodeError> {
         let doc: KdlDocument = src.parse().expect("test KDL must parse");
-        TimerConfig::try_from(doc.nodes().first().expect("test KDL must have a node"))
+        TimerConfig::from_kdl_node(doc.nodes().first().expect("test KDL must have a node"))
+    }
+
+    fn parse_build(src: &str) -> Result<BuildLayerConfig, NodeError> {
+        let doc: KdlDocument = src.parse().expect("test KDL must parse");
+        BuildLayerConfig::from_kdl_node(doc.nodes().first().expect("test KDL must have a node"))
     }
 
     fn sample_config() -> AppConfig {
@@ -714,6 +751,209 @@ mod tests {
                     source: FieldError::InvalidType { expected: "string", .. },
                     ..
                 } if name == "schedule",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_build_basic() {
+        let cfg = parse_build(
+            r#"
+            build {
+                description "install deps"
+                file "requirements.txt"
+                env {
+                    PIP_INDEX_URL "https://pypi.example.com"
+                }
+                script "pip install -r requirements.txt"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.description.as_deref(), Some("install deps"));
+        assert_eq!(cfg.files, vec!["requirements.txt".to_owned()]);
+        assert_eq!(
+            cfg.script.as_deref(),
+            Some("pip install -r requirements.txt")
+        );
+        let resolved = cfg.env.resolve(&MainContext::default(), "env").unwrap();
+        assert_eq!(
+            resolved.get("PIP_INDEX_URL").map(String::as_str),
+            Some("https://pypi.example.com"),
+        );
+    }
+
+    #[test]
+    fn kdl_build_bare_node() {
+        let cfg = parse_build("build").unwrap();
+        assert!(cfg.description.is_none());
+        assert!(cfg.files.is_empty());
+        assert!(cfg.script.is_none());
+        assert_eq!(cfg.env, EnvList::default());
+    }
+
+    #[test]
+    fn kdl_build_empty_block() {
+        let cfg = parse_build("build {}").unwrap();
+        assert!(cfg.description.is_none());
+        assert!(cfg.files.is_empty());
+        assert!(cfg.script.is_none());
+        assert_eq!(cfg.env, EnvList::default());
+    }
+
+    #[test]
+    fn kdl_build_multiple_files() {
+        let cfg = parse_build(
+            r#"
+            build {
+                file "requirements.txt"
+                file "src/*.py"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.files,
+            vec!["requirements.txt".to_owned(), "src/*.py".to_owned()],
+        );
+    }
+
+    #[test]
+    fn kdl_build_multiline_script() {
+        let cfg = parse_build(
+            r#"
+            build {
+                script """
+                    pip install --no-cache-dir -r requirements.txt
+                    """
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.script.as_deref(),
+            Some("pip install --no-cache-dir -r requirements.txt"),
+        );
+    }
+
+    #[test]
+    fn kdl_build_positional_arg_rejected() {
+        let err = parse_build(r#"build "stray" { script "x" }"#).unwrap_err();
+        assert!(
+            matches!(err, NodeError::UnexpectedArg { .. }),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_build_unknown_field() {
+        let err = parse_build(
+            r#"
+            build {
+                command "x"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::UnknownField { name, .. } if name == "command"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_build_duplicate_description() {
+        let err = parse_build(
+            r#"
+            build {
+                description "a"
+                description "b"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::DuplicateField { name, .. } if name == "description"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_build_duplicate_script() {
+        let err = parse_build(
+            r#"
+            build {
+                script "a"
+                script "b"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::DuplicateField { name, .. } if name == "script"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_build_duplicate_env() {
+        let err = parse_build(
+            r#"
+            build {
+                env { A "1" }
+                env { B "2" }
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::DuplicateField { name, .. } if name == "env"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_build_file_not_a_string() {
+        let err = parse_build(
+            r#"
+            build {
+                file 5
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidType { expected: "string", .. },
+                    ..
+                } if name == "file",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_build_description_not_a_string() {
+        let err = parse_build(
+            r#"
+            build {
+                description 5
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidType { expected: "string", .. },
+                    ..
+                } if name == "description",
             ),
             "unexpected error: {err:?}",
         );
