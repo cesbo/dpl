@@ -129,27 +129,134 @@ pub enum HttpsConfig {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-pub struct RouteConfig {
-    /// URL path prefix (e.g. "/billing", "/billing/static")
-    pub path: String,
-    #[serde(flatten)]
-    pub action: RouteAction,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum RouteAction {
+pub enum RouteConfig {
     ReverseProxy {
+        /// URL path prefix (e.g. "/billing")
+        path: String,
         /// Upstream URL (e.g. "http://127.0.0.1:8000")
         target: Value,
     },
     ServeFiles {
+        /// URL path prefix (e.g. "/billing/static")
+        path: String,
         /// Filesystem root
         root: Value,
         /// Single Page Application fallback
         #[serde(default)]
         spa: bool,
     },
+}
+
+impl RouteConfig {
+    pub fn path(&self) -> &str {
+        match self {
+            RouteConfig::ReverseProxy { path, .. } | RouteConfig::ServeFiles { path, .. } => path,
+        }
+    }
+}
+
+impl FromKdlNode for RouteConfig {
+    fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
+        let (variant, path) = kdl_args!(node, variant: String, path: String)?;
+
+        let variant_span = node
+            .entries()
+            .first()
+            .map(|e| e.span())
+            .unwrap_or_else(|| node.span());
+
+        match variant.as_str() {
+            "reverse_proxy" => {
+                let mut target: Option<Value> = None;
+                if let Some(children) = node.children() {
+                    for child in children.nodes() {
+                        let name = child.name().value();
+                        match name {
+                            "target" => set_value_field(&mut target, child, "target")?,
+                            _ => {
+                                return Err(NodeError::UnknownField {
+                                    name: name.to_owned(),
+                                    span: child.span(),
+                                });
+                            }
+                        }
+                    }
+                }
+                Ok(RouteConfig::ReverseProxy {
+                    path,
+                    target: target.ok_or(NodeError::MissingField {
+                        name: "target",
+                        span: node.span(),
+                    })?,
+                })
+            }
+            "serve_files" => {
+                let mut root: Option<Value> = None;
+                let mut spa = false;
+                let mut spa_seen = false;
+                if let Some(children) = node.children() {
+                    for child in children.nodes() {
+                        let name = child.name().value();
+                        match name {
+                            "root" => set_value_field(&mut root, child, "root")?,
+                            "spa" => {
+                                if spa_seen {
+                                    return Err(NodeError::DuplicateField {
+                                        name: "spa".to_owned(),
+                                        span: child.span(),
+                                    });
+                                }
+                                spa_seen = true;
+                                kdl_args!(child)?;
+                                reject_children(child)?;
+                                spa = true;
+                            }
+                            _ => {
+                                return Err(NodeError::UnknownField {
+                                    name: name.to_owned(),
+                                    span: child.span(),
+                                });
+                            }
+                        }
+                    }
+                }
+                Ok(RouteConfig::ServeFiles {
+                    path,
+                    root: root.ok_or(NodeError::MissingField {
+                        name: "root",
+                        span: node.span(),
+                    })?,
+                    spa,
+                })
+            }
+            other => Err(NodeError::UnknownVariant {
+                field: node.name().value().to_owned(),
+                value: other.to_owned(),
+                span: variant_span,
+            }),
+        }
+    }
+}
+
+fn set_value_field(
+    target: &mut Option<Value>,
+    child: &KdlNode,
+    name: &'static str,
+) -> Result<(), NodeError> {
+    if target.is_some() {
+        return Err(NodeError::DuplicateField {
+            name: name.to_owned(),
+            span: child.span(),
+        });
+    }
+    let value = Value::try_from(child).map_err(|source| NodeError::InvalidField {
+        name: name.to_owned(),
+        span: child.span(),
+        source,
+    })?;
+    *target = Some(value);
+    Ok(())
 }
 
 impl ValidateConfig for DomainConfig {
@@ -169,8 +276,8 @@ impl ValidateConfig for DomainConfig {
         }
 
         for route in &self.routes {
-            if !url_path(&route.path) {
-                return Err(format!("invalid route path: '{}'", route.path));
+            if !url_path(route.path()) {
+                return Err(format!("invalid route path: '{}'", route.path()));
             }
         }
 
@@ -181,9 +288,9 @@ impl ValidateConfig for DomainConfig {
 impl DomainConfig {
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
         for (index, route) in self.routes.iter().enumerate() {
-            let (value, leaf) = match &route.action {
-                RouteAction::ReverseProxy { target } => (target, "target"),
-                RouteAction::ServeFiles { root, .. } => (root, "root"),
+            let (value, leaf) = match route {
+                RouteConfig::ReverseProxy { target, .. } => (target, "target"),
+                RouteConfig::ServeFiles { root, .. } => (root, "root"),
             };
             value
                 .render(ctx)
@@ -388,6 +495,236 @@ mod tests {
         );
     }
 
+    fn parse_route(src: &str) -> Result<RouteConfig, NodeError> {
+        let doc: KdlDocument = src.parse().expect("test KDL must parse");
+        RouteConfig::from_kdl_node(doc.nodes().first().expect("test KDL must have a node"))
+    }
+
+    #[test]
+    fn kdl_route_reverse_proxy() {
+        let cfg = parse_route(
+            r#"
+            route reverse_proxy "/api" {
+                target "http://127.0.0.1:8000"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg,
+            RouteConfig::ReverseProxy {
+                path: "/api".into(),
+                target: Value::parse("http://127.0.0.1:8000").unwrap(),
+            },
+        );
+    }
+
+    #[test]
+    fn kdl_route_reverse_proxy_template_target() {
+        let cfg = parse_route(
+            r#"
+            route reverse_proxy "/api" {
+                target "${backend:url}"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg,
+            RouteConfig::ReverseProxy {
+                path: "/api".into(),
+                target: Value::parse("${backend:url}").unwrap(),
+            },
+        );
+    }
+
+    #[test]
+    fn kdl_route_serve_files_with_spa() {
+        let cfg = parse_route(
+            r#"
+            route serve_files "/static" {
+                root "/var/www/site"
+                spa
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg,
+            RouteConfig::ServeFiles {
+                path: "/static".into(),
+                root: Value::parse("/var/www/site").unwrap(),
+                spa: true,
+            },
+        );
+    }
+
+    #[test]
+    fn kdl_route_serve_files_without_spa() {
+        let cfg = parse_route(
+            r#"
+            route serve_files "/static" {
+                root "/var/www/site"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg,
+            RouteConfig::ServeFiles {
+                path: "/static".into(),
+                root: Value::parse("/var/www/site").unwrap(),
+                spa: false,
+            },
+        );
+    }
+
+    #[test]
+    fn kdl_route_missing_target() {
+        let err = parse_route(
+            r#"
+            route reverse_proxy "/api" {
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, NodeError::MissingField { name: "target", .. }),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_route_missing_root() {
+        let err = parse_route(
+            r#"
+            route serve_files "/static" {
+                spa
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, NodeError::MissingField { name: "root", .. }),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_route_unknown_variant() {
+        let err = parse_route(r#"route redirect "/x""#).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NodeError::UnknownVariant { field, value, .. }
+                    if field == "route" && value == "redirect",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_route_unknown_child_on_serve_files() {
+        let err = parse_route(
+            r#"
+            route serve_files "/static" {
+                root "/var/www"
+                target "http://x"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::UnknownField { name, .. } if name == "target"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_route_unknown_child_on_reverse_proxy() {
+        let err = parse_route(
+            r#"
+            route reverse_proxy "/api" {
+                target "http://x"
+                bogus "y"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::UnknownField { name, .. } if name == "bogus"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_route_duplicate_target() {
+        let err = parse_route(
+            r#"
+            route reverse_proxy "/api" {
+                target "http://a"
+                target "http://b"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::DuplicateField { name, .. } if name == "target"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_route_duplicate_spa() {
+        let err = parse_route(
+            r#"
+            route serve_files "/static" {
+                root "/var/www"
+                spa
+                spa
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::DuplicateField { name, .. } if name == "spa"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_route_spa_with_arg_rejected() {
+        let err = parse_route(
+            r#"
+            route serve_files "/static" {
+                root "/var/www"
+                spa #true
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, NodeError::UnexpectedArg { .. }),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_route_missing_path() {
+        let err = parse_route(
+            r#"
+            route reverse_proxy {
+                target "http://x"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, NodeError::MissingArg { name: "path", .. }),
+            "unexpected error: {err:?}",
+        );
+    }
+
     #[test]
     fn parse_domain_config_with_custom_proxy() {
         let config: DomainConfig = serde_yaml::from_str(
@@ -429,12 +766,9 @@ routes:
         assert_eq!(config.https, Some(HttpsConfig::Proxy));
         assert_eq!(config.routes.len(), 2);
 
-        assert!(matches!(
-            config.routes[0].action,
-            RouteAction::ReverseProxy { .. }
-        ));
-        match &config.routes[1].action {
-            RouteAction::ServeFiles { spa, .. } => assert!(*spa),
+        assert!(matches!(config.routes[0], RouteConfig::ReverseProxy { .. }));
+        match &config.routes[1] {
+            RouteConfig::ServeFiles { spa, .. } => assert!(*spa),
             _ => panic!("expected serve_files action"),
         }
 

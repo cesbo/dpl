@@ -13,7 +13,6 @@ use serde::Serialize;
 use super::model::{
     DomainConfig,
     ProxyConfig,
-    RouteAction,
     RouteConfig,
 };
 use crate::{
@@ -105,33 +104,30 @@ impl<'a> RenderProxy<'a> {
 
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-enum RenderAction {
-    ReverseProxy { target: String },
-    ServeFiles { root: String, spa: bool },
-}
-
-#[derive(Serialize)]
-struct RenderRoute<'a> {
-    path: &'a str,
-    #[serde(flatten)]
-    action: RenderAction,
+enum RenderRoute<'a> {
+    ReverseProxy {
+        path: &'a str,
+        target: String,
+    },
+    ServeFiles {
+        path: &'a str,
+        root: String,
+        spa: bool,
+    },
 }
 
 impl<'a> RenderRoute<'a> {
     fn new(ctx: &MainContext, route: &'a RouteConfig) -> Result<RenderRoute<'a>, RefError> {
-        let action = match &route.action {
-            RouteAction::ReverseProxy { target } => RenderAction::ReverseProxy {
+        Ok(match route {
+            RouteConfig::ReverseProxy { path, target } => RenderRoute::ReverseProxy {
+                path: path.as_str(),
                 target: target.render(ctx)?,
             },
-            RouteAction::ServeFiles { root, spa } => RenderAction::ServeFiles {
+            RouteConfig::ServeFiles { path, root, spa } => RenderRoute::ServeFiles {
+                path: path.as_str(),
                 root: root.render(ctx)?,
                 spa: *spa,
             },
-        };
-
-        Ok(RenderRoute {
-            path: &route.path,
-            action,
         })
     }
 }
