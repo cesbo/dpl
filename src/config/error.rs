@@ -42,6 +42,13 @@ pub enum FieldError {
         span: SourceSpan,
     },
 
+    #[error("expected integer from {min} to {max}")]
+    OutOfRange {
+        min: i128,
+        max: i128,
+        span: SourceSpan,
+    },
+
     #[error("invalid template: {source}")]
     InvalidTemplate {
         span: SourceSpan,

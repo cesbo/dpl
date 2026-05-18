@@ -262,6 +262,63 @@ impl FromKdlNode for TimerConfig {
     }
 }
 
+impl FromKdlNode for AppConfig {
+    fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
+        kdl_args!(node)?;
+
+        let mut image: Option<String> = None;
+        let mut port: Option<u16> = None;
+        let mut runtime: Option<RuntimeConfig> = None;
+        let mut build: Vec<BuildConfig> = Vec::new();
+        let mut volumes: Vec<VolumeConfig> = Vec::new();
+        let mut exports: Vec<ExportConfig> = Vec::new();
+        let mut timers: Vec<TimerConfig> = Vec::new();
+        let mut databases: Vec<String> = Vec::new();
+
+        if let Some(children) = node.children() {
+            for child in children.nodes() {
+                let name = child.name().value();
+                match name {
+                    "image" => set_field(&mut image, child)?,
+                    "port" => set_field(&mut port, child)?,
+                    "runtime" => set_field(&mut runtime, child)?,
+                    "build" => push_field(&mut build, child)?,
+                    "volume" => push_field(&mut volumes, child)?,
+                    "export" => push_field(&mut exports, child)?,
+                    "timer" => push_field(&mut timers, child)?,
+                    "database" => push_field(&mut databases, child)?,
+                    _ => {
+                        return Err(NodeError::UnknownField {
+                            name: name.to_owned(),
+                            span: child.span(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(AppConfig {
+            image: image.ok_or(NodeError::MissingField {
+                name: "image",
+                span: node.span(),
+            })?,
+            port: port.ok_or(NodeError::MissingField {
+                name: "port",
+                span: node.span(),
+            })?,
+            runtime: runtime.ok_or(NodeError::MissingField {
+                name: "runtime",
+                span: node.span(),
+            })?,
+            build,
+            volumes,
+            exports,
+            timers,
+            databases,
+        })
+    }
+}
+
 impl AppConfig {
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
         self.runtime.env.resolve(ctx, "runtime.env")?;
@@ -367,6 +424,11 @@ mod tests {
     fn parse_runtime(src: &str) -> Result<RuntimeConfig, NodeError> {
         let doc: KdlDocument = src.parse().expect("test KDL must parse");
         RuntimeConfig::from_kdl_node(doc.nodes().first().expect("test KDL must have a node"))
+    }
+
+    fn parse_app(src: &str) -> Result<AppConfig, NodeError> {
+        let doc: KdlDocument = src.parse().expect("test KDL must parse");
+        AppConfig::from_kdl_node(doc.nodes().first().expect("test KDL must have a node"))
     }
 
     fn sample_config() -> AppConfig {
@@ -1205,5 +1267,350 @@ mod tests {
             ),
             "unexpected error: {err:?}",
         );
+    }
+
+    #[test]
+    fn kdl_app_basic() {
+        let cfg = parse_app(
+            r#"
+            app {
+                image "python:3.14-slim"
+                port 8000
+
+                database "db-test"
+                database "cache-db"
+
+                build {
+                    description "install deps"
+                    file "requirements.txt"
+                    script "pip install -r requirements.txt"
+                }
+
+                build {
+                    script "python manage.py collectstatic --noinput"
+                }
+
+                runtime {
+                    env { ALLOWED_HOSTS "app.example.com" }
+                    init "python manage.py migrate --noinput"
+                    cmd "gunicorn app.wsgi:application --bind 0.0.0.0:8000"
+                }
+
+                volume "/var/lib/app/uploads" "/app/uploads"
+
+                export "/app/staticfiles" "/static"
+
+                timer "run-tasks" {
+                    schedule "minutely"
+                    script "python manage.py run_tasks"
+                }
+            }
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(cfg.image, "python:3.14-slim");
+        assert_eq!(cfg.port, 8000);
+        assert_eq!(
+            cfg.databases,
+            vec!["db-test".to_owned(), "cache-db".to_owned()]
+        );
+        assert_eq!(cfg.build.len(), 2);
+        assert_eq!(cfg.build[0].description.as_deref(), Some("install deps"));
+        assert_eq!(cfg.build[0].files, vec!["requirements.txt".to_owned()]);
+        assert!(cfg.build[1].description.is_none());
+        assert_eq!(
+            cfg.runtime.cmd,
+            "gunicorn app.wsgi:application --bind 0.0.0.0:8000"
+        );
+        assert_eq!(
+            cfg.runtime.init.as_deref(),
+            Some("python manage.py migrate --noinput")
+        );
+        assert_eq!(cfg.volumes.len(), 1);
+        assert_eq!(cfg.volumes[0].source, "/var/lib/app/uploads");
+        assert_eq!(cfg.volumes[0].path, "/app/uploads");
+        assert_eq!(cfg.exports.len(), 1);
+        assert_eq!(cfg.exports[0].source, "/app/staticfiles");
+        assert_eq!(cfg.exports[0].path, "/static");
+        assert_eq!(cfg.timers.len(), 1);
+        assert_eq!(cfg.timers[0].name, "run-tasks");
+    }
+
+    #[test]
+    fn kdl_app_minimal() {
+        let cfg = parse_app(
+            r#"
+            app {
+                image "alpine"
+                port 8080
+                runtime { cmd "./run" }
+            }
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(cfg.image, "alpine");
+        assert_eq!(cfg.port, 8080);
+        assert_eq!(cfg.runtime.cmd, "./run");
+        assert!(cfg.build.is_empty());
+        assert!(cfg.volumes.is_empty());
+        assert!(cfg.exports.is_empty());
+        assert!(cfg.timers.is_empty());
+        assert!(cfg.databases.is_empty());
+    }
+
+    #[test]
+    fn kdl_app_missing_image() {
+        let err = parse_app(
+            r#"
+            app {
+                port 8000
+                runtime { cmd "./run" }
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::MissingField { name, .. } if *name == "image"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_app_missing_port() {
+        let err = parse_app(
+            r#"
+            app {
+                image "alpine"
+                runtime { cmd "./run" }
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::MissingField { name, .. } if *name == "port"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_app_missing_runtime() {
+        let err = parse_app(
+            r#"
+            app {
+                image "alpine"
+                port 8080
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::MissingField { name, .. } if *name == "runtime"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_app_duplicate_image() {
+        let err = parse_app(
+            r#"
+            app {
+                image "alpine"
+                image "debian"
+                port 8080
+                runtime { cmd "./run" }
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::DuplicateField { name, .. } if name == "image"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_app_duplicate_port() {
+        let err = parse_app(
+            r#"
+            app {
+                image "alpine"
+                port 8080
+                port 9090
+                runtime { cmd "./run" }
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::DuplicateField { name, .. } if name == "port"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_app_duplicate_runtime() {
+        let err = parse_app(
+            r#"
+            app {
+                image "alpine"
+                port 8080
+                runtime { cmd "./run" }
+                runtime { cmd "./other" }
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::DuplicateField { name, .. } if name == "runtime"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_app_unknown_field() {
+        let err = parse_app(
+            r#"
+            app {
+                image "alpine"
+                port 8080
+                runtime { cmd "./run" }
+                replicas 3
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::UnknownField { name, .. } if name == "replicas"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_app_positional_arg_rejected() {
+        let err = parse_app(
+            r#"
+            app "stray" {
+                image "alpine"
+                port 8080
+                runtime { cmd "./run" }
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, NodeError::UnexpectedArg { .. }),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_app_port_out_of_range() {
+        let err = parse_app(
+            r#"
+            app {
+                image "alpine"
+                port 70000
+                runtime { cmd "./run" }
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NodeError::InvalidField {
+                    name,
+                    source: FieldError::OutOfRange { min: 0, max: 65535, .. },
+                    ..
+                } if name == "port",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_app_port_not_an_integer() {
+        let err = parse_app(
+            r#"
+            app {
+                image "alpine"
+                port "8080"
+                runtime { cmd "./run" }
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidType { expected: "integer", .. },
+                    ..
+                } if name == "port",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_app_multiple_databases_preserve_order() {
+        let cfg = parse_app(
+            r#"
+            app {
+                image "alpine"
+                port 8080
+                runtime { cmd "./run" }
+                database "first"
+                database "second"
+                database "third"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.databases,
+            vec!["first".to_owned(), "second".to_owned(), "third".to_owned()],
+        );
+    }
+
+    #[test]
+    fn kdl_app_multiple_volumes_preserve_order() {
+        let cfg = parse_app(
+            r#"
+            app {
+                image "alpine"
+                port 8080
+                runtime { cmd "./run" }
+                volume "/a/src" "/a/dst"
+                volume "/b/src" "/b/dst"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.volumes.len(), 2);
+        assert_eq!(cfg.volumes[0].source, "/a/src");
+        assert_eq!(cfg.volumes[1].source, "/b/src");
+    }
+
+    #[test]
+    fn kdl_app_multiple_builds_preserve_order() {
+        let cfg = parse_app(
+            r#"
+            app {
+                image "alpine"
+                port 8080
+                runtime { cmd "./run" }
+                build { description "one" }
+                build { description "two" }
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.build.len(), 2);
+        assert_eq!(cfg.build[0].description.as_deref(), Some("one"));
+        assert_eq!(cfg.build[1].description.as_deref(), Some("two"));
     }
 }
