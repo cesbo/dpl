@@ -119,11 +119,11 @@ impl<'a> ArtifactsContext<'a> {
             },
         )?;
 
-        let timers: Vec<RenderTimerConfig> = self
+        let timers: Vec<RenderTimer> = self
             .config
             .timers
             .iter()
-            .map(|v| RenderTimerConfig {
+            .map(|v| RenderTimer {
                 name: &v.name,
                 schedule: &v.schedule,
                 script: &v.script,
@@ -161,11 +161,11 @@ impl<'a> ArtifactsContext<'a> {
 
         let dpl_bin = std::env::current_exe().map_err(ArtifactError::CurrentExe)?;
 
-        let volumes: Vec<RenderVolumeConfig> = self
+        let volumes: Vec<RenderVolume> = self
             .config
             .volumes
             .iter()
-            .map(|v| RenderVolumeConfig {
+            .map(|v| RenderVolume {
                 source: &v.source,
                 path: &v.path,
             })

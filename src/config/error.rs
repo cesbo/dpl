@@ -55,6 +55,12 @@ pub enum FieldError {
         #[source]
         source: TemplateError,
     },
+
+    #[error("expected {expected}")]
+    InvalidValue {
+        expected: &'static str,
+        span: SourceSpan,
+    },
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]

@@ -457,11 +457,6 @@ impl AppConfig {
 
 impl ValidateConfig for AppConfig {
     fn validate_config(&self) -> Result<(), String> {
-        self.runtime.env.validate_config()?;
-        for layer in &self.build {
-            layer.env.validate_config()?;
-        }
-
         for timer in &self.timers {
             timer.validate_config()?;
         }

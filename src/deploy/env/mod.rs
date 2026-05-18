@@ -12,9 +12,9 @@ pub use self::value::Value;
 use crate::{
     MainContext,
     config::{
+        FieldError,
         FromKdlNode,
         NodeError,
-        ValidateConfig,
     },
     error::{
         Location,
@@ -37,6 +37,17 @@ impl FromKdlNode for EnvList {
         let mut map = BTreeMap::new();
         for child in children.nodes() {
             let key = child.name().value().to_owned();
+            if !validate::env_name(&key) {
+                let span = child.name().span();
+                return Err(NodeError::InvalidField {
+                    name: key,
+                    span,
+                    source: FieldError::InvalidValue {
+                        expected: "env name (letters, digits, '_'; must not start with a digit)",
+                        span,
+                    },
+                });
+            }
             let value = Value::try_from(child).map_err(|source| NodeError::InvalidField {
                 name: key.clone(),
                 span: child.span(),
@@ -89,18 +100,6 @@ impl EnvList {
                 Ok((k.clone(), value))
             })
             .collect()
-    }
-}
-
-impl ValidateConfig for EnvList {
-    fn validate_config(&self) -> Result<(), String> {
-        for key in self.0.keys() {
-            if !validate::env_name(key) {
-                return Err(format!("invalid env name: '{key}'"));
-            }
-        }
-
-        Ok(())
     }
 }
 
@@ -247,7 +246,6 @@ mod tests {
 
     #[test]
     fn validate_config_rejects_invalid_env_name() {
-        let list = parse_env(r#"env { BAD-NAME "x" }"#).unwrap();
-        assert!(list.validate_config().is_err());
+        assert!(parse_env(r#"env { BAD-NAME "x" }"#).is_err());
     }
 }

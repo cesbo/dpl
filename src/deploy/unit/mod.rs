@@ -730,6 +730,5 @@ domain {
             panic!("expected app variant");
         };
         assert_eq!(app.runtime.cmd, "./run");
-        assert_eq!(app.runtime.env.validate_config(), Ok(()));
     }
 }
