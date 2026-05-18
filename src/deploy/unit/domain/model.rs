@@ -30,8 +30,6 @@ pub struct DomainConfig {
     #[serde(default)]
     pub proxy: Option<ProxyConfig>,
     #[serde(default)]
-    pub https: Option<HttpsConfig>,
-    #[serde(default)]
     pub custom_config: String,
     #[serde(default)]
     pub routes: Vec<RouteConfig>,
@@ -107,39 +105,6 @@ impl FromKdlNode for ProxyConfig {
                     })?,
                     proxies,
                 })
-            }
-            other => Err(NodeError::UnknownVariant {
-                field: node.name().value().to_owned(),
-                value: other.to_owned(),
-                span: node
-                    .entries()
-                    .first()
-                    .map(|e| e.span())
-                    .unwrap_or_else(|| node.span()),
-            }),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum HttpsConfig {
-    Proxy,
-    Acme,
-}
-
-impl FromKdlNode for HttpsConfig {
-    fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
-        let variant = kdl_args!(node, variant: String)?;
-
-        match variant.as_str() {
-            "proxy" => {
-                reject_children(node)?;
-                Ok(HttpsConfig::Proxy)
-            }
-            "acme" => {
-                reject_children(node)?;
-                Ok(HttpsConfig::Acme)
             }
             other => Err(NodeError::UnknownVariant {
                 field: node.name().value().to_owned(),
@@ -332,7 +297,6 @@ impl FromKdlNode for DomainConfig {
 
         let mut hosts: Vec<String> = Vec::new();
         let mut proxy: Option<ProxyConfig> = None;
-        let mut https: Option<HttpsConfig> = None;
         let mut custom_config: Option<String> = None;
         let mut routes: Vec<RouteConfig> = Vec::new();
 
@@ -342,7 +306,6 @@ impl FromKdlNode for DomainConfig {
                 match name {
                     "host" => push_field(&mut hosts, child)?,
                     "proxy" => set_field(&mut proxy, child)?,
-                    "https" => set_field(&mut https, child)?,
                     "custom-config" => set_field(&mut custom_config, child)?,
                     "route" => push_field(&mut routes, child)?,
                     _ => {
@@ -358,7 +321,6 @@ impl FromKdlNode for DomainConfig {
         Ok(DomainConfig {
             hosts,
             proxy,
-            https,
             custom_config: custom_config.unwrap_or_default(),
             routes,
         })
@@ -790,52 +752,6 @@ mod tests {
         );
     }
 
-    fn parse_https(src: &str) -> Result<HttpsConfig, NodeError> {
-        let doc: KdlDocument = src.parse().expect("test KDL must parse");
-        HttpsConfig::from_kdl_node(doc.nodes().first().expect("test KDL must have a node"))
-    }
-
-    #[test]
-    fn kdl_https_proxy() {
-        let cfg = parse_https("https proxy").unwrap();
-        assert_eq!(cfg, HttpsConfig::Proxy);
-    }
-
-    #[test]
-    fn kdl_https_acme() {
-        let cfg = parse_https("https acme").unwrap();
-        assert_eq!(cfg, HttpsConfig::Acme);
-    }
-
-    #[test]
-    fn kdl_https_unknown_variant() {
-        let err = parse_https(r#"https "other""#).unwrap_err();
-        assert!(
-            matches!(
-                &err,
-                NodeError::UnknownVariant { field, value, .. }
-                    if field == "https" && value == "other",
-            ),
-            "unexpected error: {err:?}",
-        );
-    }
-
-    #[test]
-    fn kdl_https_with_children_rejected() {
-        let err = parse_https(
-            r#"
-            https proxy {
-                bogus "y"
-            }
-            "#,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(&err, NodeError::UnknownField { name, .. } if name == "bogus"),
-            "unexpected error: {err:?}",
-        );
-    }
-
     fn parse_domain(src: &str) -> Result<DomainConfig, NodeError> {
         let doc: KdlDocument = src.parse().expect("test KDL must parse");
         DomainConfig::from_kdl_node(doc.nodes().first().expect("test KDL must have a node"))
@@ -845,7 +761,6 @@ mod tests {
         DomainConfig {
             hosts: vec!["example.com".into()],
             proxy: None,
-            https: None,
             custom_config: String::new(),
             routes: Vec::new(),
         }
@@ -862,7 +777,6 @@ mod tests {
                     header "X-Forwarded-For"
                     ip "192.0.2.10"
                 }
-                https proxy
                 custom-config "add_header X-Test true;"
                 route reverse_proxy "/api" {
                     target "${backend:url}"
@@ -887,7 +801,6 @@ mod tests {
                 proxies: vec!["192.0.2.10".into()],
             }),
         );
-        assert_eq!(cfg.https, Some(HttpsConfig::Proxy));
         assert_eq!(cfg.custom_config, "add_header X-Test true;");
         assert_eq!(cfg.routes.len(), 2);
         assert!(matches!(cfg.routes[0], RouteConfig::ReverseProxy { .. }));
@@ -911,7 +824,6 @@ mod tests {
 
         assert_eq!(cfg.hosts, vec!["example.com".to_string()]);
         assert_eq!(cfg.proxy, None);
-        assert_eq!(cfg.https, None);
         assert_eq!(cfg.custom_config, "");
         assert!(cfg.routes.is_empty());
         assert!(cfg.validate_config().is_ok());
@@ -974,24 +886,6 @@ mod tests {
         .unwrap_err();
         assert!(
             matches!(&err, NodeError::UnknownField { name, .. } if name == "bogus"),
-            "unexpected error: {err:?}",
-        );
-    }
-
-    #[test]
-    fn kdl_domain_duplicate_https() {
-        let err = parse_domain(
-            r#"
-            domain {
-                host "example.com"
-                https proxy
-                https acme
-            }
-            "#,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(&err, NodeError::DuplicateField { name, .. } if name == "https"),
             "unexpected error: {err:?}",
         );
     }

@@ -214,7 +214,6 @@ hosts:
   - example.com
 proxy:
   type: cloudflare
-https: proxy
 routes:
   - path: /api
     kind: reverse_proxy
