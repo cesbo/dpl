@@ -128,6 +128,32 @@ pub enum HttpsConfig {
     Acme,
 }
 
+impl FromKdlNode for HttpsConfig {
+    fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
+        let variant = kdl_args!(node, variant: String)?;
+
+        match variant.as_str() {
+            "proxy" => {
+                reject_children(node)?;
+                Ok(HttpsConfig::Proxy)
+            }
+            "acme" => {
+                reject_children(node)?;
+                Ok(HttpsConfig::Acme)
+            }
+            other => Err(NodeError::UnknownVariant {
+                field: node.name().value().to_owned(),
+                value: other.to_owned(),
+                span: node
+                    .entries()
+                    .first()
+                    .map(|e| e.span())
+                    .unwrap_or_else(|| node.span()),
+            }),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RouteConfig {
@@ -297,6 +323,45 @@ impl DomainConfig {
                 .map_err(|err| err.at(Location::field(format!("routes[{index}].{leaf}"))))?;
         }
         Ok(())
+    }
+}
+
+impl FromKdlNode for DomainConfig {
+    fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
+        kdl_args!(node)?;
+
+        let mut hosts: Vec<String> = Vec::new();
+        let mut proxy: Option<ProxyConfig> = None;
+        let mut https: Option<HttpsConfig> = None;
+        let mut custom_config: Option<String> = None;
+        let mut routes: Vec<RouteConfig> = Vec::new();
+
+        if let Some(children) = node.children() {
+            for child in children.nodes() {
+                let name = child.name().value();
+                match name {
+                    "host" => push_field(&mut hosts, child)?,
+                    "proxy" => set_field(&mut proxy, child)?,
+                    "https" => set_field(&mut https, child)?,
+                    "custom-config" => set_field(&mut custom_config, child)?,
+                    "route" => push_field(&mut routes, child)?,
+                    _ => {
+                        return Err(NodeError::UnknownField {
+                            name: name.to_owned(),
+                            span: child.span(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(DomainConfig {
+            hosts,
+            proxy,
+            https,
+            custom_config: custom_config.unwrap_or_default(),
+            routes,
+        })
     }
 }
 
@@ -725,188 +790,288 @@ mod tests {
         );
     }
 
+    fn parse_https(src: &str) -> Result<HttpsConfig, NodeError> {
+        let doc: KdlDocument = src.parse().expect("test KDL must parse");
+        HttpsConfig::from_kdl_node(doc.nodes().first().expect("test KDL must have a node"))
+    }
+
     #[test]
-    fn parse_domain_config_with_custom_proxy() {
-        let config: DomainConfig = serde_yaml::from_str(
+    fn kdl_https_proxy() {
+        let cfg = parse_https("https proxy").unwrap();
+        assert_eq!(cfg, HttpsConfig::Proxy);
+    }
+
+    #[test]
+    fn kdl_https_acme() {
+        let cfg = parse_https("https acme").unwrap();
+        assert_eq!(cfg, HttpsConfig::Acme);
+    }
+
+    #[test]
+    fn kdl_https_unknown_variant() {
+        let err = parse_https(r#"https "other""#).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NodeError::UnknownVariant { field, value, .. }
+                    if field == "https" && value == "other",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_https_with_children_rejected() {
+        let err = parse_https(
             r#"
-hosts:
-  - example.com
-  - www.example.com
-proxy:
-  type: custom
-  header: X-Forwarded-For
-  proxies:
-    - 192.0.2.10
-https: proxy
-custom_config: |
-  add_header X-Test true;
-routes:
-  - path: /api
-    kind: reverse_proxy
-    target: "${backend:url}"
-  - path: /static
-    kind: serve_files
-    root: "/var/www/site"
-    spa: true
-"#,
+            https proxy {
+                bogus "y"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::UnknownField { name, .. } if name == "bogus"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    fn parse_domain(src: &str) -> Result<DomainConfig, NodeError> {
+        let doc: KdlDocument = src.parse().expect("test KDL must parse");
+        DomainConfig::from_kdl_node(doc.nodes().first().expect("test KDL must have a node"))
+    }
+
+    fn sample_domain() -> DomainConfig {
+        DomainConfig {
+            hosts: vec!["example.com".into()],
+            proxy: None,
+            https: None,
+            custom_config: String::new(),
+            routes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn kdl_domain_full() {
+        let cfg = parse_domain(
+            r#"
+            domain {
+                host "example.com"
+                host "www.example.com"
+                proxy custom {
+                    header "X-Forwarded-For"
+                    ip "192.0.2.10"
+                }
+                https proxy
+                custom-config "add_header X-Test true;"
+                route reverse_proxy "/api" {
+                    target "${backend:url}"
+                }
+                route serve_files "/static" {
+                    root "/var/www/site"
+                    spa
+                }
+            }
+            "#,
         )
         .unwrap();
 
         assert_eq!(
-            config.hosts,
+            cfg.hosts,
             vec!["example.com".to_string(), "www.example.com".to_string()],
         );
         assert_eq!(
-            config.proxy,
+            cfg.proxy,
             Some(ProxyConfig::Custom {
                 header: "X-Forwarded-For".into(),
                 proxies: vec!["192.0.2.10".into()],
-            })
+            }),
         );
-        assert_eq!(config.https, Some(HttpsConfig::Proxy));
-        assert_eq!(config.routes.len(), 2);
-
-        assert!(matches!(config.routes[0], RouteConfig::ReverseProxy { .. }));
-        match &config.routes[1] {
+        assert_eq!(cfg.https, Some(HttpsConfig::Proxy));
+        assert_eq!(cfg.custom_config, "add_header X-Test true;");
+        assert_eq!(cfg.routes.len(), 2);
+        assert!(matches!(cfg.routes[0], RouteConfig::ReverseProxy { .. }));
+        match &cfg.routes[1] {
             RouteConfig::ServeFiles { spa, .. } => assert!(*spa),
             _ => panic!("expected serve_files action"),
         }
-
-        assert!(config.validate_config().is_ok());
+        assert!(cfg.validate_config().is_ok());
     }
 
     #[test]
-    fn reject_custom_proxy_without_ip() {
-        let config: DomainConfig = serde_yaml::from_str(
+    fn kdl_domain_minimal() {
+        let cfg = parse_domain(
             r#"
-hosts:
-  - example.com
-proxy:
-  type: custom
-  header: X-Forwarded-For
-  proxies: []
-https: acme
-"#,
+            domain {
+                host "example.com"
+            }
+            "#,
         )
         .unwrap();
 
-        assert!(config.validate_config().is_err());
+        assert_eq!(cfg.hosts, vec!["example.com".to_string()]);
+        assert_eq!(cfg.proxy, None);
+        assert_eq!(cfg.https, None);
+        assert_eq!(cfg.custom_config, "");
+        assert!(cfg.routes.is_empty());
+        assert!(cfg.validate_config().is_ok());
     }
 
     #[test]
-    fn parse_domain_config_without_proxy_and_https() {
-        let config: DomainConfig = serde_yaml::from_str(
+    fn kdl_domain_multiple_hosts() {
+        let cfg = parse_domain(
             r#"
-hosts:
-  - example.com
-custom_config: |
-  add_header X-Domain test;
-routes:
-  - path: /
-    kind: reverse_proxy
-    target: "${backend:url}"
-"#,
-        )
-        .unwrap();
-
-        assert_eq!(config.proxy, None);
-        assert_eq!(config.https, None);
-        assert!(config.validate_config().is_ok());
-    }
-
-    #[test]
-    fn reject_missing_hosts() {
-        let result: Result<DomainConfig, _> = serde_yaml::from_str(
-            r#"
-routes:
-  - path: /
-    kind: reverse_proxy
-    target: "${backend:url}"
-"#,
-        );
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn reject_empty_hosts() {
-        let config: DomainConfig = serde_yaml::from_str(
-            r#"
-hosts: []
-routes:
-  - path: /
-    kind: reverse_proxy
-    target: "${backend:url}"
-"#,
+            domain {
+                host "a.example.com"
+                host "b.example.com"
+                host "c.example.com"
+            }
+            "#,
         )
         .unwrap();
 
         assert_eq!(
-            config.validate_config(),
-            Err("hosts must not be empty".into()),
+            cfg.hosts,
+            vec![
+                "a.example.com".to_string(),
+                "b.example.com".to_string(),
+                "c.example.com".to_string(),
+            ],
         );
     }
 
     #[test]
-    fn reject_route_with_no_action() {
-        let result: Result<DomainConfig, _> = serde_yaml::from_str(
+    fn kdl_domain_custom_config_multiline() {
+        let cfg = parse_domain(
             r#"
-hosts:
-  - example.com
-routes:
-  - path: /api
-"#,
-        );
+            domain {
+                host "example.com"
+                custom-config """
+                    add_header X-Test true;
+                    add_header X-Other "ok";
+                    """
+            }
+            "#,
+        )
+        .unwrap();
 
-        assert!(result.is_err());
+        assert_eq!(
+            cfg.custom_config,
+            "add_header X-Test true;\nadd_header X-Other \"ok\";",
+        );
     }
 
     #[test]
-    fn reject_route_with_unknown_kind() {
-        let result: Result<DomainConfig, _> = serde_yaml::from_str(
+    fn kdl_domain_unknown_field() {
+        let err = parse_domain(
             r#"
-hosts:
-  - example.com
-routes:
-  - path: /api
-    kind: redirect
-    target: "https://example.com"
-"#,
+            domain {
+                host "example.com"
+                bogus "x"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::UnknownField { name, .. } if name == "bogus"),
+            "unexpected error: {err:?}",
         );
-
-        assert!(result.is_err());
     }
 
     #[test]
-    fn reject_serve_files_without_root() {
-        let result: Result<DomainConfig, _> = serde_yaml::from_str(
+    fn kdl_domain_duplicate_https() {
+        let err = parse_domain(
             r#"
-hosts:
-  - example.com
-routes:
-  - path: /static
-    kind: serve_files
-    spa: true
-"#,
+            domain {
+                host "example.com"
+                https proxy
+                https acme
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::DuplicateField { name, .. } if name == "https"),
+            "unexpected error: {err:?}",
         );
-
-        assert!(result.is_err());
     }
 
     #[test]
-    fn reject_unknown_field_on_serve_files() {
-        let result: Result<DomainConfig, _> = serde_yaml::from_str(
+    fn kdl_domain_duplicate_proxy() {
+        let err = parse_domain(
             r#"
-hosts:
-  - example.com
-routes:
-  - path: /static
-    kind: serve_files
-    root: "/var/www"
-    bogus: true
-"#,
+            domain {
+                host "example.com"
+                proxy cloudflare
+                proxy fastly
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::DuplicateField { name, .. } if name == "proxy"),
+            "unexpected error: {err:?}",
         );
+    }
 
-        assert!(result.is_err());
+    #[test]
+    fn kdl_domain_duplicate_custom_config() {
+        let err = parse_domain(
+            r#"
+            domain {
+                host "example.com"
+                custom-config "a"
+                custom-config "b"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::DuplicateField { name, .. } if name == "custom-config"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_domain_positional_arg_rejected() {
+        let err = parse_domain(r#"domain "x" { host "example.com" }"#).unwrap_err();
+        assert!(
+            matches!(err, NodeError::UnexpectedArg { .. }),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn domain_validate_empty_hosts() {
+        let mut cfg = sample_domain();
+        cfg.hosts = Vec::new();
+        assert_eq!(cfg.validate_config(), Err("hosts must not be empty".into()),);
+    }
+
+    #[test]
+    fn domain_validate_empty_host_string() {
+        let mut cfg = sample_domain();
+        cfg.hosts = vec!["   ".into()];
+        assert_eq!(cfg.validate_config(), Err("host must not be empty".into()));
+    }
+
+    #[test]
+    fn domain_validate_custom_proxy_no_ips() {
+        let mut cfg = sample_domain();
+        cfg.proxy = Some(ProxyConfig::Custom {
+            header: "X-Forwarded-For".into(),
+            proxies: Vec::new(),
+        });
+        assert!(cfg.validate_config().is_err());
+    }
+
+    #[test]
+    fn domain_validate_invalid_route_path() {
+        let mut cfg = sample_domain();
+        cfg.routes = vec![RouteConfig::ReverseProxy {
+            path: "no-leading-slash".into(),
+            target: Value::parse("http://127.0.0.1:8000").unwrap(),
+        }];
+        assert!(cfg.validate_config().is_err());
     }
 }
