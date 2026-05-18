@@ -3,10 +3,6 @@ use kdl::{
     KdlEntry,
     KdlNode,
 };
-use serde::{
-    Deserialize,
-    Serialize,
-};
 
 use crate::{
     MainContext,
@@ -28,20 +24,15 @@ use crate::{
     validate::url_path,
 };
 
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DomainConfig {
     pub hosts: Vec<String>,
-    #[serde(default)]
     pub proxy: Option<ProxyConfig>,
-    #[serde(default)]
     pub custom_config: String,
-    #[serde(default)]
     pub routes: Vec<RouteConfig>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProxyConfig {
     Cloudflare,
     Fastly,
@@ -149,8 +140,7 @@ impl FromKdlNode for ProxyConfig {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RouteConfig {
     ReverseProxy {
         /// URL path prefix (e.g. "/billing")
@@ -164,7 +154,6 @@ pub enum RouteConfig {
         /// Filesystem root
         root: Value,
         /// Single Page Application fallback
-        #[serde(default)]
         spa: bool,
     },
 }

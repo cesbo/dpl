@@ -8,18 +8,18 @@ use std::{
 };
 
 use minijinja::{
-    context,
     Environment,
+    context,
 };
 use serde::Serialize;
 
 use super::AppConfig;
 use crate::{
-    deploy::artifacts::{
-        render_template,
-        ArtifactError,
-    },
     MainContext,
+    deploy::artifacts::{
+        ArtifactError,
+        render_template,
+    },
 };
 
 const CONTAINERFILE_TEMPLATE: &str = "containerfile";
@@ -65,6 +65,19 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
     env
 });
 
+#[derive(Serialize)]
+pub struct RenderVolume<'a> {
+    pub source: &'a str,
+    pub path: &'a str,
+}
+
+#[derive(Serialize)]
+pub struct RenderTimer<'a> {
+    pub name: &'a str,
+    pub schedule: &'a str,
+    pub script: &'a str,
+}
+
 pub struct ArtifactsContext<'a> {
     pub ctx: &'a MainContext,
     pub name: &'a str,
@@ -106,6 +119,17 @@ impl<'a> ArtifactsContext<'a> {
             },
         )?;
 
+        let timers: Vec<RenderTimerConfig> = self
+            .config
+            .timers
+            .iter()
+            .map(|v| RenderTimerConfig {
+                name: &v.name,
+                schedule: &v.schedule,
+                script: &v.script,
+            })
+            .collect();
+
         let path = artifacts_dir.join("run.sh");
         write_artifact(
             path,
@@ -114,7 +138,7 @@ impl<'a> ArtifactsContext<'a> {
                 env => self.config.runtime.env.resolve(self.ctx, "runtime.env")?,
                 init => &self.config.runtime.init,
                 cmd => &self.config.runtime.cmd,
-                timers => &self.config.timers,
+                timers => timers,
             },
         )?;
 
@@ -137,6 +161,16 @@ impl<'a> ArtifactsContext<'a> {
 
         let dpl_bin = std::env::current_exe().map_err(ArtifactError::CurrentExe)?;
 
+        let volumes: Vec<RenderVolumeConfig> = self
+            .config
+            .volumes
+            .iter()
+            .map(|v| RenderVolumeConfig {
+                source: &v.source,
+                path: &v.path,
+            })
+            .collect();
+
         let file_name = format!("dpl--{}.service", &self.name);
         let path = artifacts_dir.join(&file_name);
         write_artifact(
@@ -149,7 +183,7 @@ impl<'a> ArtifactsContext<'a> {
                 version => self.version,
                 host_port => self.port,
                 container_port => &self.config.port,
-                volumes => &self.config.volumes,
+                volumes => volumes,
                 databases => &self.config.databases,
             },
         )?;
@@ -194,13 +228,23 @@ where
 
 #[cfg(test)]
 mod tests {
+    use kdl::KdlDocument;
     use tempfile::tempdir;
 
     use super::*;
-    use crate::deploy::{
-        unit::app::model::*,
-        EnvList,
+    use crate::{
+        config::FromKdlNode,
+        deploy::{
+            EnvList,
+            unit::app::model::*,
+        },
     };
+
+    fn env_from_kdl(src: &str) -> EnvList {
+        let doc: KdlDocument = src.parse().expect("test KDL must parse");
+        EnvList::from_kdl_node(doc.nodes().first().expect("test KDL must have a node"))
+            .expect("test EnvList must parse")
+    }
 
     #[test]
     fn render_templates() {
@@ -233,12 +277,12 @@ mod tests {
                 BuildConfig {
                     description: None,
                     files: vec!["*".to_owned()],
-                    env: serde_yaml::from_str("SITE_ID: hello-world").unwrap(),
+                    env: env_from_kdl(r#"env { SITE_ID "hello-world" }"#),
                     script: Some("npm run build".to_owned()),
                 },
             ],
             runtime: RuntimeConfig {
-                env: serde_yaml::from_str("PORT: 8080\nNODE_ENV: production\n").unwrap(),
+                env: env_from_kdl(r#"env { PORT 8080; NODE_ENV "production" }"#),
                 init: Some("npm run static-generate\nnpm run migrate".to_owned()),
                 cmd: "demo-server".to_owned(),
             },

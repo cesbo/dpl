@@ -2,12 +2,6 @@ use kdl::{
     KdlNode,
     KdlValue,
 };
-use serde::{
-    Deserialize,
-    Deserializer,
-    Serialize,
-    Serializer,
-};
 
 use crate::{
     MainContext,
@@ -196,58 +190,6 @@ fn parse_ref(body: &str, pos: usize) -> Result<Segment, TemplateError> {
         ns,
         name: name.to_owned(),
     })
-}
-
-impl Serialize for Value {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&self.as_template())
-    }
-}
-
-impl<'de> Deserialize<'de> for Value {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct ValueVisitor;
-
-        impl<'de> serde::de::Visitor<'de> for ValueVisitor {
-            type Value = Value;
-
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("a string, integer, float, or boolean")
-            }
-
-            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Value, E> {
-                Value::parse(v).map_err(E::custom)
-            }
-
-            fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Value, E> {
-                Value::parse(&v).map_err(E::custom)
-            }
-
-            fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Value, E> {
-                Ok(Value::literal(v.to_string()))
-            }
-
-            fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Value, E> {
-                Ok(Value::literal(v.to_string()))
-            }
-
-            fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Value, E> {
-                Ok(Value::literal(v.to_string()))
-            }
-
-            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Value, E> {
-                Ok(Value::literal(if v { "true" } else { "false" }.to_owned()))
-            }
-        }
-
-        deserializer.deserialize_any(ValueVisitor)
-    }
 }
 
 impl TryFrom<&KdlNode> for Value {

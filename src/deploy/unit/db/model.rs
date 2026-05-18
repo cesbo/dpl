@@ -8,10 +8,6 @@ use percent_encoding::{
     NON_ALPHANUMERIC,
     utf8_percent_encode,
 };
-use serde::{
-    Deserialize,
-    Serialize,
-};
 
 use crate::{
     MainContext,
@@ -42,16 +38,14 @@ const USERINFO: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'_')
     .remove(b'~');
 
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DbServerConfig {
     pub engine: DbServerEngine,
     pub version: String,
     pub secret: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DbConfig {
     pub server: String,
     pub user: String,
@@ -194,8 +188,7 @@ impl FromKdlNode for DbConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DbServerEngine {
     Postgresql,
     Mariadb,
@@ -599,23 +592,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_db_config() {
-        let config: DbServerConfig = serde_yaml::from_str(
-            r#"
-engine: postgresql
-version: "18"
-secret: pg-pass
-"#,
-        )
-        .unwrap();
-
-        assert_eq!(config.engine, DbServerEngine::Postgresql);
-        assert_eq!(config.version, "18");
-        assert_eq!(config.secret, "pg-pass");
-        assert!(config.validate_config().is_ok());
-    }
-
-    #[test]
     fn reject_empty_version() {
         let config = DbServerConfig {
             engine: DbServerEngine::Postgresql,
@@ -633,23 +609,6 @@ secret: pg-pass
             secret: "Bad/Name".into(),
         };
         assert!(config.validate_config().is_err());
-    }
-
-    #[test]
-    fn parse_db_unit_config() {
-        let config: DbConfig = serde_yaml::from_str(
-            r#"
-server: pg-main
-user: app1
-secret: app1-pass
-"#,
-        )
-        .unwrap();
-
-        assert_eq!(config.server, "pg-main");
-        assert_eq!(config.user, "app1");
-        assert_eq!(config.secret, "app1-pass");
-        assert!(config.validate_config().is_ok());
     }
 
     #[test]

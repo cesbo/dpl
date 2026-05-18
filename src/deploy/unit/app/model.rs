@@ -3,10 +3,6 @@ use kdl::{
     KdlEntry,
     KdlNode,
 };
-use serde::{
-    Deserialize,
-    Serialize,
-};
 
 use crate::{
     MainContext,
@@ -31,45 +27,35 @@ use crate::{
     validate,
 };
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppConfig {
     pub image: String,
     pub port: u16,
     pub build: Vec<BuildConfig>,
     pub runtime: RuntimeConfig,
-    #[serde(default)]
     pub volumes: Vec<VolumeConfig>,
-    #[serde(default)]
     pub exports: Vec<ExportConfig>,
-    #[serde(default)]
     pub timers: Vec<TimerConfig>,
-    #[serde(default)]
     pub databases: Vec<String>,
 }
 
 /// Configuration for a build layer of the application
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BuildConfig {
     /// Description
     pub description: Option<String>,
     /// Files to include in the build layer
-    #[serde(default)]
     pub files: Vec<String>,
     /// Environment variables for the build layer
-    #[serde(default)]
     pub env: EnvList,
     /// Shell script to execute for the build layer
     pub script: Option<String>,
 }
 
 /// Configuration for the runtime environment of the application
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeConfig {
     /// Environment variables
-    #[serde(default)]
     pub env: EnvList,
     /// Shell script to initialize the runtime environment
     pub init: Option<String>,
@@ -78,8 +64,7 @@ pub struct RuntimeConfig {
 }
 
 /// Creates a bind mount
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VolumeConfig {
     /// Source is a podman volume name or full path to the host directory
     pub source: String,
@@ -88,8 +73,7 @@ pub struct VolumeConfig {
 }
 
 /// Exports static files from the container to the host
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExportConfig {
     /// Path inside the container where static files located
     pub source: String,
@@ -98,8 +82,7 @@ pub struct ExportConfig {
 }
 
 /// Timers to start scripts periodically in the container
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TimerConfig {
     /// Name
     pub name: String,

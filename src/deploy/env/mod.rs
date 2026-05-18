@@ -7,10 +7,6 @@ use kdl::{
     KdlEntry,
     KdlNode,
 };
-use serde::{
-    Deserialize,
-    Serialize,
-};
 
 pub use self::value::Value;
 use crate::{
@@ -27,7 +23,7 @@ use crate::{
     validate,
 };
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EnvList(BTreeMap<String, Value>);
 
 impl FromKdlNode for EnvList {
@@ -250,29 +246,8 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_unquoted_integer() {
-        let list: EnvList = serde_yaml::from_str("DB_PORT: 5432").unwrap();
-        let resolved = list.resolve(&MainContext::default(), "env").unwrap();
-        assert_eq!(resolved.get("DB_PORT").map(String::as_str), Some("5432"));
-    }
-
-    #[test]
-    fn deserialize_unquoted_bool_and_float() {
-        let list: EnvList = serde_yaml::from_str("DEBUG: true\nRATIO: 0.5\n").unwrap();
-        let resolved = list.resolve(&MainContext::default(), "env").unwrap();
-        assert_eq!(resolved.get("DEBUG").map(String::as_str), Some("true"));
-        assert_eq!(resolved.get("RATIO").map(String::as_str), Some("0.5"));
-    }
-
-    #[test]
-    fn deserialize_rejects_template_syntax_error() {
-        let err = serde_yaml::from_str::<EnvList>("BAD: \"${secret:}\"").unwrap_err();
-        assert!(err.to_string().contains("malformed reference"));
-    }
-
-    #[test]
     fn validate_config_rejects_invalid_env_name() {
-        let list: EnvList = serde_yaml::from_str("BAD-NAME: x").unwrap();
+        let list = parse_env(r#"env { BAD-NAME "x" }"#).unwrap();
         assert!(list.validate_config().is_err());
     }
 }

@@ -15,10 +15,6 @@ use db::{
 use domain::DomainConfig;
 use kdl::KdlDocument;
 use miette::SourceSpan;
-use serde::{
-    Deserialize,
-    Serialize,
-};
 use thiserror::Error;
 
 use crate::{
@@ -61,8 +57,7 @@ impl From<UnitConfigError> for RefError {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(tag = "type", rename_all = "kebab-case")]
+#[derive(Debug)]
 pub enum UnitConfig {
     App(AppConfig),
     Db(DbConfig),
@@ -377,18 +372,16 @@ mod tests {
 
     #[test]
     fn parse_domain_unit_config() {
-        let config: UnitConfig = serde_yaml::from_str(
+        let config = parse_unit_doc(
             r#"
-type: domain
-hosts:
-  - example.com
-proxy:
-  type: cloudflare
-routes:
-  - path: /api
-    kind: reverse_proxy
-    target: "${backend:url}"
-"#,
+            domain {
+                host "example.com"
+                proxy "cloudflare"
+                route reverse_proxy "/api" {
+                    target "${backend:url}"
+                }
+            }
+            "#,
         )
         .unwrap();
 
@@ -397,39 +390,17 @@ routes:
     }
 
     #[test]
-    fn parse_db_server_unit_config() {
-        let config: UnitConfig = serde_yaml::from_str(
-            r#"
-type: db-server
-engine: postgresql
-version: "18"
-secret: pg-pass
-"#,
-        )
-        .unwrap();
-
-        let UnitConfig::DbServer(db) = &config else {
-            panic!("expected db-server variant");
-        };
-        assert_eq!(db.version, "18");
-        assert_eq!(db.secret, "pg-pass");
-        assert!(config.validate_config().is_ok());
-    }
-
-    #[test]
     fn parse_app_unit_config_with_databases() {
-        let config: UnitConfig = serde_yaml::from_str(
+        let config = parse_unit_doc(
             r#"
-type: app
-image: alpine
-port: 8080
-build: []
-runtime:
-  cmd: "./run"
-databases:
-  - main-db
-  - cache-db
-"#,
+            app {
+                image "alpine"
+                port 8080
+                runtime { cmd "./run" }
+                database "main-db"
+                database "cache-db"
+            }
+            "#,
         )
         .unwrap();
 
@@ -737,19 +708,21 @@ domain {
 
     #[test]
     fn parse_app_unit_config_with_secret_template() {
-        let config: UnitConfig = serde_yaml::from_str(
+        let config = parse_unit_doc(
             r#"
-type: app
-image: alpine
-port: 8080
-build: []
-runtime:
-  env:
-    PLAIN: "hello"
-    SECRET_KEY: "${secret:my-key}"
-    DATABASE_URL: "postgres://app:${secret:my-key}@db/app"
-  cmd: "./run"
-"#,
+            app {
+                image "alpine"
+                port 8080
+                runtime {
+                    env {
+                        PLAIN "hello"
+                        SECRET_KEY "${secret:my-key}"
+                        DATABASE_URL "postgres://app:${secret:my-key}@db/app"
+                    }
+                    cmd "./run"
+                }
+            }
+            "#,
         )
         .unwrap();
 
