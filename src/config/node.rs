@@ -84,3 +84,16 @@ pub fn push_field<T: FromKdlNode>(target: &mut Vec<T>, child: &KdlNode) -> Resul
     target.push(T::from_kdl_node(child)?);
     Ok(())
 }
+
+/// Reject any child block on `node`. The first child node is reported as
+/// `UnknownField`. Used by parsers that allow no children at all (e.g. bare
+/// enum variants like `proxy cloudflare`).
+pub fn reject_children(node: &KdlNode) -> Result<(), NodeError> {
+    if let Some(child) = node.children().and_then(|c| c.nodes().first()) {
+        return Err(NodeError::UnknownField {
+            name: child.name().value().to_owned(),
+            span: child.span(),
+        });
+    }
+    Ok(())
+}

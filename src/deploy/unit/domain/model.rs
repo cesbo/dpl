@@ -1,3 +1,4 @@
+use kdl::KdlNode;
 use serde::{
     Deserialize,
     Serialize,
@@ -5,12 +6,20 @@ use serde::{
 
 use crate::{
     MainContext,
-    config::ValidateConfig,
+    config::{
+        FromKdlNode,
+        NodeError,
+        ValidateConfig,
+        push_field,
+        reject_children,
+        set_field,
+    },
     deploy::env::Value,
     error::{
         Location,
         RefError,
     },
+    kdl_args,
     validate::url_path,
 };
 
@@ -54,6 +63,61 @@ impl ValidateConfig for ProxyConfig {
 
                 Ok(())
             }
+        }
+    }
+}
+
+impl FromKdlNode for ProxyConfig {
+    fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
+        let variant = kdl_args!(node, variant: String)?;
+        let variant_span = node
+            .entries()
+            .first()
+            .map(|e| e.span())
+            .unwrap_or_else(|| node.span());
+
+        match variant.as_str() {
+            "cloudflare" => {
+                reject_children(node)?;
+                Ok(ProxyConfig::Cloudflare)
+            }
+            "fastly" => {
+                reject_children(node)?;
+                Ok(ProxyConfig::Fastly)
+            }
+            "custom" => {
+                let mut header: Option<String> = None;
+                let mut proxies: Vec<String> = Vec::new();
+
+                if let Some(children) = node.children() {
+                    for child in children.nodes() {
+                        let name = child.name().value();
+                        match name {
+                            "header" => set_field(&mut header, child)?,
+                            "ip" => push_field(&mut proxies, child)?,
+                            _ => {
+                                return Err(NodeError::UnknownField {
+                                    name: name.to_owned(),
+                                    span: child.span(),
+                                });
+                            }
+                        }
+                    }
+                }
+
+                Ok(ProxyConfig::Custom {
+                    header: header.ok_or(NodeError::MissingField {
+                        name: "header",
+                        span: node.span(),
+                    })?,
+                    proxies,
+                })
+            }
+            other => Err(NodeError::UnknownVariant {
+                field: "proxy".to_owned(),
+                value: other.to_owned(),
+                span: variant_span,
+            }),
         }
     }
 }
@@ -132,8 +196,198 @@ impl DomainConfig {
 
 #[cfg(test)]
 mod tests {
+    use kdl::KdlDocument;
+
     use super::*;
-    use crate::config::ValidateConfig;
+    use crate::config::{
+        FieldError,
+        ValidateConfig,
+    };
+
+    fn parse_proxy(src: &str) -> Result<ProxyConfig, NodeError> {
+        let doc: KdlDocument = src.parse().expect("test KDL must parse");
+        ProxyConfig::from_kdl_node(doc.nodes().first().expect("test KDL must have a node"))
+    }
+
+    #[test]
+    fn kdl_proxy_cloudflare_bare() {
+        let cfg = parse_proxy("proxy cloudflare").unwrap();
+        assert_eq!(cfg, ProxyConfig::Cloudflare);
+    }
+
+    #[test]
+    fn kdl_proxy_fastly_bare() {
+        let cfg = parse_proxy("proxy fastly").unwrap();
+        assert_eq!(cfg, ProxyConfig::Fastly);
+    }
+
+    #[test]
+    fn kdl_proxy_custom_basic() {
+        let cfg = parse_proxy(
+            r#"
+            proxy custom {
+                header "X-Forwarded-For"
+                ip "192.0.2.10"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg,
+            ProxyConfig::Custom {
+                header: "X-Forwarded-For".into(),
+                proxies: vec!["192.0.2.10".into()],
+            },
+        );
+    }
+
+    #[test]
+    fn kdl_proxy_custom_multiple_ips() {
+        let cfg = parse_proxy(
+            r#"
+            proxy custom {
+                header "X-Forwarded-For"
+                ip "192.0.2.10"
+                ip "192.0.2.11"
+            }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg,
+            ProxyConfig::Custom {
+                header: "X-Forwarded-For".into(),
+                proxies: vec!["192.0.2.10".into(), "192.0.2.11".into()],
+            },
+        );
+    }
+
+    #[test]
+    fn kdl_proxy_unknown_variant() {
+        let err = parse_proxy(r#"proxy "other""#).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NodeError::UnknownVariant { field, value, .. }
+                    if field == "proxy" && value == "other",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_proxy_missing_variant() {
+        let err = parse_proxy("proxy").unwrap_err();
+        assert!(
+            matches!(
+                err,
+                NodeError::MissingArg {
+                    name: "variant",
+                    ..
+                }
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_proxy_custom_missing_header() {
+        let err = parse_proxy(
+            r#"
+            proxy custom {
+                ip "192.0.2.10"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::MissingField { name, .. } if *name == "header"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_proxy_custom_unknown_field() {
+        let err = parse_proxy(
+            r#"
+            proxy custom {
+                header "X-Forwarded-For"
+                bogus "y"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::UnknownField { name, .. } if name == "bogus"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_proxy_custom_duplicate_header() {
+        let err = parse_proxy(
+            r#"
+            proxy custom {
+                header "X-Forwarded-For"
+                header "X-Real-IP"
+                ip "192.0.2.10"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::DuplicateField { name, .. } if name == "header"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_proxy_bare_variant_with_children() {
+        let err = parse_proxy(
+            r#"
+            proxy cloudflare {
+                ip "192.0.2.10"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::UnknownField { name, .. } if name == "ip"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_proxy_named_arg_rejected() {
+        let err = parse_proxy(r#"proxy variant="custom""#).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NodeError::InvalidField {
+                    name,
+                    source: FieldError::NamedEntry { .. },
+                    ..
+                } if name == "variant",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_proxy_variant_not_a_string() {
+        let err = parse_proxy("proxy 5").unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidType { expected: "string", .. },
+                    ..
+                } if name == "variant",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
 
     #[test]
     fn parse_domain_config_with_custom_proxy() {
