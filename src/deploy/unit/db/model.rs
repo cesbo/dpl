@@ -15,7 +15,7 @@ use crate::{
         FromKdlNode,
         NodeError,
         ValidateConfig,
-        parse_string_child,
+        reject_children,
         set_field,
     },
     deploy::unit::UnitConfig,
@@ -255,18 +255,19 @@ impl DbServerEngine {
 
 impl FromKdlNode for DbServerEngine {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
-        let name = node.name().value();
-        let value = parse_string_child(node).map_err(|source| NodeError::InvalidField {
-            name: name.to_owned(),
-            span: node.span(),
-            source,
-        })?;
+        let variant = kdl_args!(node, engine: String)?;
 
-        match value {
-            "postgresql" => Ok(Self::Postgresql),
-            "mariadb" => Ok(Self::Mariadb),
+        match variant.as_str() {
+            "postgresql" => {
+                reject_children(node)?;
+                Ok(Self::Postgresql)
+            }
+            "mariadb" => {
+                reject_children(node)?;
+                Ok(Self::Mariadb)
+            }
             other => Err(NodeError::UnknownVariant {
-                field: name.to_owned(),
+                field: node.name().value().to_owned(),
                 value: other.to_owned(),
                 span: node
                     .entries()

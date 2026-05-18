@@ -70,11 +70,6 @@ impl ValidateConfig for ProxyConfig {
 impl FromKdlNode for ProxyConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         let variant = kdl_args!(node, variant: String)?;
-        let variant_span = node
-            .entries()
-            .first()
-            .map(|e| e.span())
-            .unwrap_or_else(|| node.span());
 
         match variant.as_str() {
             "cloudflare" => {
@@ -114,9 +109,13 @@ impl FromKdlNode for ProxyConfig {
                 })
             }
             other => Err(NodeError::UnknownVariant {
-                field: "proxy".to_owned(),
+                field: node.name().value().to_owned(),
                 value: other.to_owned(),
-                span: variant_span,
+                span: node
+                    .entries()
+                    .first()
+                    .map(|e| e.span())
+                    .unwrap_or_else(|| node.span()),
             }),
         }
     }
