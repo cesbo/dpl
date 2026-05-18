@@ -1,4 +1,8 @@
-use kdl::KdlNode;
+use kdl::{
+    KdlDocument,
+    KdlEntry,
+    KdlNode,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -10,8 +14,10 @@ use crate::{
         FromKdlNode,
         NodeError,
         ValidateConfig,
+        integer_node,
         push_field,
         set_field,
+        string_node,
     },
     deploy::{
         EnvList,
@@ -121,6 +127,15 @@ impl ValidateConfig for TimerConfig {
     }
 }
 
+impl VolumeConfig {
+    pub fn to_kdl_node(&self) -> KdlNode {
+        let mut node = KdlNode::new("volume");
+        node.entries_mut().push(KdlEntry::new(self.source.clone()));
+        node.entries_mut().push(KdlEntry::new(self.path.clone()));
+        node
+    }
+}
+
 impl FromKdlNode for VolumeConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         let (source, path) = kdl_args!(node, source: String, path: String)?;
@@ -137,6 +152,15 @@ impl FromKdlNode for VolumeConfig {
     }
 }
 
+impl ExportConfig {
+    pub fn to_kdl_node(&self) -> KdlNode {
+        let mut node = KdlNode::new("export");
+        node.entries_mut().push(KdlEntry::new(self.source.clone()));
+        node.entries_mut().push(KdlEntry::new(self.path.clone()));
+        node
+    }
+}
+
 impl FromKdlNode for ExportConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         let (source, path) = kdl_args!(node, source: String, path: String)?;
@@ -150,6 +174,27 @@ impl FromKdlNode for ExportConfig {
         }
 
         Ok(ExportConfig { source, path })
+    }
+}
+
+impl BuildConfig {
+    pub fn to_kdl_node(&self) -> KdlNode {
+        let mut node = KdlNode::new("build");
+        let mut children = KdlDocument::new();
+        if let Some(desc) = &self.description {
+            children.nodes_mut().push(string_node("description", desc));
+        }
+        for file in &self.files {
+            children.nodes_mut().push(string_node("file", file));
+        }
+        if !self.env.is_empty() {
+            children.nodes_mut().push(self.env.to_kdl_node("env"));
+        }
+        if let Some(script) = &self.script {
+            children.nodes_mut().push(string_node("script", script));
+        }
+        node.set_children(children);
+        node
     }
 }
 
@@ -189,6 +234,22 @@ impl FromKdlNode for BuildConfig {
     }
 }
 
+impl RuntimeConfig {
+    pub fn to_kdl_node(&self) -> KdlNode {
+        let mut node = KdlNode::new("runtime");
+        let mut children = KdlDocument::new();
+        if !self.env.is_empty() {
+            children.nodes_mut().push(self.env.to_kdl_node("env"));
+        }
+        if let Some(init) = &self.init {
+            children.nodes_mut().push(string_node("init", init));
+        }
+        children.nodes_mut().push(string_node("cmd", &self.cmd));
+        node.set_children(children);
+        node
+    }
+}
+
 impl FromKdlNode for RuntimeConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         kdl_args!(node)?;
@@ -222,6 +283,22 @@ impl FromKdlNode for RuntimeConfig {
                 span: node.span(),
             })?,
         })
+    }
+}
+
+impl TimerConfig {
+    pub fn to_kdl_node(&self) -> KdlNode {
+        let mut node = KdlNode::new("timer");
+        node.entries_mut().push(KdlEntry::new(self.name.clone()));
+        let mut children = KdlDocument::new();
+        children
+            .nodes_mut()
+            .push(string_node("schedule", &self.schedule));
+        children
+            .nodes_mut()
+            .push(string_node("script", &self.script));
+        node.set_children(children);
+        node
     }
 }
 
@@ -320,6 +397,31 @@ impl FromKdlNode for AppConfig {
 }
 
 impl AppConfig {
+    pub fn to_kdl_node(&self) -> KdlNode {
+        let mut node = KdlNode::new("app");
+        let mut children = KdlDocument::new();
+        children.nodes_mut().push(string_node("image", &self.image));
+        children.nodes_mut().push(integer_node("port", self.port));
+        for db in &self.databases {
+            children.nodes_mut().push(string_node("database", db));
+        }
+        for build in &self.build {
+            children.nodes_mut().push(build.to_kdl_node());
+        }
+        children.nodes_mut().push(self.runtime.to_kdl_node());
+        for volume in &self.volumes {
+            children.nodes_mut().push(volume.to_kdl_node());
+        }
+        for export in &self.exports {
+            children.nodes_mut().push(export.to_kdl_node());
+        }
+        for timer in &self.timers {
+            children.nodes_mut().push(timer.to_kdl_node());
+        }
+        node.set_children(children);
+        node
+    }
+
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
         self.runtime.env.resolve(ctx, "runtime.env")?;
 

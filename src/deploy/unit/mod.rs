@@ -2,7 +2,10 @@ pub mod app;
 pub mod db;
 pub mod domain;
 
-use std::fs;
+use std::{
+    fs,
+    io,
+};
 
 use app::AppConfig;
 use db::{
@@ -10,6 +13,8 @@ use db::{
     DbServerConfig,
 };
 use domain::DomainConfig;
+use kdl::KdlDocument;
+use miette::SourceSpan;
 use serde::{
     Deserialize,
     Serialize,
@@ -20,9 +25,9 @@ use crate::{
     MainContext,
     config::{
         ConfigError,
+        FromKdlNode,
+        NodeError,
         ValidateConfig,
-        load_config,
-        save_config,
     },
     error::{
         Location,
@@ -65,6 +70,54 @@ pub enum UnitConfig {
     Domain(DomainConfig),
 }
 
+impl From<&UnitConfig> for KdlDocument {
+    fn from(cfg: &UnitConfig) -> Self {
+        let mut doc = KdlDocument::new();
+        let node = match cfg {
+            UnitConfig::App(c) => c.to_kdl_node(),
+            UnitConfig::Db(c) => c.to_kdl_node(),
+            UnitConfig::DbServer(c) => c.to_kdl_node(),
+            UnitConfig::Domain(c) => c.to_kdl_node(),
+        };
+        doc.nodes_mut().push(node);
+        doc
+    }
+}
+
+impl TryFrom<&KdlDocument> for UnitConfig {
+    type Error = NodeError;
+
+    fn try_from(doc: &KdlDocument) -> Result<Self, NodeError> {
+        let nodes = doc.nodes();
+        let Some(first) = nodes.first() else {
+            return Err(NodeError::MissingField {
+                name: "unit type",
+                span: SourceSpan::new(0.into(), 0),
+            });
+        };
+        if let Some(extra) = nodes.get(1) {
+            return Err(NodeError::UnknownField {
+                name: extra.name().value().to_owned(),
+                span: extra.span(),
+            });
+        }
+
+        let name = first.name().value();
+        let variant_span = first.name().span();
+        match name {
+            "app" => AppConfig::from_kdl_node(first).map(UnitConfig::App),
+            "db" => DbConfig::from_kdl_node(first).map(UnitConfig::Db),
+            "db-server" => DbServerConfig::from_kdl_node(first).map(UnitConfig::DbServer),
+            "domain" => DomainConfig::from_kdl_node(first).map(UnitConfig::Domain),
+            other => Err(NodeError::UnknownVariant {
+                field: "unit type".to_owned(),
+                value: other.to_owned(),
+                span: variant_span,
+            }),
+        }
+    }
+}
+
 impl ValidateConfig for UnitConfig {
     fn validate_config(&self) -> Result<(), String> {
         match self {
@@ -84,19 +137,30 @@ impl UnitConfig {
             });
         }
 
-        let path = ctx.base().join(name).join("config.yaml");
-        load_config(&path).map_err(|err| {
-            if err.is_not_found() {
+        let wrap = |source| UnitConfigError::Config {
+            name: name.to_string(),
+            source,
+        };
+
+        let path = ctx.base().join(name).join("config.kdl");
+        let content = fs::read_to_string(&path).map_err(|err| {
+            if err.kind() == io::ErrorKind::NotFound {
                 UnitConfigError::NotFound {
                     name: name.to_string(),
                 }
             } else {
-                UnitConfigError::Config {
-                    name: name.to_string(),
-                    source: err,
-                }
+                wrap(ConfigError::Read(err))
             }
-        })
+        })?;
+
+        let doc: KdlDocument = content
+            .parse()
+            .map_err(|e| wrap(ConfigError::Parse(Box::new(e))))?;
+        let config = Self::try_from(&doc).map_err(|e| wrap(ConfigError::Semantic(Box::new(e))))?;
+        config
+            .validate_config()
+            .map_err(|e| wrap(ConfigError::Invalid(e)))?;
+        Ok(config)
     }
 
     pub fn save(&self, ctx: &MainContext, name: &str) -> Result<(), UnitConfigError> {
@@ -106,16 +170,18 @@ impl UnitConfig {
             });
         }
 
-        let dir = ctx.base().join(name);
-        fs::create_dir_all(&dir).map_err(|err| UnitConfigError::Config {
-            name: name.to_string(),
-            source: ConfigError::Write(err),
-        })?;
-        let path = dir.join("config.yaml");
-        save_config(&path, self).map_err(|source| UnitConfigError::Config {
+        let wrap = |source| UnitConfigError::Config {
             name: name.to_string(),
             source,
-        })
+        };
+
+        let dir = ctx.base().join(name);
+        fs::create_dir_all(&dir).map_err(|err| wrap(ConfigError::Write(err)))?;
+
+        let path = dir.join("config.kdl");
+        let doc: KdlDocument = self.into();
+        fs::write(&path, doc.to_string()).map_err(|err| wrap(ConfigError::Write(err)))?;
+        Ok(())
     }
 
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
@@ -205,6 +271,110 @@ mod tests {
     use super::*;
     use crate::config::ValidateConfig;
 
+    fn parse_unit_doc(src: &str) -> Result<UnitConfig, NodeError> {
+        let doc: KdlDocument = src.parse().expect("test KDL must parse");
+        UnitConfig::try_from(&doc)
+    }
+
+    #[test]
+    fn kdl_dispatch_app() {
+        let cfg = parse_unit_doc(
+            r#"
+            app {
+                image "alpine"
+                port 8080
+                runtime { cmd "./run" }
+            }
+            "#,
+        )
+        .unwrap();
+        assert!(matches!(cfg, UnitConfig::App(_)));
+    }
+
+    #[test]
+    fn kdl_dispatch_db() {
+        let cfg = parse_unit_doc(
+            r#"
+            db {
+                server "pg-main"
+                user "app1"
+                secret "app1-pass"
+            }
+            "#,
+        )
+        .unwrap();
+        assert!(matches!(cfg, UnitConfig::Db(_)));
+    }
+
+    #[test]
+    fn kdl_dispatch_db_server() {
+        let cfg = parse_unit_doc(
+            r#"
+            db-server {
+                engine "postgresql"
+                version "18-alpine"
+                secret "pg-pass"
+            }
+            "#,
+        )
+        .unwrap();
+        assert!(matches!(cfg, UnitConfig::DbServer(_)));
+    }
+
+    #[test]
+    fn kdl_dispatch_domain() {
+        let cfg = parse_unit_doc(
+            r#"
+            domain {
+                host "example.com"
+            }
+            "#,
+        )
+        .unwrap();
+        assert!(matches!(cfg, UnitConfig::Domain(_)));
+    }
+
+    #[test]
+    fn kdl_dispatch_empty_document() {
+        let err = parse_unit_doc("").unwrap_err();
+        assert!(
+            matches!(&err, NodeError::MissingField { name, .. } if *name == "unit type"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_dispatch_extra_top_level_node() {
+        let err = parse_unit_doc(
+            r#"
+            app {
+                image "alpine"
+                port 8080
+                runtime { cmd "./run" }
+            }
+            stray
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::UnknownField { name, .. } if name == "stray"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_dispatch_unknown_unit_type() {
+        let err = parse_unit_doc(r#"service { foo "bar" }"#).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NodeError::UnknownVariant { field, value, .. }
+                    if field == "unit type" && value == "service",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
     #[test]
     fn parse_domain_unit_config() {
         let config: UnitConfig = serde_yaml::from_str(
@@ -279,8 +449,17 @@ databases:
         let app_dir = base.path().join("app-x");
         fs::create_dir_all(&app_dir).unwrap();
         fs::write(
-            app_dir.join("config.yaml"),
-            "type: app\nimage: alpine\nport: 8080\nbuild: []\nruntime:\n  env:\n    OTHER: \"${nope:user}\"\n  cmd: ./run\n",
+            app_dir.join("config.kdl"),
+            r#"
+app {
+    image "alpine"
+    port 8080
+    runtime {
+        env { OTHER "${nope:user}" }
+        cmd "./run"
+    }
+}
+"#,
         )
         .unwrap();
 
@@ -411,24 +590,45 @@ databases:
         let app_dir = base.path().join("foo");
         fs::create_dir_all(&app_dir).unwrap();
         fs::write(
-            app_dir.join("config.yaml"),
-            "type: app\nimage: alpine\nport: 8080\nbuild: []\nruntime:\n  env:\n    X: \"${db-test:password}\"\n  cmd: ./run\n",
+            app_dir.join("config.kdl"),
+            r#"
+app {
+    image "alpine"
+    port 8080
+    runtime {
+        env { X "${db-test:password}" }
+        cmd "./run"
+    }
+}
+"#,
         )
         .unwrap();
 
         let db_dir = base.path().join("db-test");
         fs::create_dir_all(&db_dir).unwrap();
         fs::write(
-            db_dir.join("config.yaml"),
-            "type: db\nserver: pg-main\nuser: app1\nsecret: foo-db-test-password\n",
+            db_dir.join("config.kdl"),
+            r#"
+db {
+    server "pg-main"
+    user "app1"
+    secret "foo-db-test-password"
+}
+"#,
         )
         .unwrap();
 
         let server_dir = base.path().join("pg-main");
         fs::create_dir_all(&server_dir).unwrap();
         fs::write(
-            server_dir.join("config.yaml"),
-            "type: db-server\nengine: postgresql\nversion: \"18\"\nsecret: pg-pass\n",
+            server_dir.join("config.kdl"),
+            r#"
+db-server {
+    engine "postgresql"
+    version "18"
+    secret "pg-pass"
+}
+"#,
         )
         .unwrap();
 
@@ -514,8 +714,12 @@ databases:
         let dir = base.path().join("example-com");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
-            dir.join("config.yaml"),
-            "type: domain\nhosts:\n  - example.com\n",
+            dir.join("config.kdl"),
+            r#"
+domain {
+    host "example.com"
+}
+"#,
         )
         .unwrap();
 

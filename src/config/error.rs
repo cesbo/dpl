@@ -105,17 +105,11 @@ pub enum ConfigError {
     Write(#[source] io::Error),
 
     #[error("parse config")]
-    Parse(#[source] serde_yaml::Error),
+    Parse(#[source] Box<kdl::KdlError>),
 
-    #[error("serialize config")]
-    Serialize(#[source] serde_yaml::Error),
+    #[error("invalid config")]
+    Semantic(#[source] Box<NodeError>),
 
     #[error("invalid config: {0}")]
     Invalid(String),
-}
-
-impl ConfigError {
-    pub fn is_not_found(&self) -> bool {
-        matches!(self, Self::Read(err) if err.kind() == io::ErrorKind::NotFound)
-    }
 }

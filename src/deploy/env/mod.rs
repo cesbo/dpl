@@ -2,7 +2,11 @@ mod value;
 
 use std::collections::BTreeMap;
 
-use kdl::KdlNode;
+use kdl::{
+    KdlDocument,
+    KdlEntry,
+    KdlNode,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -52,6 +56,27 @@ impl FromKdlNode for EnvList {
 impl EnvList {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Render this env list back as a KDL node with the given name (typically
+    /// `"env"`). Each entry becomes a child node `KEY "value"`, where the
+    /// value is `Value::as_template()`.
+    pub fn to_kdl_node(&self, name: &str) -> KdlNode {
+        let mut node = KdlNode::new(name);
+        let mut children = KdlDocument::new();
+        for (k, v) in &self.0 {
+            let mut entry_node = KdlNode::new(k.as_str());
+            entry_node
+                .entries_mut()
+                .push(KdlEntry::new(v.as_template()));
+            children.nodes_mut().push(entry_node);
+        }
+        node.set_children(children);
+        node
     }
 
     pub fn resolve(

@@ -1,4 +1,8 @@
-use kdl::KdlNode;
+use kdl::{
+    KdlDocument,
+    KdlEntry,
+    KdlNode,
+};
 use percent_encoding::{
     AsciiSet,
     NON_ALPHANUMERIC,
@@ -17,6 +21,7 @@ use crate::{
         ValidateConfig,
         reject_children,
         set_field,
+        string_node,
     },
     deploy::unit::UnitConfig,
     error::{
@@ -128,6 +133,22 @@ impl DbConfig {
                 }),
             })
             .map_err(|err| err.at(Location::field("server")))
+    }
+}
+
+impl DbConfig {
+    pub fn to_kdl_node(&self) -> KdlNode {
+        let mut node = KdlNode::new("db");
+        let mut children = KdlDocument::new();
+        children
+            .nodes_mut()
+            .push(string_node("server", &self.server));
+        children.nodes_mut().push(string_node("user", &self.user));
+        children
+            .nodes_mut()
+            .push(string_node("secret", &self.secret));
+        node.set_children(children);
+        node
     }
 }
 
@@ -280,6 +301,24 @@ impl FromKdlNode for DbServerEngine {
 }
 
 impl DbServerConfig {
+    pub fn to_kdl_node(&self) -> KdlNode {
+        let mut node = KdlNode::new("db-server");
+        let mut children = KdlDocument::new();
+        let mut engine = KdlNode::new("engine");
+        engine
+            .entries_mut()
+            .push(KdlEntry::new(self.engine.as_str().to_owned()));
+        children.nodes_mut().push(engine);
+        children
+            .nodes_mut()
+            .push(string_node("version", &self.version));
+        children
+            .nodes_mut()
+            .push(string_node("secret", &self.secret));
+        node.set_children(children);
+        node
+    }
+
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
         self.resolve_password(ctx)?;
         Ok(())
@@ -665,8 +704,14 @@ secret: app1-pass
         let server_dir = base.path().join("pg-main");
         fs::create_dir_all(&server_dir).unwrap();
         fs::write(
-            server_dir.join("config.yaml"),
-            "type: db-server\nengine: postgresql\nversion: \"18\"\nsecret: pg-pass\n",
+            server_dir.join("config.kdl"),
+            r#"
+db-server {
+    engine "postgresql"
+    version "18"
+    secret "pg-pass"
+}
+"#,
         )
         .unwrap();
 
@@ -729,8 +774,14 @@ secret: app1-pass
         let server_dir = base.path().join("maria-main");
         fs::create_dir_all(&server_dir).unwrap();
         fs::write(
-            server_dir.join("config.yaml"),
-            "type: db-server\nengine: mariadb\nversion: \"12\"\nsecret: maria-pass\n",
+            server_dir.join("config.kdl"),
+            r#"
+db-server {
+    engine "mariadb"
+    version "12"
+    secret "maria-pass"
+}
+"#,
         )
         .unwrap();
 

@@ -1,6 +1,7 @@
 use std::ops::RangeInclusive;
 
 use kdl::{
+    KdlEntry,
     KdlNode,
     KdlValue,
 };
@@ -9,6 +10,21 @@ use super::{
     FieldError,
     NodeError,
 };
+
+/// Build a child node shaped like `name "value"`.
+pub fn string_node(name: &str, value: &str) -> KdlNode {
+    let mut node = KdlNode::new(name);
+    node.entries_mut().push(KdlEntry::new(value.to_owned()));
+    node
+}
+
+/// Build a child node shaped like `name 8000`.
+pub fn integer_node(name: &str, value: impl Into<i128>) -> KdlNode {
+    let mut node = KdlNode::new(name);
+    let value = value.into();
+    node.entries_mut().push(KdlEntry::new(value));
+    node
+}
 
 /// Parse a child node shaped like `name "value"` and return the borrowed
 /// string. Rejects child blocks, named entries, arity ≠ 1, and non-string

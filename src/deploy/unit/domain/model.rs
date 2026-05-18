@@ -1,4 +1,8 @@
-use kdl::KdlNode;
+use kdl::{
+    KdlDocument,
+    KdlEntry,
+    KdlNode,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -13,6 +17,7 @@ use crate::{
         push_field,
         reject_children,
         set_field,
+        string_node,
     },
     deploy::env::Value,
     error::{
@@ -62,6 +67,31 @@ impl ValidateConfig for ProxyConfig {
                 Ok(())
             }
         }
+    }
+}
+
+impl ProxyConfig {
+    pub fn to_kdl_node(&self) -> KdlNode {
+        let mut node = KdlNode::new("proxy");
+        match self {
+            ProxyConfig::Cloudflare => {
+                node.entries_mut()
+                    .push(KdlEntry::new("cloudflare".to_owned()));
+            }
+            ProxyConfig::Fastly => {
+                node.entries_mut().push(KdlEntry::new("fastly".to_owned()));
+            }
+            ProxyConfig::Custom { header, proxies } => {
+                node.entries_mut().push(KdlEntry::new("custom".to_owned()));
+                let mut children = KdlDocument::new();
+                children.nodes_mut().push(string_node("header", header));
+                for ip in proxies {
+                    children.nodes_mut().push(string_node("ip", ip));
+                }
+                node.set_children(children);
+            }
+        }
+        node
     }
 }
 
@@ -144,6 +174,36 @@ impl RouteConfig {
         match self {
             RouteConfig::ReverseProxy { path, .. } | RouteConfig::ServeFiles { path, .. } => path,
         }
+    }
+
+    pub fn to_kdl_node(&self) -> KdlNode {
+        let mut node = KdlNode::new("route");
+        match self {
+            RouteConfig::ReverseProxy { path, target } => {
+                node.entries_mut()
+                    .push(KdlEntry::new("reverse_proxy".to_owned()));
+                node.entries_mut().push(KdlEntry::new(path.clone()));
+                let mut children = KdlDocument::new();
+                children
+                    .nodes_mut()
+                    .push(string_node("target", &target.as_template()));
+                node.set_children(children);
+            }
+            RouteConfig::ServeFiles { path, root, spa } => {
+                node.entries_mut()
+                    .push(KdlEntry::new("serve_files".to_owned()));
+                node.entries_mut().push(KdlEntry::new(path.clone()));
+                let mut children = KdlDocument::new();
+                children
+                    .nodes_mut()
+                    .push(string_node("root", &root.as_template()));
+                if *spa {
+                    children.nodes_mut().push(KdlNode::new("spa"));
+                }
+                node.set_children(children);
+            }
+        }
+        node
     }
 }
 
@@ -277,6 +337,27 @@ impl ValidateConfig for DomainConfig {
 }
 
 impl DomainConfig {
+    pub fn to_kdl_node(&self) -> KdlNode {
+        let mut node = KdlNode::new("domain");
+        let mut children = KdlDocument::new();
+        for host in &self.hosts {
+            children.nodes_mut().push(string_node("host", host));
+        }
+        if let Some(proxy) = &self.proxy {
+            children.nodes_mut().push(proxy.to_kdl_node());
+        }
+        if !self.custom_config.is_empty() {
+            children
+                .nodes_mut()
+                .push(string_node("custom-config", &self.custom_config));
+        }
+        for route in &self.routes {
+            children.nodes_mut().push(route.to_kdl_node());
+        }
+        node.set_children(children);
+        node
+    }
+
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
         for (index, route) in self.routes.iter().enumerate() {
             let (value, leaf) = match route {

@@ -482,8 +482,14 @@ mod tests {
         let dir = base.join("app-db");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
-            dir.join("config.yaml"),
-            "type: db\nserver: pg-main\nuser: app1\nsecret: app1-pass\n",
+            dir.join("config.kdl"),
+            r#"
+db {
+    server "pg-main"
+    user "app1"
+    secret "app1-pass"
+}
+"#,
         )
         .unwrap();
     }
