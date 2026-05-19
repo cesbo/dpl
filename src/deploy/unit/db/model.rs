@@ -97,7 +97,7 @@ impl DbConfig {
     }
 
     fn resolve_server(&self, ctx: &MainContext) -> Result<DbServerConfig, RefError> {
-        UnitConfig::load(ctx, self.server.as_str())
+        UnitConfig::load(ctx, &self.server)
             .map_err(RefError::from)
             .and_then(|cfg| match cfg {
                 UnitConfig::DbServer(server) => Ok(server),

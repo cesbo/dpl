@@ -412,7 +412,7 @@ impl AppConfig {
         }
 
         for (index, db) in self.databases.iter().enumerate() {
-            let inner = match UnitConfig::load(ctx, db.as_str()) {
+            let inner = match UnitConfig::load(ctx, db) {
                 Ok(UnitConfig::Db(config)) => {
                     config.validate_references(ctx)?;
                     continue;

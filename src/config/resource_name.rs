@@ -27,7 +27,7 @@ const EXPECTED: &str =
     "resource name (lowercase a-z, digits, '-'; not starting/ending with '-'; no '--')";
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
-#[error("invalid resource name '{input}' (expected: {EXPECTED})")]
+#[error("invalid name '{input}'. expected: {EXPECTED}")]
 pub struct InvalidResourceName {
     pub input: String,
 }

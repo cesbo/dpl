@@ -34,9 +34,6 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum UnitConfigError {
-    #[error("invalid unit name '{name}'")]
-    InvalidName { name: String },
-
     #[error("unit '{name}' not found")]
     NotFound { name: String },
 
@@ -52,7 +49,6 @@ impl From<UnitConfigError> for RefError {
     fn from(err: UnitConfigError) -> Self {
         match err {
             UnitConfigError::NotFound { name } => RefError::UnknownUnit { name },
-            UnitConfigError::InvalidName { name } => RefError::UnknownUnit { name },
             UnitConfigError::Config { name, source } => RefError::LoadConfig { name, source },
         }
     }
@@ -126,17 +122,13 @@ impl ValidateConfig for UnitConfig {
 }
 
 impl UnitConfig {
-    pub fn load(ctx: &MainContext, name: &str) -> Result<Self, UnitConfigError> {
-        ResourceName::new(name).map_err(|_| UnitConfigError::InvalidName {
-            name: name.to_string(),
-        })?;
-
+    pub fn load(ctx: &MainContext, name: &ResourceName) -> Result<Self, UnitConfigError> {
         let wrap = |source| UnitConfigError::Config {
             name: name.to_string(),
             source,
         };
 
-        let path = ctx.base().join(name).join("config.kdl");
+        let path = name.unit_dir(ctx).join("config.kdl");
         let content = fs::read_to_string(&path).map_err(|err| {
             if err.kind() == io::ErrorKind::NotFound {
                 UnitConfigError::NotFound {
@@ -158,17 +150,19 @@ impl UnitConfig {
     }
 
     pub fn save(&self, ctx: &MainContext, name: &ResourceName) -> Result<(), UnitConfigError> {
-        let wrap = |source| UnitConfigError::Config {
+        let unit_dir = name.unit_dir(ctx);
+        fs::create_dir_all(&unit_dir).map_err(|err| UnitConfigError::Config {
             name: name.to_string(),
-            source,
-        };
+            source: ConfigError::Write(err),
+        })?;
 
-        let dir = name.unit_dir(ctx);
-        fs::create_dir_all(&dir).map_err(|err| wrap(ConfigError::Write(err)))?;
-
-        let path = dir.join("config.kdl");
+        let path = unit_dir.join("config.kdl");
         let doc: KdlDocument = self.into();
-        fs::write(&path, doc.to_string()).map_err(|err| wrap(ConfigError::Write(err)))?;
+        fs::write(&path, doc.to_string()).map_err(|err| UnitConfigError::Config {
+            name: name.to_string(),
+            source: ConfigError::Write(err),
+        })?;
+
         Ok(())
     }
 
@@ -206,15 +200,19 @@ impl UnitConfig {
     }
 }
 
-pub fn resolve_export(ctx: &MainContext, unit_name: &str, key: &str) -> Result<String, RefError> {
+pub fn resolve_export(
+    ctx: &MainContext,
+    unit_name: &ResourceName,
+    key: &str,
+) -> Result<String, RefError> {
     UnitConfig::load(ctx, unit_name)
         .map_err(RefError::from)
-        .and_then(|cfg| cfg.resolve_export(ctx, unit_name, key))
-        .map_err(|err| err.at(Location::unit(unit_name)))
+        .and_then(|cfg| cfg.resolve_export(ctx, unit_name.as_str(), key))
+        .map_err(|err| err.at(Location::unit(unit_name.as_str())))
 }
 
 /// Return all units satisfies `predicate`, sorted by name.
-pub fn list_units<F>(ctx: &MainContext, predicate: F) -> Vec<(String, UnitConfig)>
+pub fn list_units<F>(ctx: &MainContext, predicate: F) -> Vec<(ResourceName, UnitConfig)>
 where
     F: Fn(&UnitConfig) -> bool,
 {
@@ -223,7 +221,7 @@ where
         Err(_) => return Vec::new(),
     };
 
-    let mut out: Vec<(String, UnitConfig)> = Vec::new();
+    let mut out: Vec<(ResourceName, UnitConfig)> = Vec::new();
     for entry in entries.flatten() {
         let Ok(file_type) = entry.file_type() else {
             continue;
@@ -233,13 +231,13 @@ where
             continue;
         }
 
-        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+        let Some(raw) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
 
-        if !ResourceName::is_valid(&name) {
+        let Ok(name) = ResourceName::new(&raw) else {
             continue;
-        }
+        };
 
         let Ok(config) = UnitConfig::load(ctx, &name) else {
             continue;
@@ -434,7 +432,7 @@ app {
         };
 
         // load skips reference validation: succeeds even with a missing ref.
-        let unit = UnitConfig::load(&ctx, "app-x").unwrap();
+        let unit = UnitConfig::load(&ctx, &ResourceName::new("app-x").unwrap()).unwrap();
         assert!(matches!(unit, UnitConfig::App(_)));
 
         // validate_references surfaces the missing unit through the typed chain.
@@ -505,7 +503,7 @@ app {
             .save(&ctx, &ResourceName::new("pg-main").unwrap())
             .unwrap();
 
-        let loaded = UnitConfig::load(&ctx, "pg-main").unwrap();
+        let loaded = UnitConfig::load(&ctx, &ResourceName::new("pg-main").unwrap()).unwrap();
         let (UnitConfig::DbServer(a), UnitConfig::DbServer(b)) = (&original, &loaded) else {
             panic!("expected db-server variants");
         };
@@ -587,7 +585,7 @@ db-server {
             master_key: Some(MasterKey::load(base.path()).unwrap()),
         };
 
-        let foo = UnitConfig::load(&ctx, "foo").unwrap();
+        let foo = UnitConfig::load(&ctx, &ResourceName::new("foo").unwrap()).unwrap();
         let err = foo.validate_references(&ctx).unwrap_err();
 
         // Expected chain (outer → inner):
@@ -640,7 +638,12 @@ db-server {
 
     #[test]
     fn resolve_export_unknown_unit() {
-        let err = resolve_export(&MainContext::default(), "nope", "user").unwrap_err();
+        let err = resolve_export(
+            &MainContext::default(),
+            &ResourceName::new("nope").unwrap(),
+            "user",
+        )
+        .unwrap_err();
         let RefError::At { location, inner } = err else {
             panic!("expected At wrapper, got {err:?}");
         };
@@ -671,7 +674,8 @@ domain {
             base: base.path().to_path_buf(),
             master_key: None,
         };
-        let err = resolve_export(&ctx, "example-com", "host").unwrap_err();
+        let err =
+            resolve_export(&ctx, &ResourceName::new("example-com").unwrap(), "host").unwrap_err();
         let RefError::At { location, inner } = err else {
             panic!("expected At wrapper, got {err:?}");
         };

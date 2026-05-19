@@ -289,10 +289,8 @@ fn resolve_secret(ctx: &MainContext, name: &SecretName) -> Result<String> {
 
 /// Validates the unit name format and checks its presence.
 fn check_unit_name(ctx: &MainContext, name: &str) -> Result<ResourceName> {
-    let unit_name =
-        ResourceName::new(name).with_context(|| format!("invalid unit name '{name}'"))?;
-
-    match UnitConfig::load(ctx, name) {
+    let unit_name = ResourceName::new(name)?;
+    match UnitConfig::load(ctx, &unit_name) {
         Ok(_) => bail!("unit '{name}' already exists"),
         Err(UnitConfigError::NotFound { .. }) => Ok(unit_name),
         Err(err) => Err(err.into()),
@@ -300,19 +298,21 @@ fn check_unit_name(ctx: &MainContext, name: &str) -> Result<ResourceName> {
 }
 
 fn load_db_server(ctx: &MainContext, name: &str) -> Result<(ResourceName, DbServerConfig)> {
-    let unit = UnitConfig::load(ctx, name)?;
+    let unit_name = ResourceName::new(name)?;
+    let unit = UnitConfig::load(ctx, &unit_name)?;
     let UnitConfig::DbServer(config) = unit else {
         bail!("unit '{name}' is not a db-server");
     };
-    Ok((ResourceName::new(name).unwrap(), config))
+    Ok((unit_name, config))
 }
 
 fn load_db(ctx: &MainContext, name: &str) -> Result<(ResourceName, DbConfig)> {
-    let unit = UnitConfig::load(ctx, name)?;
+    let unit_name = ResourceName::new(name)?;
+    let unit = UnitConfig::load(ctx, &unit_name)?;
     let UnitConfig::Db(config) = unit else {
         bail!("unit '{name}' is not a db");
     };
-    Ok((ResourceName::new(name).unwrap(), config))
+    Ok((unit_name, config))
 }
 
 fn prompt_name(ctx: &MainContext) -> Result<ResourceName> {
@@ -329,7 +329,7 @@ fn prompt_name(ctx: &MainContext) -> Result<ResourceName> {
 }
 
 fn prompt_db_server(ctx: &MainContext) -> Result<(ResourceName, DbServerConfig)> {
-    let servers: Vec<(String, DbServerConfig)> =
+    let servers: Vec<(ResourceName, DbServerConfig)> =
         list_units(ctx, |c| matches!(c, UnitConfig::DbServer(_)))
             .into_iter()
             .filter_map(|(name, cfg)| match cfg {
@@ -351,8 +351,7 @@ fn prompt_db_server(ctx: &MainContext) -> Result<(ResourceName, DbServerConfig)>
         .default(0)
         .interact()?;
 
-    let (server_name, server_config) = servers.into_iter().nth(index).unwrap();
-    Ok((ResourceName::new(&server_name).unwrap(), server_config))
+    Ok(servers.into_iter().nth(index).unwrap())
 }
 
 fn parse_engine(value: &str) -> Result<DbServerEngine> {

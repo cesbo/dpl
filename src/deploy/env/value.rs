@@ -23,26 +23,22 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Ns {
     Secret,
-    Unit(String),
+    Unit(ResourceName),
 }
 
 impl Ns {
     fn parse(raw: &str) -> Option<Self> {
         if raw == "secret" {
-            return Some(Self::Secret);
+            Some(Self::Secret)
+        } else {
+            ResourceName::new(raw).ok().map(Self::Unit)
         }
-
-        if ResourceName::is_valid(raw) {
-            return Some(Self::Unit(raw.to_owned()));
-        }
-
-        None
     }
 
     fn as_str(&self) -> &str {
         match self {
             Self::Secret => "secret",
-            Self::Unit(name) => name,
+            Self::Unit(name) => name.as_str(),
         }
     }
 
@@ -223,18 +219,24 @@ impl FromKdlNode for Value {
 
         match entry.value() {
             KdlValue::String(s) => Value::parse(s).map_err(|source| {
-                NodeError::invalid_field(node, FieldError::InvalidTemplate {
-                    span: entry.span(),
-                    source,
-                })
+                NodeError::invalid_field(
+                    node,
+                    FieldError::InvalidTemplate {
+                        span: entry.span(),
+                        source,
+                    },
+                )
             }),
             KdlValue::Integer(i) => Ok(Value::literal(i.to_string())),
             KdlValue::Float(f) => Ok(Value::literal(f.to_string())),
             KdlValue::Bool(b) => Ok(Value::literal(if *b { "true" } else { "false" }.to_owned())),
-            KdlValue::Null => Err(NodeError::invalid_field(node, FieldError::InvalidType {
-                expected: "non-null value",
-                span: entry.span(),
-            })),
+            KdlValue::Null => Err(NodeError::invalid_field(
+                node,
+                FieldError::InvalidType {
+                    expected: "non-null value",
+                    span: entry.span(),
+                },
+            )),
         }
     }
 }
@@ -257,7 +259,7 @@ mod tests {
 
     fn uref(unit: &str, key: &str) -> Segment {
         Segment::Ref {
-            ns: Ns::Unit(unit.to_owned()),
+            ns: Ns::Unit(ResourceName::new(unit).unwrap()),
             name: key.to_owned(),
         }
     }
@@ -386,7 +388,7 @@ mod tests {
             refs,
             vec![
                 (&Ns::Secret, "x"),
-                (&Ns::Unit("pg-main".to_owned()), "port"),
+                (&Ns::Unit(ResourceName::new("pg-main").unwrap()), "port"),
             ]
         );
     }
