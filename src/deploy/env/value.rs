@@ -9,6 +9,7 @@ use crate::{
         FieldError,
         FromKdlNode,
         NodeError,
+        ResourceName,
         TemplateError,
     },
     deploy::unit,
@@ -31,7 +32,7 @@ impl Ns {
             return Some(Self::Secret);
         }
 
-        if validate::resource_name(raw) {
+        if ResourceName::is_valid(raw) {
             return Some(Self::Unit(raw.to_owned()));
         }
 

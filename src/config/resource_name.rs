@@ -1,4 +1,7 @@
-use std::fmt;
+use std::{
+    fmt,
+    path::PathBuf,
+};
 
 use kdl::{
     KdlEntry,
@@ -9,6 +12,7 @@ use serde::{
     Serialize,
     Serializer,
 };
+use thiserror::Error;
 
 use super::{
     FieldError,
@@ -17,22 +21,55 @@ use super::{
     NodeError,
     parse_string_child,
 };
-use crate::validate;
+use crate::MainContext;
 
 const EXPECTED: &str =
     "resource name (lowercase a-z, digits, '-'; not starting/ending with '-'; no '--')";
+
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+#[error("invalid resource name '{input}' (expected: {EXPECTED})")]
+pub struct InvalidResourceName {
+    pub input: String,
+}
 
 #[repr(transparent)]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ResourceName(String);
 
 impl ResourceName {
+    pub fn new(raw: &str) -> Result<Self, InvalidResourceName> {
+        if !Self::is_valid(raw) {
+            return Err(InvalidResourceName {
+                input: raw.to_owned(),
+            });
+        }
+        Ok(Self(raw.to_owned()))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
-    pub fn new(raw: &str) -> Self {
-        Self(raw.to_owned())
+    pub fn is_valid(name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+
+        if name.starts_with('-') || name.ends_with('-') {
+            return false;
+        }
+
+        if name.contains("--") {
+            return false;
+        }
+
+        name.as_bytes()
+            .iter()
+            .all(|&b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    }
+
+    pub fn unit_dir(&self, ctx: &MainContext) -> PathBuf {
+        ctx.base().join(self.as_str())
     }
 }
 
@@ -59,19 +96,17 @@ impl FromKdlNode for ResourceName {
         let raw =
             parse_string_child(node).map_err(|source| NodeError::invalid_field(node, source))?;
 
-        if !validate::resource_name(raw) {
+        Self::new(raw).map_err(|_| {
             let span = node.entries()[0].span();
-            return Err(NodeError::InvalidField {
+            NodeError::InvalidField {
                 name: node.name().value().to_owned(),
                 span,
                 source: FieldError::InvalidValue {
                     expected: EXPECTED,
                     span,
                 },
-            });
-        }
-
-        Ok(Self(raw.to_owned()))
+            }
+        })
     }
 }
 
@@ -96,18 +131,14 @@ impl FromKdlArg for ResourceName {
             });
         };
 
-        if !validate::resource_name(s) {
-            return Err(NodeError::InvalidField {
-                name: field.to_owned(),
+        Self::new(s).map_err(|_| NodeError::InvalidField {
+            name: field.to_owned(),
+            span: entry.span(),
+            source: FieldError::InvalidValue {
+                expected: EXPECTED,
                 span: entry.span(),
-                source: FieldError::InvalidValue {
-                    expected: EXPECTED,
-                    span: entry.span(),
-                },
-            });
-        }
-
-        Ok(Self(s.clone()))
+            },
+        })
     }
 }
 
@@ -124,6 +155,25 @@ mod tests {
             .first()
             .expect("test KDL must have one node")
             .clone()
+    }
+
+    #[test]
+    fn new_accepts_valid() {
+        assert_eq!(ResourceName::new("pg-main").unwrap().as_str(), "pg-main");
+        assert_eq!(ResourceName::new("a").unwrap().as_str(), "a");
+        assert_eq!(ResourceName::new("a-b-c").unwrap().as_str(), "a-b-c");
+        assert_eq!(ResourceName::new("pg1").unwrap().as_str(), "pg1");
+    }
+
+    #[test]
+    fn new_rejects_invalid() {
+        for bad in [
+            "", ".", "foo/bar", "foo_bar", "foo.bar", "foo--bar", " foo", "Ümlaut", "FOO", "-foo",
+            "foo-",
+        ] {
+            let err = ResourceName::new(bad).unwrap_err();
+            assert_eq!(err.input, bad, "expected error to carry input {bad:?}");
+        }
     }
 
     #[test]

@@ -23,6 +23,7 @@ use crate::{
         ConfigError,
         FromKdlNode,
         NodeError,
+        ResourceName,
         ValidateConfig,
     },
     error::{
@@ -126,11 +127,9 @@ impl ValidateConfig for UnitConfig {
 
 impl UnitConfig {
     pub fn load(ctx: &MainContext, name: &str) -> Result<Self, UnitConfigError> {
-        if !crate::validate::resource_name(name) {
-            return Err(UnitConfigError::InvalidName {
-                name: name.to_string(),
-            });
-        }
+        ResourceName::new(name).map_err(|_| UnitConfigError::InvalidName {
+            name: name.to_string(),
+        })?;
 
         let wrap = |source| UnitConfigError::Config {
             name: name.to_string(),
@@ -158,19 +157,13 @@ impl UnitConfig {
         Ok(config)
     }
 
-    pub fn save(&self, ctx: &MainContext, name: &str) -> Result<(), UnitConfigError> {
-        if !crate::validate::resource_name(name) {
-            return Err(UnitConfigError::InvalidName {
-                name: name.to_string(),
-            });
-        }
-
+    pub fn save(&self, ctx: &MainContext, name: &ResourceName) -> Result<(), UnitConfigError> {
         let wrap = |source| UnitConfigError::Config {
             name: name.to_string(),
             source,
         };
 
-        let dir = ctx.base().join(name);
+        let dir = name.unit_dir(ctx);
         fs::create_dir_all(&dir).map_err(|err| wrap(ConfigError::Write(err)))?;
 
         let path = dir.join("config.kdl");
@@ -244,7 +237,7 @@ where
             continue;
         };
 
-        if !crate::validate::resource_name(&name) {
+        if !ResourceName::is_valid(&name) {
             continue;
         }
 
@@ -508,42 +501,15 @@ app {
             version: "18-alpine".into(),
             secret: SecretName::new("pg-pass").unwrap(),
         });
-        original.save(&ctx, "pg-main").unwrap();
+        original
+            .save(&ctx, &ResourceName::new("pg-main").unwrap())
+            .unwrap();
 
         let loaded = UnitConfig::load(&ctx, "pg-main").unwrap();
         let (UnitConfig::DbServer(a), UnitConfig::DbServer(b)) = (&original, &loaded) else {
             panic!("expected db-server variants");
         };
         assert_eq!(a, b);
-    }
-
-    #[test]
-    fn save_rejects_invalid_name() {
-        use tempfile::TempDir;
-
-        use crate::{
-            config::SecretName,
-            deploy::unit::db::{
-                DbServerConfig,
-                DbServerEngine,
-            },
-        };
-
-        let base = TempDir::new().unwrap();
-        let ctx = MainContext {
-            base: base.path().to_path_buf(),
-            master_key: None,
-        };
-
-        let unit = UnitConfig::DbServer(DbServerConfig {
-            engine: DbServerEngine::Postgresql,
-            version: "18".into(),
-            secret: SecretName::new("pg-pass").unwrap(),
-        });
-        assert!(matches!(
-            unit.save(&ctx, "Bad/Name"),
-            Err(UnitConfigError::InvalidName { .. })
-        ));
     }
 
     #[test]

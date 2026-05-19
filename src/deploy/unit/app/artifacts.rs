@@ -294,17 +294,20 @@ mod tests {
             exports: Vec::new(),
             timers: vec![
                 TimerConfig {
-                    name: ResourceName::new("cleanup"),
+                    name: ResourceName::new("cleanup").unwrap(),
                     schedule: "*-*-* 03:00:00".into(),
                     script: "echo cleanup".into(),
                 },
                 TimerConfig {
-                    name: ResourceName::new("sync"),
+                    name: ResourceName::new("sync").unwrap(),
                     schedule: "hourly".into(),
                     script: "echo sync".into(),
                 },
             ],
-            databases: vec![ResourceName::new("main-db"), ResourceName::new("cache-db")],
+            databases: vec![
+                ResourceName::new("main-db").unwrap(),
+                ResourceName::new("cache-db").unwrap(),
+            ],
         };
 
         let name = "my-app";

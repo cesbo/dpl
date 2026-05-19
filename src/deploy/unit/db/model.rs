@@ -655,7 +655,7 @@ mod tests {
     #[test]
     fn db_resolve_export_unknown_key() {
         let config = DbConfig {
-            server: ResourceName::new("pg-main"),
+            server: ResourceName::new("pg-main").unwrap(),
             user: "app1".into(),
             secret: SecretName::new("app1-pass").unwrap(),
         };
@@ -700,7 +700,7 @@ db-server {
             master_key: Some(MasterKey::load(base.path()).unwrap()),
         };
         let config = DbConfig {
-            server: ResourceName::new("pg-main"),
+            server: ResourceName::new("pg-main").unwrap(),
             user: "app1".into(),
             secret: SecretName::new("app1-pass").unwrap(),
         };
@@ -770,7 +770,7 @@ db-server {
             master_key: Some(MasterKey::load(base.path()).unwrap()),
         };
         let config = DbConfig {
-            server: ResourceName::new("maria-main"),
+            server: ResourceName::new("maria-main").unwrap(),
             user: "app1".into(),
             secret: SecretName::new("app1-pass").unwrap(),
         };

@@ -1,27 +1,11 @@
-pub fn resource_name(name: &str) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-
-    if name.starts_with('-') || name.ends_with('-') {
-        return false;
-    }
-
-    if name.contains("--") {
-        return false;
-    }
-
-    name.as_bytes()
-        .iter()
-        .all(|&b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-}
+use crate::config::ResourceName;
 
 pub fn secret_name(path: &str) -> bool {
     if path.is_empty() {
         return false;
     }
 
-    path.split('/').all(resource_name)
+    path.split('/').all(ResourceName::is_valid)
 }
 
 pub fn url_path(path: &str) -> bool {
@@ -70,21 +54,6 @@ mod tests {
         assert!(!secret_name("foo/"));
         assert!(!secret_name("foo//bar"));
         assert!(!secret_name("foo/../bar"));
-    }
-
-    #[test]
-    fn resource_name_rejects_invalid() {
-        assert!(!resource_name(""));
-        assert!(!resource_name("."));
-        assert!(!resource_name("foo/bar"));
-        assert!(!resource_name("foo_bar"));
-        assert!(!resource_name("foo.bar"));
-        assert!(!resource_name("foo--bar"));
-        assert!(!resource_name(" foo"));
-        assert!(!resource_name("Ümlaut"));
-        assert!(!resource_name("FOO"));
-        assert!(!resource_name("-foo"));
-        assert!(!resource_name("foo-"));
     }
 
     #[test]

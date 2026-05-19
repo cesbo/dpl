@@ -125,10 +125,7 @@ fn init(
     secret_name: Option<String>,
 ) -> Result<()> {
     let unit_name = match name {
-        Some(value) => {
-            check_unit_name(ctx, &value)?;
-            value
-        }
+        Some(value) => check_unit_name(ctx, &value)?,
         None => prompt_name(ctx)?,
     };
 
@@ -158,9 +155,9 @@ fn init(
         secret,
     };
 
-    let root_password = resolve_secret(ctx, config.secret.as_str())?;
+    let root_password = resolve_secret(ctx, &config.secret)?;
 
-    let unit_dir = scopeguard::guard(ctx.base().join(&unit_name), |unit_dir| {
+    let unit_dir = scopeguard::guard(ctx.base().join(unit_name.as_str()), |unit_dir| {
         let _ = fs::remove_dir_all(unit_dir);
     });
 
@@ -170,7 +167,7 @@ fn init(
 
     let service_name = crate::deploy::unit::db::create_service_file(
         Path::new(crate::systemd::SYSTEMD_DIR),
-        &unit_name,
+        unit_name.as_str(),
         config.engine,
         &config.version,
         &root_password,
@@ -200,10 +197,7 @@ fn create(
     secret_name: Option<String>,
 ) -> Result<()> {
     let db_name = match name {
-        Some(value) => {
-            check_unit_name(ctx, &value)?;
-            value
-        }
+        Some(value) => check_unit_name(ctx, &value)?,
         None => prompt_name(ctx)?,
     };
 
@@ -214,7 +208,7 @@ fn create(
 
     let user = match user {
         Some(value) => value.trim().to_owned(),
-        None => db_name.clone(),
+        None => db_name.as_str().to_owned(),
     };
 
     let secret = match secret_name {
@@ -223,15 +217,15 @@ fn create(
     };
 
     let config = DbConfig {
-        server: ResourceName::new(&server_name),
+        server: server_name,
         user,
         secret,
     };
 
-    let root_password = resolve_secret(ctx, server_config.secret.as_str())?;
-    let password = resolve_secret(ctx, config.secret.as_str())?;
+    let root_password = resolve_secret(ctx, &server_config.secret)?;
+    let password = resolve_secret(ctx, &config.secret)?;
 
-    let unit_dir = scopeguard::guard(ctx.base().join(&db_name), |unit_dir| {
+    let unit_dir = scopeguard::guard(ctx.base().join(db_name.as_str()), |unit_dir| {
         let _ = fs::remove_dir_all(unit_dir);
     });
 
@@ -244,7 +238,7 @@ fn create(
         .create_database(
             config.server.as_str(),
             &root_password,
-            &db_name,
+            db_name.as_str(),
             &config.user,
             &password,
         )
@@ -265,7 +259,7 @@ fn wait(ctx: &MainContext, name: &str, timeout_secs: u64) -> Result<()> {
     let (_, db_config) = load_db(ctx, name)?;
     let (_, server_config) = load_db_server(ctx, db_config.server.as_str())?;
 
-    let root_password = resolve_secret(ctx, server_config.secret.as_str())?;
+    let root_password = resolve_secret(ctx, &server_config.secret)?;
 
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
     let interval = Duration::from_millis(800);
@@ -288,50 +282,53 @@ fn wait(ctx: &MainContext, name: &str, timeout_secs: u64) -> Result<()> {
     }
 }
 
-fn resolve_secret(ctx: &MainContext, name: &str) -> Result<String> {
-    ctx.resolve_secret(name)
+fn resolve_secret(ctx: &MainContext, name: &SecretName) -> Result<String> {
+    ctx.resolve_secret(name.as_str())
         .with_context(|| format!("resolve secret '{name}'"))
 }
 
 /// Validates the unit name format and checks its presence.
-fn check_unit_name(ctx: &MainContext, name: &str) -> Result<()> {
+fn check_unit_name(ctx: &MainContext, name: &str) -> Result<ResourceName> {
+    let unit_name =
+        ResourceName::new(name).with_context(|| format!("invalid unit name '{name}'"))?;
+
     match UnitConfig::load(ctx, name) {
         Ok(_) => bail!("unit '{name}' already exists"),
-        Err(UnitConfigError::NotFound { .. }) => Ok(()),
+        Err(UnitConfigError::NotFound { .. }) => Ok(unit_name),
         Err(err) => Err(err.into()),
     }
 }
 
-fn load_db_server(ctx: &MainContext, name: &str) -> Result<(String, DbServerConfig)> {
+fn load_db_server(ctx: &MainContext, name: &str) -> Result<(ResourceName, DbServerConfig)> {
     let unit = UnitConfig::load(ctx, name)?;
     let UnitConfig::DbServer(config) = unit else {
         bail!("unit '{name}' is not a db-server");
     };
-    Ok((name.to_string(), config))
+    Ok((ResourceName::new(name).unwrap(), config))
 }
 
-fn load_db(ctx: &MainContext, name: &str) -> Result<(String, DbConfig)> {
+fn load_db(ctx: &MainContext, name: &str) -> Result<(ResourceName, DbConfig)> {
     let unit = UnitConfig::load(ctx, name)?;
     let UnitConfig::Db(config) = unit else {
         bail!("unit '{name}' is not a db");
     };
-    Ok((name.to_string(), config))
+    Ok((ResourceName::new(name).unwrap(), config))
 }
 
-fn prompt_name(ctx: &MainContext) -> Result<String> {
+fn prompt_name(ctx: &MainContext) -> Result<ResourceName> {
     loop {
         let value: String = Input::with_theme(&ColorfulTheme::default())
             .with_prompt("Unit name")
             .interact_text()?;
 
         match check_unit_name(ctx, &value) {
-            Ok(()) => return Ok(value),
+            Ok(unit_name) => return Ok(unit_name),
             Err(err) => eprintln!("{err}"),
         }
     }
 }
 
-fn prompt_db_server(ctx: &MainContext) -> Result<(String, DbServerConfig)> {
+fn prompt_db_server(ctx: &MainContext) -> Result<(ResourceName, DbServerConfig)> {
     let servers: Vec<(String, DbServerConfig)> =
         list_units(ctx, |c| matches!(c, UnitConfig::DbServer(_)))
             .into_iter()
@@ -354,7 +351,8 @@ fn prompt_db_server(ctx: &MainContext) -> Result<(String, DbServerConfig)> {
         .default(0)
         .interact()?;
 
-    Ok(servers.into_iter().nth(index).unwrap())
+    let (server_name, server_config) = servers.into_iter().nth(index).unwrap();
+    Ok((ResourceName::new(&server_name).unwrap(), server_config))
 }
 
 fn parse_engine(value: &str) -> Result<DbServerEngine> {
