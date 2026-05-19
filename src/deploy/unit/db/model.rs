@@ -14,6 +14,7 @@ use crate::{
     config::{
         FromKdlNode,
         NodeError,
+        ResourceName,
         ValidateConfig,
         reject_children,
         set_field,
@@ -25,10 +26,7 @@ use crate::{
         RefError,
     },
     kdl_args,
-    validate::{
-        resource_name,
-        secret_name,
-    },
+    validate::secret_name,
 };
 
 /// RFC 3986 *unreserved* set: encode everything except `A-Z a-z 0-9 - . _ ~`.
@@ -47,17 +45,13 @@ pub struct DbServerConfig {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DbConfig {
-    pub server: String,
+    pub server: ResourceName,
     pub user: String,
     pub secret: String,
 }
 
 impl ValidateConfig for DbConfig {
     fn validate_config(&self) -> Result<(), String> {
-        if !resource_name(&self.server) {
-            return Err(format!("invalid db server name '{}'", self.server));
-        }
-
         if !secret_name(&self.secret) {
             return Err(format!("invalid secret name '{}'", self.secret));
         }
@@ -83,7 +77,7 @@ impl DbConfig {
             "user" => Ok(self.user.clone()),
             "name" => Ok(unit_name.to_owned()),
             "password" => self.resolve_password(ctx),
-            "host" => Ok(self.server.clone()),
+            "host" => Ok(self.server.as_str().to_owned()),
             "port" => self
                 .resolve_server(ctx)
                 .map(|server| server.engine.default_port().to_string()),
@@ -113,12 +107,12 @@ impl DbConfig {
     }
 
     fn resolve_server(&self, ctx: &MainContext) -> Result<DbServerConfig, RefError> {
-        UnitConfig::load(ctx, &self.server)
+        UnitConfig::load(ctx, self.server.as_str())
             .map_err(RefError::from)
             .and_then(|cfg| match cfg {
                 UnitConfig::DbServer(server) => Ok(server),
                 _ => Err(RefError::WrongUnitType {
-                    unit: self.server.clone(),
+                    unit: self.server.as_str().to_owned(),
                     expected: "db-server",
                 }),
             })
@@ -132,7 +126,7 @@ impl DbConfig {
         let mut children = KdlDocument::new();
         children
             .nodes_mut()
-            .push(string_node("server", &self.server));
+            .push(string_node("server", self.server.as_str()));
         children.nodes_mut().push(string_node("user", &self.user));
         children
             .nodes_mut()
@@ -146,7 +140,7 @@ impl FromKdlNode for DbConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         kdl_args!(node)?;
 
-        let mut server: Option<String> = None;
+        let mut server: Option<ResourceName> = None;
         let mut user: Option<String> = None;
         let mut secret: Option<String> = None;
 
@@ -405,7 +399,7 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(cfg.server, "pg-main");
+        assert_eq!(cfg.server.as_str(), "pg-main");
         assert_eq!(cfg.user, "app1");
         assert_eq!(cfg.secret, "app1-pass");
     }
@@ -608,23 +602,9 @@ mod tests {
     }
 
     #[test]
-    fn db_config_rejects_invalid_fields() {
-        let bad_server = DbConfig {
-            server: "Bad/Name".into(),
-            user: "app1".into(),
-            secret: "app1-pass".into(),
-        };
-        assert!(bad_server.validate_config().is_err());
-
-        let bad_user = DbConfig {
-            server: "pg-main".into(),
-            user: "Bad_User".into(),
-            secret: "app1-pass".into(),
-        };
-        assert!(bad_user.validate_config().is_err());
-
+    fn db_config_rejects_invalid_secret() {
         let bad_secret = DbConfig {
-            server: "pg-main".into(),
+            server: ResourceName::new("pg-main"),
             user: "app1".into(),
             secret: "Bad/Secret/".into(),
         };
@@ -632,9 +612,34 @@ mod tests {
     }
 
     #[test]
+    fn db_config_rejects_invalid_server_at_parse() {
+        let err = parse_db(
+            r#"
+            db {
+                server "Bad/Name"
+                user "app1"
+                secret "app1-pass"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidValue { .. },
+                    ..
+                } if name == "server",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
     fn db_resolve_export_unknown_key() {
         let config = DbConfig {
-            server: "pg-main".into(),
+            server: ResourceName::new("pg-main"),
             user: "app1".into(),
             secret: "app1-pass".into(),
         };
@@ -679,7 +684,7 @@ db-server {
             master_key: Some(MasterKey::load(base.path()).unwrap()),
         };
         let config = DbConfig {
-            server: "pg-main".into(),
+            server: ResourceName::new("pg-main"),
             user: "app1".into(),
             secret: "app1-pass".into(),
         };
@@ -749,7 +754,7 @@ db-server {
             master_key: Some(MasterKey::load(base.path()).unwrap()),
         };
         let config = DbConfig {
-            server: "maria-main".into(),
+            server: ResourceName::new("maria-main"),
             user: "app1".into(),
             secret: "app1-pass".into(),
         };

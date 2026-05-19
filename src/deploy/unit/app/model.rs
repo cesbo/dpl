@@ -9,6 +9,7 @@ use crate::{
     config::{
         FromKdlNode,
         NodeError,
+        ResourceName,
         ValidateConfig,
         integer_node,
         push_field,
@@ -36,7 +37,7 @@ pub struct AppConfig {
     pub volumes: Vec<VolumeConfig>,
     pub exports: Vec<ExportConfig>,
     pub timers: Vec<TimerConfig>,
-    pub databases: Vec<String>,
+    pub databases: Vec<ResourceName>,
 }
 
 /// Configuration for a build layer of the application
@@ -85,7 +86,7 @@ pub struct ExportConfig {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TimerConfig {
     /// Name
-    pub name: String,
+    pub name: ResourceName,
     /// Schedule in systemd OnCalendar format
     pub schedule: String,
     /// Script to run
@@ -94,10 +95,6 @@ pub struct TimerConfig {
 
 impl ValidateConfig for TimerConfig {
     fn validate_config(&self) -> Result<(), String> {
-        if !validate::resource_name(&self.name) {
-            return Err(format!("invalid timer name: '{}'", self.name));
-        }
-
         if self.schedule.is_empty() {
             return Err(format!("timer '{}' has empty schedule", self.name));
         }
@@ -272,7 +269,7 @@ impl FromKdlNode for RuntimeConfig {
 impl TimerConfig {
     pub fn to_kdl_node(&self) -> KdlNode {
         let mut node = KdlNode::new("timer");
-        node.entries_mut().push(KdlEntry::new(self.name.clone()));
+        node.entries_mut().push(KdlEntry::from(&self.name));
         let mut children = KdlDocument::new();
         children
             .nodes_mut()
@@ -287,7 +284,7 @@ impl TimerConfig {
 
 impl FromKdlNode for TimerConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
-        let name = kdl_args!(node, name: String)?;
+        let name = kdl_args!(node, name: ResourceName)?;
 
         let mut schedule: Option<String> = None;
         let mut script: Option<String> = None;
@@ -333,7 +330,7 @@ impl FromKdlNode for AppConfig {
         let mut volumes: Vec<VolumeConfig> = Vec::new();
         let mut exports: Vec<ExportConfig> = Vec::new();
         let mut timers: Vec<TimerConfig> = Vec::new();
-        let mut databases: Vec<String> = Vec::new();
+        let mut databases: Vec<ResourceName> = Vec::new();
 
         if let Some(children) = node.children() {
             for child in children.nodes() {
@@ -386,7 +383,9 @@ impl AppConfig {
         children.nodes_mut().push(string_node("image", &self.image));
         children.nodes_mut().push(integer_node("port", self.port));
         for db in &self.databases {
-            children.nodes_mut().push(string_node("database", db));
+            children
+                .nodes_mut()
+                .push(string_node("database", db.as_str()));
         }
         for build in &self.build {
             children.nodes_mut().push(build.to_kdl_node());
@@ -413,13 +412,13 @@ impl AppConfig {
         }
 
         for (index, db) in self.databases.iter().enumerate() {
-            let inner = match UnitConfig::load(ctx, db) {
+            let inner = match UnitConfig::load(ctx, db.as_str()) {
                 Ok(UnitConfig::Db(config)) => {
                     config.validate_references(ctx)?;
                     continue;
                 }
                 Ok(_) => RefError::WrongUnitType {
-                    unit: db.clone(),
+                    unit: db.as_str().to_owned(),
                     expected: "db",
                 },
                 Err(err) => err.into(),
@@ -730,7 +729,7 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(cfg.name, "run-tasks");
+        assert_eq!(cfg.name.as_str(), "run-tasks");
         assert_eq!(cfg.schedule, "minutely");
         assert_eq!(cfg.script, "python manage.py run_tasks");
     }
@@ -746,7 +745,7 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(cfg.name, "run-tasks");
+        assert_eq!(cfg.name.as_str(), "run-tasks");
     }
 
     #[test]
@@ -908,6 +907,30 @@ mod tests {
                 NodeError::InvalidField {
                     name,
                     source: FieldError::InvalidType { expected: "string", .. },
+                    ..
+                } if name == "name",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn kdl_timer_name_invalid_resource_name() {
+        let err = parse_timer(
+            r#"
+            timer "Bad_Name" {
+                schedule "minutely"
+                script "x"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidValue { .. },
                     ..
                 } if name == "name",
             ),
@@ -1391,10 +1414,8 @@ mod tests {
 
         assert_eq!(cfg.image, "python:3.14-slim");
         assert_eq!(cfg.port, 8000);
-        assert_eq!(
-            cfg.databases,
-            vec!["db-test".to_owned(), "cache-db".to_owned()]
-        );
+        let dbs: Vec<&str> = cfg.databases.iter().map(|n| n.as_str()).collect();
+        assert_eq!(dbs, ["db-test", "cache-db"]);
         assert_eq!(cfg.build.len(), 2);
         assert_eq!(cfg.build[0].description.as_deref(), Some("install deps"));
         assert_eq!(cfg.build[0].files, vec!["requirements.txt".to_owned()]);
@@ -1414,7 +1435,7 @@ mod tests {
         assert_eq!(cfg.exports[0].source, "/app/staticfiles");
         assert_eq!(cfg.exports[0].path, "/static");
         assert_eq!(cfg.timers.len(), 1);
-        assert_eq!(cfg.timers[0].name, "run-tasks");
+        assert_eq!(cfg.timers[0].name.as_str(), "run-tasks");
     }
 
     #[test]
@@ -1636,6 +1657,32 @@ mod tests {
     }
 
     #[test]
+    fn kdl_app_database_invalid_resource_name() {
+        let err = parse_app(
+            r#"
+            app {
+                image "alpine"
+                port 8080
+                runtime { cmd "./run" }
+                database "Bad/Name"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidValue { .. },
+                    ..
+                } if name == "database",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
     fn kdl_app_multiple_databases_preserve_order() {
         let cfg = parse_app(
             r#"
@@ -1650,10 +1697,8 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(
-            cfg.databases,
-            vec!["first".to_owned(), "second".to_owned(), "third".to_owned()],
-        );
+        let dbs: Vec<&str> = cfg.databases.iter().map(|n| n.as_str()).collect();
+        assert_eq!(dbs, ["first", "second", "third"]);
     }
 
     #[test]

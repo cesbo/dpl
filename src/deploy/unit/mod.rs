@@ -407,7 +407,8 @@ mod tests {
         let UnitConfig::App(app) = config else {
             panic!("expected app variant");
         };
-        assert_eq!(app.databases, vec!["main-db", "cache-db"]);
+        let dbs: Vec<&str> = app.databases.iter().map(|n| n.as_str()).collect();
+        assert_eq!(dbs, ["main-db", "cache-db"]);
     }
 
     #[test]

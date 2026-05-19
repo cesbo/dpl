@@ -16,6 +16,7 @@ use serde::Serialize;
 use super::AppConfig;
 use crate::{
     MainContext,
+    config::ResourceName,
     deploy::artifacts::{
         ArtifactError,
         render_template,
@@ -73,7 +74,7 @@ pub struct RenderVolume<'a> {
 
 #[derive(Serialize)]
 pub struct RenderTimer<'a> {
-    pub name: &'a str,
+    pub name: &'a ResourceName,
     pub schedule: &'a str,
     pub script: &'a str,
 }
@@ -233,7 +234,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        config::FromKdlNode,
+        config::{
+            FromKdlNode,
+            ResourceName,
+        },
         deploy::{
             EnvList,
             unit::app::model::*,
@@ -290,17 +294,17 @@ mod tests {
             exports: Vec::new(),
             timers: vec![
                 TimerConfig {
-                    name: "cleanup".into(),
+                    name: ResourceName::new("cleanup"),
                     schedule: "*-*-* 03:00:00".into(),
                     script: "echo cleanup".into(),
                 },
                 TimerConfig {
-                    name: "sync".into(),
+                    name: ResourceName::new("sync"),
                     schedule: "hourly".into(),
                     script: "echo sync".into(),
                 },
             ],
-            databases: vec!["main-db".to_owned(), "cache-db".to_owned()],
+            databases: vec![ResourceName::new("main-db"), ResourceName::new("cache-db")],
         };
 
         let name = "my-app";

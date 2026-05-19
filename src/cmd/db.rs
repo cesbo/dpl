@@ -29,6 +29,7 @@ use dialoguer::{
 
 use crate::{
     MainContext,
+    config::ResourceName,
     deploy::{
         UnitConfig,
         unit::{
@@ -41,7 +42,6 @@ use crate::{
             list_units,
         },
     },
-    validate,
 };
 
 const ENGINES: &[(&str, DbServerEngine)] = &[
@@ -210,14 +210,7 @@ fn create(
     };
 
     let user = match user {
-        Some(value) => {
-            let value = value.trim().to_owned();
-            ensure!(
-                validate::resource_name(&value),
-                "invalid user name '{value}'"
-            );
-            value
-        }
+        Some(value) => value.trim().to_owned(),
         None => db_name.clone(),
     };
 
@@ -227,7 +220,7 @@ fn create(
     };
 
     let config = DbConfig {
-        server: server_name,
+        server: ResourceName::new(&server_name),
         user,
         secret: secret_name,
     };
@@ -246,13 +239,13 @@ fn create(
     server_config
         .engine
         .create_database(
-            &config.server,
+            config.server.as_str(),
             &root_password,
             &db_name,
             &config.user,
             &password,
         )
-        .with_context(|| format!("create database '{}' in '{}'", db_name, &config.server))?;
+        .with_context(|| format!("create database '{}' in '{}'", db_name, config.server))?;
 
     scopeguard::ScopeGuard::into_inner(unit_dir);
 
@@ -267,7 +260,7 @@ fn create(
 
 fn wait(ctx: &MainContext, name: &str, timeout_secs: u64) -> Result<()> {
     let (_, db_config) = load_db(ctx, name)?;
-    let (_, server_config) = load_db_server(ctx, &db_config.server)?;
+    let (_, server_config) = load_db_server(ctx, db_config.server.as_str())?;
 
     let root_password = resolve_secret(ctx, &server_config.secret)?;
 
@@ -277,7 +270,7 @@ fn wait(ctx: &MainContext, name: &str, timeout_secs: u64) -> Result<()> {
     loop {
         let result = server_config
             .engine
-            .ping(&db_config.server, &root_password, name);
+            .ping(db_config.server.as_str(), &root_password, name);
 
         if result.is_ok() {
             return Ok(());
