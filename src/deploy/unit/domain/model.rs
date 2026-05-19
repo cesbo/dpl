@@ -8,6 +8,7 @@ use crate::{
     MainContext,
     config::{
         FromKdlNode,
+        HostName,
         NodeError,
         ValidateConfig,
         push_field,
@@ -26,7 +27,7 @@ use crate::{
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DomainConfig {
-    pub hosts: Vec<String>,
+    pub hosts: Vec<HostName>,
     pub proxy: Option<ProxyConfig>,
     pub custom_config: String,
     pub routes: Vec<RouteConfig>,
@@ -281,16 +282,6 @@ impl FromKdlNode for RouteConfig {
 
 impl ValidateConfig for DomainConfig {
     fn validate_config(&self) -> Result<(), String> {
-        if self.hosts.is_empty() {
-            return Err("hosts must not be empty".into());
-        }
-
-        for host in &self.hosts {
-            if host.trim().is_empty() {
-                return Err("host must not be empty".into());
-            }
-        }
-
         if let Some(proxy) = &self.proxy {
             proxy.validate_config()?;
         }
@@ -310,7 +301,9 @@ impl DomainConfig {
         let mut node = KdlNode::new("domain");
         let mut children = KdlDocument::new();
         for host in &self.hosts {
-            children.nodes_mut().push(string_node("host", host));
+            children
+                .nodes_mut()
+                .push(string_node("host", host.as_str()));
         }
         if let Some(proxy) = &self.proxy {
             children.nodes_mut().push(proxy.to_kdl_node());
@@ -345,7 +338,7 @@ impl FromKdlNode for DomainConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         kdl_args!(node)?;
 
-        let mut hosts: Vec<String> = Vec::new();
+        let mut hosts: Vec<HostName> = Vec::new();
         let mut proxy: Option<ProxyConfig> = None;
         let mut custom_config: Option<String> = None;
         let mut routes: Vec<RouteConfig> = Vec::new();
@@ -366,6 +359,13 @@ impl FromKdlNode for DomainConfig {
                     }
                 }
             }
+        }
+
+        if hosts.is_empty() {
+            return Err(NodeError::MissingField {
+                name: "host",
+                span: node.span(),
+            });
         }
 
         Ok(DomainConfig {
@@ -809,7 +809,7 @@ mod tests {
 
     fn sample_domain() -> DomainConfig {
         DomainConfig {
-            hosts: vec!["example.com".into()],
+            hosts: vec![HostName::new("example.com").unwrap()],
             proxy: None,
             custom_config: String::new(),
             routes: Vec::new(),
@@ -842,7 +842,10 @@ mod tests {
 
         assert_eq!(
             cfg.hosts,
-            vec!["example.com".to_string(), "www.example.com".to_string()],
+            vec![
+                HostName::new("example.com").unwrap(),
+                HostName::new("www.example.com").unwrap(),
+            ],
         );
         assert_eq!(
             cfg.proxy,
@@ -872,7 +875,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(cfg.hosts, vec!["example.com".to_string()]);
+        assert_eq!(cfg.hosts, vec![HostName::new("example.com").unwrap()]);
         assert_eq!(cfg.proxy, None);
         assert_eq!(cfg.custom_config, "");
         assert!(cfg.routes.is_empty());
@@ -895,9 +898,9 @@ mod tests {
         assert_eq!(
             cfg.hosts,
             vec![
-                "a.example.com".to_string(),
-                "b.example.com".to_string(),
-                "c.example.com".to_string(),
+                HostName::new("a.example.com").unwrap(),
+                HostName::new("b.example.com").unwrap(),
+                HostName::new("c.example.com").unwrap(),
             ],
         );
     }
@@ -986,17 +989,35 @@ mod tests {
     }
 
     #[test]
-    fn domain_validate_empty_hosts() {
-        let mut cfg = sample_domain();
-        cfg.hosts = Vec::new();
-        assert_eq!(cfg.validate_config(), Err("hosts must not be empty".into()),);
+    fn kdl_domain_rejects_empty_hosts() {
+        let err = parse_domain("domain {}").unwrap_err();
+        assert!(
+            matches!(err, NodeError::MissingField { name: "host", .. }),
+            "unexpected error: {err:?}",
+        );
     }
 
     #[test]
-    fn domain_validate_empty_host_string() {
-        let mut cfg = sample_domain();
-        cfg.hosts = vec!["   ".into()];
-        assert_eq!(cfg.validate_config(), Err("host must not be empty".into()));
+    fn kdl_domain_rejects_invalid_host() {
+        let err = parse_domain(
+            r#"
+            domain {
+                host "Bad_Host"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidValue { .. },
+                    ..
+                } if name == "host",
+            ),
+            "unexpected error: {err:?}",
+        );
     }
 
     #[test]
