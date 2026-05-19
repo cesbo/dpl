@@ -213,7 +213,7 @@ impl FromKdlNode for RouteConfig {
                     for child in children.nodes() {
                         let name = child.name().value();
                         match name {
-                            "target" => set_value_field(&mut target, child, "target")?,
+                            "target" => set_field(&mut target, child)?,
                             _ => {
                                 return Err(NodeError::UnknownField {
                                     name: name.to_owned(),
@@ -239,7 +239,7 @@ impl FromKdlNode for RouteConfig {
                     for child in children.nodes() {
                         let name = child.name().value();
                         match name {
-                            "root" => set_value_field(&mut root, child, "root")?,
+                            "root" => set_field(&mut root, child)?,
                             "spa" => {
                                 if spa_seen {
                                     return Err(NodeError::DuplicateField {
@@ -277,26 +277,6 @@ impl FromKdlNode for RouteConfig {
             }),
         }
     }
-}
-
-fn set_value_field(
-    target: &mut Option<Value>,
-    child: &KdlNode,
-    name: &'static str,
-) -> Result<(), NodeError> {
-    if target.is_some() {
-        return Err(NodeError::DuplicateField {
-            name: name.to_owned(),
-            span: child.span(),
-        });
-    }
-    let value = Value::try_from(child).map_err(|source| NodeError::InvalidField {
-        name: name.to_owned(),
-        span: child.span(),
-        source,
-    })?;
-    *target = Some(value);
-    Ok(())
 }
 
 impl ValidateConfig for DomainConfig {

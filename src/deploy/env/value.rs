@@ -7,6 +7,8 @@ use crate::{
     MainContext,
     config::{
         FieldError,
+        FromKdlNode,
+        NodeError,
         TemplateError,
     },
     deploy::unit,
@@ -192,37 +194,46 @@ fn parse_ref(body: &str, pos: usize) -> Result<Segment, TemplateError> {
     })
 }
 
-impl TryFrom<&KdlNode> for Value {
-    type Error = FieldError;
-
-    fn try_from(node: &KdlNode) -> Result<Self, Self::Error> {
+impl FromKdlNode for Value {
+    fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         if node.children().is_some() {
-            return Err(FieldError::HasChildren { span: node.span() });
+            return Err(NodeError::invalid_field(
+                node,
+                FieldError::HasChildren { span: node.span() },
+            ));
         }
 
         let entries = node.entries();
         for entry in entries {
             if entry.name().is_some() {
-                return Err(FieldError::NamedEntry { span: entry.span() });
+                return Err(NodeError::invalid_field(
+                    node,
+                    FieldError::NamedEntry { span: entry.span() },
+                ));
             }
         }
 
         let [entry] = entries else {
-            return Err(FieldError::EntryCount { span: node.span() });
+            return Err(NodeError::invalid_field(
+                node,
+                FieldError::EntryCount { span: node.span() },
+            ));
         };
 
         match entry.value() {
-            KdlValue::String(s) => Value::parse(s).map_err(|source| FieldError::InvalidTemplate {
-                span: entry.span(),
-                source,
+            KdlValue::String(s) => Value::parse(s).map_err(|source| {
+                NodeError::invalid_field(node, FieldError::InvalidTemplate {
+                    span: entry.span(),
+                    source,
+                })
             }),
             KdlValue::Integer(i) => Ok(Value::literal(i.to_string())),
             KdlValue::Float(f) => Ok(Value::literal(f.to_string())),
             KdlValue::Bool(b) => Ok(Value::literal(if *b { "true" } else { "false" }.to_owned())),
-            KdlValue::Null => Err(FieldError::InvalidType {
+            KdlValue::Null => Err(NodeError::invalid_field(node, FieldError::InvalidType {
                 expected: "non-null value",
                 span: entry.span(),
-            }),
+            })),
         }
     }
 }
@@ -496,66 +507,70 @@ db {
         assert!(matches!(*leaf, RefError::UnknownExport { ref key } if key == "unknown"));
     }
 
-    fn first_node(src: &str) -> kdl::KdlNode {
+    fn parse_node(src: &str) -> Result<Value, FieldError> {
         let doc: kdl::KdlDocument = src.parse().expect("test KDL must parse");
-        doc.nodes()
+        let node = doc
+            .nodes()
             .first()
-            .expect("test KDL must have at least one node")
-            .clone()
+            .expect("test KDL must have at least one node");
+        Value::from_kdl_node(node).map_err(|err| match err {
+            NodeError::InvalidField { source, .. } => source,
+            other => panic!("expected InvalidField, got {other:?}"),
+        })
     }
 
     #[test]
-    fn try_from_node_string() {
-        let v = Value::try_from(&first_node(r#"key "127.0.0.1""#)).unwrap();
+    fn from_node_string() {
+        let v = parse_node(r#"key "127.0.0.1""#).unwrap();
         assert_eq!(v.as_template(), "127.0.0.1");
     }
 
     #[test]
-    fn try_from_node_integer() {
-        let v = Value::try_from(&first_node("key 8000")).unwrap();
+    fn from_node_integer() {
+        let v = parse_node("key 8000").unwrap();
         assert_eq!(v.as_template(), "8000");
     }
 
     #[test]
-    fn try_from_node_float() {
-        let v = Value::try_from(&first_node("key 0.5")).unwrap();
+    fn from_node_float() {
+        let v = parse_node("key 0.5").unwrap();
         assert_eq!(v.as_template(), "0.5");
     }
 
     #[test]
-    fn try_from_node_template_ref() {
-        let v = Value::try_from(&first_node(r#"key "${secret:nexus/secret-key}""#)).unwrap();
+    fn from_node_template_ref() {
+        let v = parse_node(r#"key "${secret:nexus/secret-key}""#).unwrap();
         let refs: Vec<(&Ns, &str)> = v.references().collect();
         assert_eq!(refs, vec![(&Ns::Secret, "nexus/secret-key")]);
     }
 
     #[test]
-    fn try_from_node_no_args() {
-        let err = Value::try_from(&first_node("key")).unwrap_err();
+    fn from_node_no_args() {
+        let err = parse_node("key").unwrap_err();
         assert!(matches!(err, FieldError::EntryCount { .. }), "{err:?}");
     }
 
     #[test]
-    fn try_from_node_too_many_args() {
-        let err = Value::try_from(&first_node(r#"key "a" "b""#)).unwrap_err();
+    fn from_node_too_many_args() {
+        let err = parse_node(r#"key "a" "b""#).unwrap_err();
         assert!(matches!(err, FieldError::EntryCount { .. }), "{err:?}");
     }
 
     #[test]
-    fn try_from_node_named_entry() {
-        let err = Value::try_from(&first_node(r#"key value="x""#)).unwrap_err();
+    fn from_node_named_entry() {
+        let err = parse_node(r#"key value="x""#).unwrap_err();
         assert!(matches!(err, FieldError::NamedEntry { .. }), "{err:?}");
     }
 
     #[test]
-    fn try_from_node_child_block() {
-        let err = Value::try_from(&first_node(r#"key "x" { extra }"#)).unwrap_err();
+    fn from_node_child_block() {
+        let err = parse_node(r#"key "x" { extra }"#).unwrap_err();
         assert!(matches!(err, FieldError::HasChildren { .. }), "{err:?}");
     }
 
     #[test]
-    fn try_from_node_null() {
-        let err = Value::try_from(&first_node("key #null")).unwrap_err();
+    fn from_node_null() {
+        let err = parse_node("key #null").unwrap_err();
         assert!(
             matches!(
                 err,
@@ -569,8 +584,8 @@ db {
     }
 
     #[test]
-    fn try_from_node_invalid_template() {
-        let err = Value::try_from(&first_node(r#"key "${secret:}""#)).unwrap_err();
+    fn from_node_invalid_template() {
+        let err = parse_node(r#"key "${secret:}""#).unwrap_err();
         assert!(
             matches!(
                 err,

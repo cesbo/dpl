@@ -48,11 +48,7 @@ impl FromKdlNode for EnvList {
                     },
                 });
             }
-            let value = Value::try_from(child).map_err(|source| NodeError::InvalidField {
-                name: key.clone(),
-                span: child.span(),
-                source,
-            })?;
+            let value = Value::from_kdl_node(child)?;
             map.insert(key, value);
         }
 
@@ -150,10 +146,7 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
-        assert_eq!(
-            pairs,
-            vec![("DB_HOST", "127.0.0.1"), ("DB_PORT", "8000")],
-        );
+        assert_eq!(pairs, vec![("DB_HOST", "127.0.0.1"), ("DB_PORT", "8000")],);
     }
 
     #[test]

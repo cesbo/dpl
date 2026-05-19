@@ -1,5 +1,6 @@
 use std::io;
 
+use kdl::KdlNode;
 use miette::SourceSpan;
 use thiserror::Error;
 
@@ -100,6 +101,16 @@ pub enum NodeError {
         value: String,
         span: SourceSpan,
     },
+}
+
+impl NodeError {
+    pub fn invalid_field(node: &KdlNode, source: FieldError) -> Self {
+        NodeError::InvalidField {
+            name: node.name().value().to_owned(),
+            span: node.span(),
+            source,
+        }
+    }
 }
 
 #[derive(Debug, Error)]

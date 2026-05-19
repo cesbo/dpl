@@ -58,10 +58,6 @@ impl ValidateConfig for DbConfig {
             return Err(format!("invalid db server name '{}'", self.server));
         }
 
-        if !resource_name(&self.user) {
-            return Err(format!("invalid db user name '{}'", self.user));
-        }
-
         if !secret_name(&self.secret) {
             return Err(format!("invalid secret name '{}'", self.secret));
         }

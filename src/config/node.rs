@@ -118,23 +118,14 @@ impl FromKdlNode for String {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         parse_string_child(node)
             .map(str::to_owned)
-            .map_err(|source| NodeError::InvalidField {
-                name: node.name().value().to_owned(),
-                span: node.span(),
-                source,
-            })
+            .map_err(|source| NodeError::invalid_field(node, source))
     }
 }
 
 impl FromKdlNode for u16 {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
-        parse_integer_child::<u16>(node, 0 ..= u16::MAX.into()).map_err(|source| {
-            NodeError::InvalidField {
-                name: node.name().value().to_owned(),
-                span: node.span(),
-                source,
-            }
-        })
+        parse_integer_child::<u16>(node, 0 ..= u16::MAX.into())
+            .map_err(|source| NodeError::invalid_field(node, source))
     }
 }
 
