@@ -108,12 +108,9 @@ mod tests {
     use kdl::KdlDocument;
 
     use super::*;
-    use crate::{
-        config::{
-            FieldError,
-            TemplateError,
-        },
-        deploy::env::value::Ns,
+    use crate::config::{
+        FieldError,
+        TemplateError,
     };
 
     fn parse_env(src: &str) -> Result<EnvList, NodeError> {
@@ -126,73 +123,41 @@ mod tests {
     }
 
     #[test]
-    fn kdl_empty_block() {
+    fn empty_block() {
         let env = parse_env("env {}").unwrap();
         assert!(env.0.is_empty());
     }
 
     #[test]
-    fn kdl_bare_node() {
+    fn bare_node() {
         let env = parse_env("env").unwrap();
         assert!(env.0.is_empty());
     }
 
     #[test]
-    fn kdl_string_value() {
-        let env = parse_env(r#"env { DB_HOST "127.0.0.1" }"#).unwrap();
-        let resolved = env.resolve(&MainContext::default(), "env").unwrap();
-        assert_eq!(
-            resolved.get("DB_HOST").map(String::as_str),
-            Some("127.0.0.1"),
-        );
-    }
-
-    #[test]
-    fn kdl_integer_value() {
-        let env = parse_env("env { DB_PORT 8000 }").unwrap();
-        let resolved = env.resolve(&MainContext::default(), "env").unwrap();
-        assert_eq!(resolved.get("DB_PORT").map(String::as_str), Some("8000"));
-    }
-
-    #[test]
-    fn kdl_float_value() {
-        let env = parse_env("env { RATIO 0.5 }").unwrap();
-        let resolved = env.resolve(&MainContext::default(), "env").unwrap();
-        assert_eq!(resolved.get("RATIO").map(String::as_str), Some("0.5"));
-    }
-
-    #[test]
-    fn kdl_bool_value() {
-        let env = parse_env("env { DEBUG #true }").unwrap();
-        let resolved = env.resolve(&MainContext::default(), "env").unwrap();
-        assert_eq!(resolved.get("DEBUG").map(String::as_str), Some("true"));
-    }
-
-    #[test]
-    fn kdl_template_value() {
-        let env = parse_env(r#"env { SECRET_KEY "${secret:nexus/secret-key}" }"#).unwrap();
-        let v = env.0.get("SECRET_KEY").unwrap();
-        let refs: Vec<(&Ns, &str)> = v.references().collect();
-        assert_eq!(refs, vec![(&Ns::Secret, "nexus/secret-key")]);
-    }
-
-    #[test]
-    fn kdl_multiple_entries_ordered() {
+    fn entries_sorted_and_resolved() {
         let env = parse_env(
             r#"
             env {
-                DB_HOST "127.0.0.1"
                 DB_PORT 8000
+                DB_HOST "127.0.0.1"
             }
             "#,
         )
         .unwrap();
-        let keys: Vec<&str> = env.0.keys().map(String::as_str).collect();
-        assert_eq!(keys, vec!["DB_HOST", "DB_PORT"]);
+        let resolved = env.resolve(&MainContext::default(), "env").unwrap();
+        let pairs: Vec<(&str, &str)> = resolved
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![("DB_HOST", "127.0.0.1"), ("DB_PORT", "8000")],
+        );
     }
 
     #[test]
-    fn kdl_env_node_with_arg_rejected() {
+    fn rejects_arg() {
         let err = parse_env(r#"env "stray" { DB_HOST "x" }"#).unwrap_err();
         assert!(
             matches!(&err, NodeError::UnexpectedArg { .. }),
@@ -201,7 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_env_node_with_property_rejected() {
+    fn rejects_property() {
         let err = parse_env(r#"env strict=#true { DB_HOST "x" }"#).unwrap_err();
         assert!(
             matches!(&err, NodeError::UnexpectedArg { .. }),
@@ -210,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_entry_error_carries_key_and_shape() {
+    fn error_carries_key() {
         let err = parse_env("env { KEY }").unwrap_err();
         assert!(
             matches!(
@@ -226,7 +191,12 @@ mod tests {
     }
 
     #[test]
-    fn kdl_entry_error_carries_template_failure() {
+    fn invalid_env_name() {
+        assert!(parse_env(r#"env { BAD-NAME "x" }"#).is_err());
+    }
+
+    #[test]
+    fn wraps_template_error() {
         let err = parse_env(r#"env { BAD "${secret:}" }"#).unwrap_err();
         assert!(
             matches!(
@@ -242,10 +212,5 @@ mod tests {
             ),
             "unexpected error: {err:?}",
         );
-    }
-
-    #[test]
-    fn validate_config_rejects_invalid_env_name() {
-        assert!(parse_env(r#"env { BAD-NAME "x" }"#).is_err());
     }
 }

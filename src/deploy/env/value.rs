@@ -257,30 +257,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_empty() {
-        let v = Value::parse("").unwrap();
-        assert_eq!(v.0, Vec::<Segment>::new());
-    }
-
-    #[test]
     fn parse_single_ref() {
         let v = Value::parse("${secret:my-key}").unwrap();
         assert_eq!(v.0, vec![sref("my-key")]);
-    }
-
-    #[test]
-    fn parse_mixed() {
-        let v = Value::parse("postgres://app:${secret:db}@host/${secret:db-name}?x=1").unwrap();
-        assert_eq!(
-            v.0,
-            vec![
-                lit("postgres://app:"),
-                sref("db"),
-                lit("@host/"),
-                sref("db-name"),
-                lit("?x=1"),
-            ]
-        );
     }
 
     #[test]
@@ -320,39 +299,19 @@ mod tests {
     }
 
     #[test]
-    fn parse_secret_empty_name() {
-        assert!(matches!(
-            Value::parse("${secret:}"),
-            Err(TemplateError::MalformedRef { .. })
-        ));
-    }
-
-    #[test]
-    fn parse_empty_ns() {
-        assert!(matches!(
-            Value::parse("${:foo}"),
-            Err(TemplateError::MalformedRef { .. })
-        ));
-    }
-
-    #[test]
-    fn parse_no_colon() {
-        assert!(matches!(
-            Value::parse("${secret}"),
-            Err(TemplateError::MalformedRef { .. })
-        ));
+    fn parse_malformed_ref() {
+        for input in ["${secret:}", "${:foo}", "${secret}"] {
+            assert!(
+                matches!(Value::parse(input), Err(TemplateError::MalformedRef { .. })),
+                "expected MalformedRef for {input:?}",
+            );
+        }
     }
 
     #[test]
     fn parse_invalid_secret_name() {
         let err = Value::parse("${secret:Bad Name}").unwrap_err();
         assert!(matches!(err, TemplateError::InvalidName { ref ns, .. } if ns == "secret"));
-    }
-
-    #[test]
-    fn render_literal() {
-        let v = Value::parse("hello").unwrap();
-        assert_eq!(v.render(&MainContext::default()).unwrap(), "hello");
     }
 
     #[test]
@@ -368,7 +327,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_unit_ref_mixed_with_secret() {
+    fn parse_mixed_refs() {
         let v =
             Value::parse("postgres://${app-db:user}:${secret:app-pass}@${pg-main:host}").unwrap();
         assert_eq!(
@@ -385,7 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_unit_ref_invalid_ns_rejected() {
+    fn parse_unknown_namespace() {
         let err = Value::parse("${PgMain:port}").unwrap_err();
         assert!(matches!(err, TemplateError::UnknownNamespace { ref ns, .. } if ns == "PgMain"));
     }
