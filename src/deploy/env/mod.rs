@@ -1,3 +1,4 @@
+mod name;
 mod value;
 
 use std::collections::BTreeMap;
@@ -8,11 +9,13 @@ use kdl::{
     KdlNode,
 };
 
-pub use self::value::Value;
+pub use self::{
+    name::Name,
+    value::Value,
+};
 use crate::{
     MainContext,
     config::{
-        FieldError,
         FromKdlNode,
         NodeError,
     },
@@ -20,11 +23,10 @@ use crate::{
         Location,
         RefError,
     },
-    validate,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct EnvList(BTreeMap<String, Value>);
+pub struct EnvList(BTreeMap<Name, Value>);
 
 impl FromKdlNode for EnvList {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
@@ -36,20 +38,9 @@ impl FromKdlNode for EnvList {
 
         let mut map = BTreeMap::new();
         for child in children.nodes() {
-            let key = child.name().value().to_owned();
-            if !validate::env_name(&key) {
-                let span = child.name().span();
-                return Err(NodeError::InvalidField {
-                    name: key,
-                    span,
-                    source: FieldError::InvalidValue {
-                        expected: "env name (letters, digits, '_'; must not start with a digit)",
-                        span,
-                    },
-                });
-            }
+            let name = Name::from_kdl_node(child)?;
             let value = Value::from_kdl_node(child)?;
-            map.insert(key, value);
+            map.insert(name, value);
         }
 
         Ok(Self(map))
@@ -93,7 +84,7 @@ impl EnvList {
                 let value = v
                     .render(ctx)
                     .map_err(|err| err.at(Location::field(format!("{prefix}.{k}"))))?;
-                Ok((k.clone(), value))
+                Ok((k.as_str().to_owned(), value))
             })
             .collect()
     }
