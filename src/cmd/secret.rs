@@ -27,6 +27,7 @@ use rand::{
 
 use crate::{
     MainContext,
+    config::SecretName,
     secret::{
         self,
         SecretError,
@@ -171,7 +172,7 @@ pub fn prompt_value_or_random() -> Result<String> {
 }
 
 /// Pick an existing secret with a fuzzy selector, or create a new one inline.
-pub fn prompt_secret(ctx: &MainContext) -> Result<String> {
+pub fn prompt_secret(ctx: &MainContext) -> Result<SecretName> {
     let names = secret::list_secrets(ctx.base())?;
 
     let mut items: Vec<&str> = names.iter().map(String::as_str).collect();
@@ -183,11 +184,13 @@ pub fn prompt_secret(ctx: &MainContext) -> Result<String> {
         .default(0)
         .interact()?;
 
-    if index < names.len() {
-        Ok(names.into_iter().nth(index).unwrap())
+    let name = if index < names.len() {
+        names.into_iter().nth(index).unwrap()
     } else {
-        create_new_secret(ctx)
-    }
+        create_new_secret(ctx)?
+    };
+
+    Ok(SecretName::new(&name).unwrap())
 }
 
 fn create_new_secret(ctx: &MainContext) -> Result<String> {

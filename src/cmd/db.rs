@@ -29,7 +29,10 @@ use dialoguer::{
 
 use crate::{
     MainContext,
-    config::ResourceName,
+    config::{
+        ResourceName,
+        SecretName,
+    },
     deploy::{
         UnitConfig,
         unit::{
@@ -144,18 +147,18 @@ fn init(
         None => prompt_version(engine)?,
     };
 
-    let secret_name = match secret_name {
-        Some(value) => value,
+    let secret = match secret_name {
+        Some(value) => SecretName::new(&value).context("invalid --secret value")?,
         None => super::secret::prompt_secret(ctx)?,
     };
 
     let config = DbServerConfig {
         engine,
         version,
-        secret: secret_name,
+        secret,
     };
 
-    let root_password = resolve_secret(ctx, &config.secret)?;
+    let root_password = resolve_secret(ctx, config.secret.as_str())?;
 
     let unit_dir = scopeguard::guard(ctx.base().join(&unit_name), |unit_dir| {
         let _ = fs::remove_dir_all(unit_dir);
@@ -214,19 +217,19 @@ fn create(
         None => db_name.clone(),
     };
 
-    let secret_name = match secret_name {
-        Some(value) => value,
+    let secret = match secret_name {
+        Some(value) => SecretName::new(&value).context("invalid --secret value")?,
         None => super::secret::prompt_secret(ctx)?,
     };
 
     let config = DbConfig {
         server: ResourceName::new(&server_name),
         user,
-        secret: secret_name,
+        secret,
     };
 
-    let root_password = resolve_secret(ctx, &server_config.secret)?;
-    let password = resolve_secret(ctx, &config.secret)?;
+    let root_password = resolve_secret(ctx, server_config.secret.as_str())?;
+    let password = resolve_secret(ctx, config.secret.as_str())?;
 
     let unit_dir = scopeguard::guard(ctx.base().join(&db_name), |unit_dir| {
         let _ = fs::remove_dir_all(unit_dir);
@@ -262,7 +265,7 @@ fn wait(ctx: &MainContext, name: &str, timeout_secs: u64) -> Result<()> {
     let (_, db_config) = load_db(ctx, name)?;
     let (_, server_config) = load_db_server(ctx, db_config.server.as_str())?;
 
-    let root_password = resolve_secret(ctx, &server_config.secret)?;
+    let root_password = resolve_secret(ctx, server_config.secret.as_str())?;
 
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
     let interval = Duration::from_millis(800);

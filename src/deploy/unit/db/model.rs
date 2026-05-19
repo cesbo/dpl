@@ -15,6 +15,7 @@ use crate::{
         FromKdlNode,
         NodeError,
         ResourceName,
+        SecretName,
         ValidateConfig,
         reject_children,
         set_field,
@@ -26,7 +27,6 @@ use crate::{
         RefError,
     },
     kdl_args,
-    validate::secret_name,
 };
 
 /// RFC 3986 *unreserved* set: encode everything except `A-Z a-z 0-9 - . _ ~`.
@@ -40,24 +40,14 @@ const USERINFO: &AsciiSet = &NON_ALPHANUMERIC
 pub struct DbServerConfig {
     pub engine: DbServerEngine,
     pub version: String,
-    pub secret: String,
+    pub secret: SecretName,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DbConfig {
     pub server: ResourceName,
     pub user: String,
-    pub secret: String,
-}
-
-impl ValidateConfig for DbConfig {
-    fn validate_config(&self) -> Result<(), String> {
-        if !secret_name(&self.secret) {
-            return Err(format!("invalid secret name '{}'", self.secret));
-        }
-
-        Ok(())
-    }
+    pub secret: SecretName,
 }
 
 impl DbConfig {
@@ -101,7 +91,7 @@ impl DbConfig {
     }
 
     fn resolve_password(&self, ctx: &MainContext) -> Result<String, RefError> {
-        ctx.resolve_secret(&self.secret)
+        ctx.resolve_secret(self.secret.as_str())
             .map_err(RefError::from)
             .map_err(|err| err.at(Location::field("secret")))
     }
@@ -130,7 +120,7 @@ impl DbConfig {
         children.nodes_mut().push(string_node("user", &self.user));
         children
             .nodes_mut()
-            .push(string_node("secret", &self.secret));
+            .push(string_node("secret", self.secret.as_str()));
         node.set_children(children);
         node
     }
@@ -142,7 +132,7 @@ impl FromKdlNode for DbConfig {
 
         let mut server: Option<ResourceName> = None;
         let mut user: Option<String> = None;
-        let mut secret: Option<String> = None;
+        let mut secret: Option<SecretName> = None;
 
         if let Some(children) = node.children() {
             for child in children.nodes() {
@@ -297,7 +287,7 @@ impl DbServerConfig {
             .push(string_node("version", &self.version));
         children
             .nodes_mut()
-            .push(string_node("secret", &self.secret));
+            .push(string_node("secret", self.secret.as_str()));
         node.set_children(children);
         node
     }
@@ -308,7 +298,7 @@ impl DbServerConfig {
     }
 
     fn resolve_password(&self, ctx: &MainContext) -> Result<String, RefError> {
-        ctx.resolve_secret(&self.secret)
+        ctx.resolve_secret(self.secret.as_str())
             .map_err(RefError::from)
             .map_err(|err| err.at(Location::field("secret")))
     }
@@ -320,7 +310,7 @@ impl FromKdlNode for DbServerConfig {
 
         let mut engine: Option<DbServerEngine> = None;
         let mut version: Option<String> = None;
-        let mut secret: Option<String> = None;
+        let mut secret: Option<SecretName> = None;
 
         if let Some(children) = node.children() {
             for child in children.nodes() {
@@ -362,10 +352,6 @@ impl ValidateConfig for DbServerConfig {
             return Err("db version must not be empty".into());
         }
 
-        if !secret_name(&self.secret) {
-            return Err(format!("invalid secret name '{}'", self.secret));
-        }
-
         Ok(())
     }
 }
@@ -401,7 +387,7 @@ mod tests {
         .unwrap();
         assert_eq!(cfg.server.as_str(), "pg-main");
         assert_eq!(cfg.user, "app1");
-        assert_eq!(cfg.secret, "app1-pass");
+        assert_eq!(cfg.secret.as_str(), "app1-pass");
     }
 
     #[test]
@@ -418,7 +404,7 @@ mod tests {
         .unwrap();
         assert_eq!(cfg.engine, DbServerEngine::Postgresql);
         assert_eq!(cfg.version, "18-alpine");
-        assert_eq!(cfg.secret, "pg-pass");
+        assert_eq!(cfg.secret.as_str(), "pg-pass");
     }
 
     #[test]
@@ -586,29 +572,59 @@ mod tests {
         let config = DbServerConfig {
             engine: DbServerEngine::Postgresql,
             version: " ".into(),
-            secret: "pg-pass".into(),
+            secret: SecretName::new("pg-pass").unwrap(),
         };
         assert!(config.validate_config().is_err());
     }
 
     #[test]
-    fn reject_invalid_secret_name() {
-        let config = DbServerConfig {
-            engine: DbServerEngine::Postgresql,
-            version: "18".into(),
-            secret: "Bad/Name".into(),
-        };
-        assert!(config.validate_config().is_err());
+    fn db_config_rejects_invalid_secret_at_parse() {
+        let err = parse_db(
+            r#"
+            db {
+                server "pg-main"
+                user "app1"
+                secret "Bad/Name/"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidValue { .. },
+                    ..
+                } if name == "secret",
+            ),
+            "unexpected error: {err:?}",
+        );
     }
 
     #[test]
-    fn db_config_rejects_invalid_secret() {
-        let bad_secret = DbConfig {
-            server: ResourceName::new("pg-main"),
-            user: "app1".into(),
-            secret: "Bad/Secret/".into(),
-        };
-        assert!(bad_secret.validate_config().is_err());
+    fn db_server_config_rejects_invalid_secret_at_parse() {
+        let err = parse_db_server(
+            r#"
+            db-server {
+                engine "postgresql"
+                version "18"
+                secret "Bad/Name/"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidValue { .. },
+                    ..
+                } if name == "secret",
+            ),
+            "unexpected error: {err:?}",
+        );
     }
 
     #[test]
@@ -641,7 +657,7 @@ mod tests {
         let config = DbConfig {
             server: ResourceName::new("pg-main"),
             user: "app1".into(),
-            secret: "app1-pass".into(),
+            secret: SecretName::new("app1-pass").unwrap(),
         };
         let err = config
             .resolve_export(&MainContext::default(), "app-db", "unknown")
@@ -686,7 +702,7 @@ db-server {
         let config = DbConfig {
             server: ResourceName::new("pg-main"),
             user: "app1".into(),
-            secret: "app1-pass".into(),
+            secret: SecretName::new("app1-pass").unwrap(),
         };
 
         assert_eq!(
@@ -756,7 +772,7 @@ db-server {
         let config = DbConfig {
             server: ResourceName::new("maria-main"),
             user: "app1".into(),
-            secret: "app1-pass".into(),
+            secret: SecretName::new("app1-pass").unwrap(),
         };
 
         assert_eq!(

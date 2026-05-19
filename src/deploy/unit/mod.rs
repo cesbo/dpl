@@ -117,7 +117,7 @@ impl ValidateConfig for UnitConfig {
     fn validate_config(&self) -> Result<(), String> {
         match self {
             UnitConfig::App(config) => config.validate_config(),
-            UnitConfig::Db(config) => config.validate_config(),
+            UnitConfig::Db(_) => Ok(()),
             UnitConfig::DbServer(config) => config.validate_config(),
             UnitConfig::Domain(config) => config.validate_config(),
         }
@@ -489,9 +489,12 @@ app {
     fn save_roundtrip_db_server() {
         use tempfile::TempDir;
 
-        use crate::deploy::unit::db::{
-            DbServerConfig,
-            DbServerEngine,
+        use crate::{
+            config::SecretName,
+            deploy::unit::db::{
+                DbServerConfig,
+                DbServerEngine,
+            },
         };
 
         let base = TempDir::new().unwrap();
@@ -503,7 +506,7 @@ app {
         let original = UnitConfig::DbServer(DbServerConfig {
             engine: DbServerEngine::Postgresql,
             version: "18-alpine".into(),
-            secret: "pg-pass".into(),
+            secret: SecretName::new("pg-pass").unwrap(),
         });
         original.save(&ctx, "pg-main").unwrap();
 
@@ -518,9 +521,12 @@ app {
     fn save_rejects_invalid_name() {
         use tempfile::TempDir;
 
-        use crate::deploy::unit::db::{
-            DbServerConfig,
-            DbServerEngine,
+        use crate::{
+            config::SecretName,
+            deploy::unit::db::{
+                DbServerConfig,
+                DbServerEngine,
+            },
         };
 
         let base = TempDir::new().unwrap();
@@ -532,7 +538,7 @@ app {
         let unit = UnitConfig::DbServer(DbServerConfig {
             engine: DbServerEngine::Postgresql,
             version: "18".into(),
-            secret: "pg-pass".into(),
+            secret: SecretName::new("pg-pass").unwrap(),
         });
         assert!(matches!(
             unit.save(&ctx, "Bad/Name"),
