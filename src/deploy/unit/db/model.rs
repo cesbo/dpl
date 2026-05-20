@@ -329,19 +329,31 @@ impl FromKdlNode for DbServerConfig {
             }
         }
 
-        Ok(DbServerConfig {
-            engine: engine.ok_or(NodeError::MissingField {
+        let Some(engine) = engine else {
+            return Err(NodeError::MissingField {
                 name: "engine",
                 span: node.span(),
-            })?,
-            version: version.ok_or(NodeError::MissingField {
+            });
+        };
+
+        let Some(version) = version else {
+            return Err(NodeError::MissingField {
                 name: "version",
                 span: node.span(),
-            })?,
-            secret: secret.ok_or(NodeError::MissingField {
+            });
+        };
+
+        let Some(secret) = secret else {
+            return Err(NodeError::MissingField {
                 name: "secret",
                 span: node.span(),
-            })?,
+            });
+        };
+
+        Ok(DbServerConfig {
+            engine,
+            version,
+            secret,
         })
     }
 }

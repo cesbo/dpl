@@ -353,6 +353,13 @@ impl FromKdlNode for DomainConfig {
             });
         }
 
+        if routes.is_empty() {
+            return Err(NodeError::MissingField {
+                name: "route",
+                span: node.span(),
+            });
+        }
+
         Ok(DomainConfig {
             hosts,
             proxy,
