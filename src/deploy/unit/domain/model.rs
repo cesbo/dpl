@@ -43,25 +43,6 @@ pub enum ProxyConfig {
     },
 }
 
-impl ValidateConfig for ProxyConfig {
-    fn validate_config(&self) -> Result<(), String> {
-        match self {
-            ProxyConfig::Cloudflare | ProxyConfig::Fastly => Ok(()),
-            ProxyConfig::Custom { header, proxies } => {
-                if header.is_empty() {
-                    return Err("custom header must not be empty".into());
-                }
-
-                if proxies.is_empty() {
-                    return Err("custom proxies must not be empty".into());
-                }
-
-                Ok(())
-            }
-        }
-    }
-}
-
 impl ProxyConfig {
     pub fn to_kdl_node(&self) -> KdlNode {
         let mut node = KdlNode::new("proxy");
@@ -120,13 +101,21 @@ impl FromKdlNode for ProxyConfig {
                     }
                 }
 
-                Ok(ProxyConfig::Custom {
-                    header: header.ok_or(NodeError::MissingField {
+                let Some(header) = header else {
+                    return Err(NodeError::MissingField {
                         name: "header",
                         span: node.span(),
-                    })?,
-                    proxies,
-                })
+                    });
+                };
+
+                if proxies.is_empty() {
+                    return Err(NodeError::MissingField {
+                        name: "ip",
+                        span: node.span(),
+                    });
+                }
+
+                Ok(ProxyConfig::Custom { header, proxies })
             }
             other => Err(NodeError::UnknownVariant {
                 field: node.name().value().to_owned(),
@@ -282,10 +271,6 @@ impl FromKdlNode for RouteConfig {
 
 impl ValidateConfig for DomainConfig {
     fn validate_config(&self) -> Result<(), String> {
-        if let Some(proxy) = &self.proxy {
-            proxy.validate_config()?;
-        }
-
         for route in &self.routes {
             if !url_path(route.path()) {
                 return Err(format!("invalid route path: '{}'", route.path()));
