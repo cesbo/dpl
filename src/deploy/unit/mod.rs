@@ -24,7 +24,6 @@ use crate::{
         FromKdlNode,
         NodeError,
         ResourceName,
-        ValidateConfig,
     },
     error::{
         Location,
@@ -83,7 +82,7 @@ impl TryFrom<&KdlDocument> for UnitConfig {
         let nodes = doc.nodes();
         let Some(first) = nodes.first() else {
             return Err(NodeError::MissingField {
-                name: "unit type",
+                name: "unit type".to_owned(),
                 span: SourceSpan::new(0.into(), 0),
             });
         };
@@ -110,17 +109,6 @@ impl TryFrom<&KdlDocument> for UnitConfig {
     }
 }
 
-impl ValidateConfig for UnitConfig {
-    fn validate_config(&self) -> Result<(), String> {
-        match self {
-            UnitConfig::App(config) => config.validate_config(),
-            UnitConfig::Db(_) => Ok(()),
-            UnitConfig::DbServer(_) => Ok(()),
-            UnitConfig::Domain(_) => Ok(()),
-        }
-    }
-}
-
 impl UnitConfig {
     pub fn load(ctx: &MainContext, name: &ResourceName) -> Result<Self, UnitConfigError> {
         let wrap = |source| UnitConfigError::Config {
@@ -142,11 +130,8 @@ impl UnitConfig {
         let doc: KdlDocument = content
             .parse()
             .map_err(|e| wrap(ConfigError::Parse(Box::new(e))))?;
-        let config = Self::try_from(&doc).map_err(|e| wrap(ConfigError::Semantic(Box::new(e))))?;
-        config
-            .validate_config()
-            .map_err(|e| wrap(ConfigError::Invalid(e)))?;
-        Ok(config)
+
+        Self::try_from(&doc).map_err(|e| wrap(ConfigError::Semantic(Box::new(e))))
     }
 
     pub fn save(&self, ctx: &MainContext, name: &ResourceName) -> Result<(), UnitConfigError> {
@@ -255,7 +240,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ValidateConfig;
 
     fn parse_unit_doc(src: &str) -> Result<UnitConfig, NodeError> {
         let doc: KdlDocument = src.parse().expect("test KDL must parse");
@@ -380,7 +364,6 @@ mod tests {
         .unwrap();
 
         assert!(matches!(config, UnitConfig::Domain(_)));
-        assert!(config.validate_config().is_ok());
     }
 
     #[test]

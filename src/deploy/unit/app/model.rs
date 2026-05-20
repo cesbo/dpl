@@ -7,13 +7,13 @@ use kdl::{
 use crate::{
     MainContext,
     config::{
+        FieldError,
         FromKdlNode,
         NodeError,
+        NodeField,
+        NodeList,
         ResourceName,
-        ValidateConfig,
         integer_node,
-        push_field,
-        set_field,
         string_node,
     },
     deploy::{
@@ -25,7 +25,6 @@ use crate::{
         RefError,
     },
     kdl_args,
-    validate,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -91,20 +90,6 @@ pub struct TimerConfig {
     pub schedule: String,
     /// Script to run
     pub script: String,
-}
-
-impl ValidateConfig for TimerConfig {
-    fn validate_config(&self) -> Result<(), String> {
-        if self.schedule.is_empty() {
-            return Err(format!("timer '{}' has empty schedule", self.name));
-        }
-
-        if self.script.is_empty() {
-            return Err(format!("timer '{}' has empty script", self.name));
-        }
-
-        Ok(())
-    }
 }
 
 impl VolumeConfig {
@@ -182,19 +167,19 @@ impl FromKdlNode for BuildConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         kdl_args!(node)?;
 
-        let mut description: Option<String> = None;
-        let mut files: Vec<String> = Vec::new();
-        let mut env: Option<EnvList> = None;
-        let mut script: Option<String> = None;
+        let mut description = NodeField::<String>::new("description");
+        let mut files = NodeList::<String>::new("file");
+        let mut env = NodeField::<EnvList>::new("env");
+        let mut script = NodeField::<String>::new("script");
 
         if let Some(children) = node.children() {
             for child in children.nodes() {
                 let name = child.name().value();
                 match name {
-                    "description" => set_field(&mut description, child)?,
-                    "file" => push_field(&mut files, child)?,
-                    "env" => set_field(&mut env, child)?,
-                    "script" => set_field(&mut script, child)?,
+                    "description" => description.set(child)?,
+                    "file" => files.push(child)?,
+                    "env" => env.set(child)?,
+                    "script" => script.set(child)?,
                     _ => {
                         return Err(NodeError::UnknownField {
                             name: name.to_owned(),
@@ -206,10 +191,10 @@ impl FromKdlNode for BuildConfig {
         }
 
         Ok(BuildConfig {
-            description,
-            files,
-            env: env.unwrap_or_default(),
-            script,
+            description: description.take_optional(),
+            files: files.take_optional(),
+            env: env.take_optional().unwrap_or_default(),
+            script: script.take_optional(),
         })
     }
 }
@@ -234,17 +219,17 @@ impl FromKdlNode for RuntimeConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         kdl_args!(node)?;
 
-        let mut env: Option<EnvList> = None;
-        let mut init: Option<String> = None;
-        let mut cmd: Option<String> = None;
+        let mut env = NodeField::<EnvList>::new("env");
+        let mut init = NodeField::<String>::new("init");
+        let mut cmd = NodeField::<String>::new("cmd");
 
         if let Some(children) = node.children() {
             for child in children.nodes() {
                 let name = child.name().value();
                 match name {
-                    "env" => set_field(&mut env, child)?,
-                    "init" => set_field(&mut init, child)?,
-                    "cmd" => set_field(&mut cmd, child)?,
+                    "env" => env.set(child)?,
+                    "init" => init.set(child)?,
+                    "cmd" => cmd.set(child)?,
                     _ => {
                         return Err(NodeError::UnknownField {
                             name: name.to_owned(),
@@ -256,12 +241,9 @@ impl FromKdlNode for RuntimeConfig {
         }
 
         Ok(RuntimeConfig {
-            env: env.unwrap_or_default(),
-            init,
-            cmd: cmd.ok_or(NodeError::MissingField {
-                name: "cmd",
-                span: node.span(),
-            })?,
+            env: env.take_optional().unwrap_or_default(),
+            init: init.take_optional(),
+            cmd: cmd.take_required(node)?,
         })
     }
 }
@@ -286,15 +268,33 @@ impl FromKdlNode for TimerConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         let name = kdl_args!(node, name: ResourceName)?;
 
-        let mut schedule: Option<String> = None;
-        let mut script: Option<String> = None;
+        let mut schedule = NodeField::<String>::new("schedule");
+        let mut script = NodeField::<String>::new("script");
 
         if let Some(children) = node.children() {
             for child in children.nodes() {
                 let name = child.name().value();
                 match name {
-                    "schedule" => set_field(&mut schedule, child)?,
-                    "script" => set_field(&mut script, child)?,
+                    "schedule" => schedule.set_with(child, |value| {
+                        if value.trim().is_empty() {
+                            Err(FieldError::InvalidValue {
+                                expected: "non-empty",
+                                span: child.span(),
+                            })
+                        } else {
+                            Ok(())
+                        }
+                    })?,
+                    "script" => script.set_with(child, |value| {
+                        if value.trim().is_empty() {
+                            Err(FieldError::InvalidValue {
+                                expected: "non-empty",
+                                span: child.span(),
+                            })
+                        } else {
+                            Ok(())
+                        }
+                    })?,
                     _ => {
                         return Err(NodeError::UnknownField {
                             name: name.to_owned(),
@@ -307,14 +307,8 @@ impl FromKdlNode for TimerConfig {
 
         Ok(TimerConfig {
             name,
-            schedule: schedule.ok_or(NodeError::MissingField {
-                name: "schedule",
-                span: node.span(),
-            })?,
-            script: script.ok_or(NodeError::MissingField {
-                name: "script",
-                span: node.span(),
-            })?,
+            schedule: schedule.take_required(node)?,
+            script: script.take_required(node)?,
         })
     }
 }
@@ -323,27 +317,27 @@ impl FromKdlNode for AppConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         kdl_args!(node)?;
 
-        let mut image: Option<String> = None;
-        let mut port: Option<u16> = None;
-        let mut runtime: Option<RuntimeConfig> = None;
-        let mut build: Vec<BuildConfig> = Vec::new();
-        let mut volumes: Vec<VolumeConfig> = Vec::new();
-        let mut exports: Vec<ExportConfig> = Vec::new();
-        let mut timers: Vec<TimerConfig> = Vec::new();
-        let mut databases: Vec<ResourceName> = Vec::new();
+        let mut image = NodeField::<String>::new("image");
+        let mut port = NodeField::<u16>::new("port");
+        let mut runtime = NodeField::<RuntimeConfig>::new("runtime");
+        let mut build = NodeList::<BuildConfig>::new("build");
+        let mut volumes = NodeList::<VolumeConfig>::new("volumes");
+        let mut exports = NodeList::<ExportConfig>::new("exports");
+        let mut timers = NodeList::<TimerConfig>::new("timers");
+        let mut databases = NodeList::<ResourceName>::new("databases");
 
         if let Some(children) = node.children() {
             for child in children.nodes() {
                 let name = child.name().value();
                 match name {
-                    "image" => set_field(&mut image, child)?,
-                    "port" => set_field(&mut port, child)?,
-                    "runtime" => set_field(&mut runtime, child)?,
-                    "build" => push_field(&mut build, child)?,
-                    "volume" => push_field(&mut volumes, child)?,
-                    "export" => push_field(&mut exports, child)?,
-                    "timer" => push_field(&mut timers, child)?,
-                    "database" => push_field(&mut databases, child)?,
+                    "image" => image.set(child)?,
+                    "port" => port.set(child)?,
+                    "runtime" => runtime.set(child)?,
+                    "build" => build.push(child)?,
+                    "volume" => volumes.push(child)?,
+                    "export" => exports.push(child)?,
+                    "timer" => timers.push(child)?,
+                    "database" => databases.push(child)?,
                     _ => {
                         return Err(NodeError::UnknownField {
                             name: name.to_owned(),
@@ -355,23 +349,14 @@ impl FromKdlNode for AppConfig {
         }
 
         Ok(AppConfig {
-            image: image.ok_or(NodeError::MissingField {
-                name: "image",
-                span: node.span(),
-            })?,
-            port: port.ok_or(NodeError::MissingField {
-                name: "port",
-                span: node.span(),
-            })?,
-            runtime: runtime.ok_or(NodeError::MissingField {
-                name: "runtime",
-                span: node.span(),
-            })?,
-            build,
-            volumes,
-            exports,
-            timers,
-            databases,
+            image: image.take_required(node)?,
+            port: port.take_required(node)?,
+            runtime: runtime.take_required(node)?,
+            build: build.take_optional(),
+            volumes: volumes.take_optional(),
+            exports: exports.take_optional(),
+            timers: timers.take_optional(),
+            databases: databases.take_optional(),
         })
     }
 }
@@ -451,22 +436,6 @@ impl AppConfig {
                 key: key.to_owned(),
             }),
         }
-    }
-}
-
-impl ValidateConfig for AppConfig {
-    fn validate_config(&self) -> Result<(), String> {
-        for timer in &self.timers {
-            timer.validate_config()?;
-        }
-
-        for export in &self.exports {
-            if !validate::url_path(&export.path) {
-                return Err(format!("invalid export path: '{}'", export.path));
-            }
-        }
-
-        Ok(())
     }
 }
 
@@ -630,7 +599,7 @@ mod tests {
                     name,
                     source: FieldError::InvalidType { expected: "string", .. },
                     ..
-                } if name == "source",
+                } if name == "volume",
             ),
             "unexpected error: {err:?}",
         );
@@ -646,7 +615,7 @@ mod tests {
                     name,
                     source: FieldError::InvalidType { expected: "string", .. },
                     ..
-                } if name == "path",
+                } if name == "volume",
             ),
             "unexpected error: {err:?}",
         );
@@ -712,7 +681,7 @@ mod tests {
                     name,
                     source: FieldError::InvalidType { expected: "string", .. },
                     ..
-                } if name == "path",
+                } if name == "export",
             ),
             "unexpected error: {err:?}",
         );
@@ -884,7 +853,7 @@ mod tests {
                     name,
                     source: FieldError::NamedEntry { .. },
                     ..
-                } if name == "name",
+                } if name == "timer",
             ),
             "unexpected error: {err:?}",
         );
@@ -908,7 +877,7 @@ mod tests {
                     name,
                     source: FieldError::InvalidType { expected: "string", .. },
                     ..
-                } if name == "name",
+                } if name == "timer",
             ),
             "unexpected error: {err:?}",
         );
@@ -932,7 +901,7 @@ mod tests {
                     name,
                     source: FieldError::InvalidValue { .. },
                     ..
-                } if name == "name",
+                } if name == "timer",
             ),
             "unexpected error: {err:?}",
         );

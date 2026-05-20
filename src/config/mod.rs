@@ -13,9 +13,3 @@ pub use self::{
     resource_name::ResourceName,
     secret_name::SecretName,
 };
-
-pub trait ValidateConfig {
-    fn validate_config(&self) -> Result<(), String> {
-        Ok(())
-    }
-}

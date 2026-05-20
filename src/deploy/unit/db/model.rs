@@ -15,7 +15,7 @@ use crate::{
         FieldError,
         FromKdlNode,
         NodeError,
-        NodeValue,
+        NodeField,
         ResourceName,
         SecretName,
         reject_children,
@@ -130,9 +130,9 @@ impl FromKdlNode for DbConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         kdl_args!(node)?;
 
-        let mut server = NodeValue::<ResourceName>::new("server");
-        let mut user = NodeValue::<String>::new("user");
-        let mut secret = NodeValue::<SecretName>::new("secret");
+        let mut server = NodeField::<ResourceName>::new("server");
+        let mut user = NodeField::<String>::new("user");
+        let mut secret = NodeField::<SecretName>::new("secret");
 
         if let Some(children) = node.children() {
             for child in children.nodes() {
@@ -299,9 +299,9 @@ impl FromKdlNode for DbServerConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         kdl_args!(node)?;
 
-        let mut engine = NodeValue::<DbServerEngine>::new("engine");
-        let mut version = NodeValue::<String>::new("version");
-        let mut secret = NodeValue::<SecretName>::new("secret");
+        let mut engine = NodeField::<DbServerEngine>::new("engine");
+        let mut version = NodeField::<String>::new("version");
+        let mut secret = NodeField::<SecretName>::new("secret");
 
         if let Some(children) = node.children() {
             for child in children.nodes() {

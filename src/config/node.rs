@@ -129,28 +129,6 @@ impl FromKdlNode for u16 {
     }
 }
 
-/// Assign `child` into `target`, dispatching to `T::from_kdl_node`.
-/// Rejects re-assignment with `DuplicateField`.
-pub fn set_field<T: FromKdlNode>(target: &mut Option<T>, child: &KdlNode) -> Result<(), NodeError> {
-    if target.is_some() {
-        return Err(NodeError::DuplicateField {
-            name: child.name().value().to_owned(),
-            span: child.span(),
-        });
-    }
-
-    *target = Some(T::from_kdl_node(child)?);
-    Ok(())
-}
-
-/// Append `child` to `target`, dispatching to `T::from_kdl_node`. Used for
-/// fields where the same child name may appear repeatedly (e.g. `file
-/// "a"; file "b"`).
-pub fn push_field<T: FromKdlNode>(target: &mut Vec<T>, child: &KdlNode) -> Result<(), NodeError> {
-    target.push(T::from_kdl_node(child)?);
-    Ok(())
-}
-
 /// Reject any child block on `node`. The first child node is reported as
 /// `UnknownField`. Used by parsers that allow no children at all (e.g. bare
 /// enum variants like `proxy cloudflare`).
@@ -164,19 +142,21 @@ pub fn reject_children(node: &KdlNode) -> Result<(), NodeError> {
     Ok(())
 }
 
-pub struct NodeValue<T> {
+pub struct NodeField<T> {
     name: &'static str,
     value: Option<T>,
 }
 
-impl<T> NodeValue<T>
+impl<T> NodeField<T>
 where
     T: FromKdlNode,
 {
     pub fn new(name: &'static str) -> Self {
-        NodeValue { name, value: None }
+        NodeField { name, value: None }
     }
 
+    /// Parses `node` with `T::from_kdl_node` and stores the result.
+    /// Returns `DuplicateField` if the value is already set.
     pub fn set(&mut self, node: &KdlNode) -> Result<(), NodeError> {
         if self.value.is_some() {
             return Err(NodeError::DuplicateField {
@@ -184,24 +164,33 @@ where
                 span: node.span(),
             });
         }
-        self.value = Some(T::from_kdl_node(node)?);
+        let value = T::from_kdl_node(node)?;
+
+        self.value = Some(value);
         Ok(())
     }
 
+    /// Parses `node` with `T::from_kdl_node`, validates it, and stores the result.
+    /// Returns `DuplicateField` if the value is already set.
     pub fn set_with<F>(&mut self, node: &KdlNode, validate: F) -> Result<(), NodeError>
     where
         F: FnOnce(&T) -> Result<(), FieldError>,
     {
-        self.set(node)?;
-
-        if let Some(value) = &self.value {
-            validate(value).map_err(|source| NodeError::InvalidField {
+        if self.value.is_some() {
+            return Err(NodeError::DuplicateField {
                 name: node.name().value().to_owned(),
                 span: node.span(),
-                source,
-            })?;
+            });
         }
+        let value = T::from_kdl_node(node)?;
 
+        validate(&value).map_err(|source| NodeError::InvalidField {
+            name: node.name().value().to_owned(),
+            span: node.span(),
+            source,
+        })?;
+
+        self.value = Some(value);
         Ok(())
     }
 
@@ -210,6 +199,67 @@ where
             name: self.name.to_owned(),
             span: parent.span(),
         })
+    }
+
+    pub fn take_optional(self) -> Option<T> {
+        self.value
+    }
+}
+
+pub struct NodeList<T> {
+    name: &'static str,
+    list: Vec<T>,
+}
+
+impl<T> NodeList<T>
+where
+    T: FromKdlNode,
+{
+    pub fn new(name: &'static str) -> Self {
+        NodeList {
+            name,
+            list: Vec::new(),
+        }
+    }
+
+    /// Parses `node` with `T::from_kdl_node` and appends the result.
+    pub fn push(&mut self, node: &KdlNode) -> Result<(), NodeError> {
+        let value = T::from_kdl_node(node)?;
+        self.list.push(value);
+        Ok(())
+    }
+
+    /// Parses `node` with `T::from_kdl_node`, validates it, and appends the result.
+    #[allow(dead_code)]
+    pub fn push_with<F>(&mut self, node: &KdlNode, validate: F) -> Result<(), NodeError>
+    where
+        F: FnOnce(&T) -> Result<(), FieldError>,
+    {
+        let value = T::from_kdl_node(node)?;
+
+        validate(&value).map_err(|source| NodeError::InvalidField {
+            name: node.name().value().to_owned(),
+            span: node.span(),
+            source,
+        })?;
+
+        self.list.push(value);
+        Ok(())
+    }
+
+    pub fn take_required(self, parent: &KdlNode) -> Result<Vec<T>, NodeError> {
+        if self.list.is_empty() {
+            Err(NodeError::MissingField {
+                name: self.name.to_owned(),
+                span: parent.span(),
+            })
+        } else {
+            Ok(self.list)
+        }
+    }
+
+    pub fn take_optional(self) -> Vec<T> {
+        self.list
     }
 }
 

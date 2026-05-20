@@ -11,9 +11,9 @@ use crate::{
         FromKdlNode,
         HostName,
         NodeError,
-        push_field,
+        NodeField,
+        NodeList,
         reject_children,
-        set_field,
         string_node,
     },
     deploy::env::Value,
@@ -81,15 +81,15 @@ impl FromKdlNode for ProxyConfig {
                 Ok(ProxyConfig::Fastly)
             }
             "custom" => {
-                let mut header: Option<String> = None;
-                let mut proxies: Vec<String> = Vec::new();
+                let mut header = NodeField::<String>::new("header");
+                let mut proxies = NodeList::<String>::new("ip");
 
                 if let Some(children) = node.children() {
                     for child in children.nodes() {
                         let name = child.name().value();
                         match name {
-                            "header" => set_field(&mut header, child)?,
-                            "ip" => push_field(&mut proxies, child)?,
+                            "header" => header.set(child)?,
+                            "ip" => proxies.push(child)?,
                             _ => {
                                 return Err(NodeError::UnknownField {
                                     name: name.to_owned(),
@@ -100,21 +100,10 @@ impl FromKdlNode for ProxyConfig {
                     }
                 }
 
-                let Some(header) = header else {
-                    return Err(NodeError::MissingField {
-                        name: "header",
-                        span: node.span(),
-                    });
-                };
-
-                if proxies.is_empty() {
-                    return Err(NodeError::MissingField {
-                        name: "ip",
-                        span: node.span(),
-                    });
-                }
-
-                Ok(ProxyConfig::Custom { header, proxies })
+                Ok(ProxyConfig::Custom {
+                    header: header.take_required(node)?,
+                    proxies: proxies.take_required(node)?,
+                })
             }
             other => Err(NodeError::UnknownVariant {
                 field: node.name().value().to_owned(),
@@ -195,12 +184,13 @@ impl FromKdlNode for RouteConfig {
 
         match variant.as_str() {
             "reverse_proxy" => {
-                let mut target: Option<Value> = None;
+                let mut target = NodeField::<Value>::new("target");
+
                 if let Some(children) = node.children() {
                     for child in children.nodes() {
                         let name = child.name().value();
                         match name {
-                            "target" => set_field(&mut target, child)?,
+                            "target" => target.set(child)?,
                             _ => {
                                 return Err(NodeError::UnknownField {
                                     name: name.to_owned(),
@@ -210,23 +200,22 @@ impl FromKdlNode for RouteConfig {
                         }
                     }
                 }
+
                 Ok(RouteConfig::ReverseProxy {
                     location,
-                    target: target.ok_or(NodeError::MissingField {
-                        name: "target",
-                        span: node.span(),
-                    })?,
+                    target: target.take_required(node)?,
                 })
             }
             "serve_files" => {
-                let mut root: Option<Value> = None;
+                let mut root = NodeField::<Value>::new("root");
                 let mut spa = false;
                 let mut spa_seen = false;
+
                 if let Some(children) = node.children() {
                     for child in children.nodes() {
                         let name = child.name().value();
                         match name {
-                            "root" => set_field(&mut root, child)?,
+                            "root" => root.set(child)?,
                             "spa" => {
                                 if spa_seen {
                                     return Err(NodeError::DuplicateField {
@@ -250,10 +239,7 @@ impl FromKdlNode for RouteConfig {
                 }
                 Ok(RouteConfig::ServeFiles {
                     location,
-                    root: root.ok_or(NodeError::MissingField {
-                        name: "root",
-                        span: node.span(),
-                    })?,
+                    root: root.take_required(node)?,
                     spa,
                 })
             }
@@ -308,19 +294,19 @@ impl FromKdlNode for DomainConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         kdl_args!(node)?;
 
-        let mut hosts: Vec<HostName> = Vec::new();
-        let mut proxy: Option<ProxyConfig> = None;
-        let mut custom_config: Option<String> = None;
-        let mut routes: Vec<RouteConfig> = Vec::new();
+        let mut hosts = NodeList::<HostName>::new("host");
+        let mut proxy = NodeField::<ProxyConfig>::new("proxy");
+        let mut custom_config = NodeField::<String>::new("custom-config");
+        let mut routes = NodeList::<RouteConfig>::new("route");
 
         if let Some(children) = node.children() {
             for child in children.nodes() {
                 let name = child.name().value();
                 match name {
-                    "host" => push_field(&mut hosts, child)?,
-                    "proxy" => set_field(&mut proxy, child)?,
-                    "custom-config" => set_field(&mut custom_config, child)?,
-                    "route" => push_field(&mut routes, child)?,
+                    "host" => hosts.push(child)?,
+                    "proxy" => proxy.set(child)?,
+                    "custom-config" => custom_config.set(child)?,
+                    "route" => routes.push(child)?,
                     _ => {
                         return Err(NodeError::UnknownField {
                             name: name.to_owned(),
@@ -331,25 +317,11 @@ impl FromKdlNode for DomainConfig {
             }
         }
 
-        if hosts.is_empty() {
-            return Err(NodeError::MissingField {
-                name: "host",
-                span: node.span(),
-            });
-        }
-
-        if routes.is_empty() {
-            return Err(NodeError::MissingField {
-                name: "route",
-                span: node.span(),
-            });
-        }
-
         Ok(DomainConfig {
-            hosts,
-            proxy,
-            custom_config: custom_config.unwrap_or_default(),
-            routes,
+            hosts: hosts.take_required(node)?,
+            proxy: proxy.take_optional(),
+            custom_config: custom_config.take_optional().unwrap_or_default(),
+            routes: routes.take_required(node)?,
         })
     }
 }
@@ -540,7 +512,7 @@ mod tests {
                     name,
                     source: FieldError::NamedEntry { .. },
                     ..
-                } if name == "variant",
+                } if name == "proxy",
             ),
             "unexpected error: {err:?}",
         );
@@ -556,7 +528,7 @@ mod tests {
                     name,
                     source: FieldError::InvalidType { expected: "string", .. },
                     ..
-                } if name == "variant",
+                } if name == "proxy",
             ),
             "unexpected error: {err:?}",
         );
@@ -656,7 +628,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(err, NodeError::MissingField { name: "target", .. }),
+            matches!(&err, NodeError::MissingField { name, .. } if name == "target"),
             "unexpected error: {err:?}",
         );
     }
@@ -672,7 +644,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(err, NodeError::MissingField { name: "root", .. }),
+            matches!(&err, NodeError::MissingField { name, .. } if name == "root"),
             "unexpected error: {err:?}",
         );
     }
@@ -998,7 +970,7 @@ mod tests {
     fn domain_rejects_empty_hosts() {
         let err = parse_domain("domain {}").unwrap_err();
         assert!(
-            matches!(err, NodeError::MissingField { name: "host", .. }),
+            matches!(&err, NodeError::MissingField { name, .. } if name == "host"),
             "unexpected error: {err:?}",
         );
     }
@@ -1043,7 +1015,7 @@ mod tests {
                     name,
                     source: FieldError::InvalidValue { .. },
                     ..
-                } if name == "location",
+                } if name == "route",
             ),
             "unexpected error: {err:?}",
         );

@@ -183,7 +183,7 @@ mod tests {
                     name,
                     source: FieldError::InvalidType { expected: "string", .. },
                     ..
-                } if name == "name",
+                } if name == "timer",
             ),
             "unexpected: {err:?}",
         );
@@ -200,7 +200,7 @@ mod tests {
                     name,
                     source: FieldError::NamedEntry { .. },
                     ..
-                } if name == "name",
+                } if name == "timer",
             ),
             "unexpected: {err:?}",
         );

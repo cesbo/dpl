@@ -225,7 +225,7 @@ mod tests {
                     name,
                     source: FieldError::InvalidValue { .. },
                     ..
-                } if name == "name",
+                } if name == "timer",
             ),
             "unexpected: {err:?}",
         );
