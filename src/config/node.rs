@@ -110,7 +110,7 @@ where
 /// `TryFrom<&KdlNode>`. The String impl below is the reason a local
 /// trait exists at all (orphan rules block `impl TryFrom<&KdlNode> for
 /// String`).
-pub(crate) trait FromKdlNode: Sized {
+pub trait FromKdlNode: Sized {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError>;
 }
 
@@ -162,6 +162,55 @@ pub fn reject_children(node: &KdlNode) -> Result<(), NodeError> {
         });
     }
     Ok(())
+}
+
+pub struct NodeValue<T> {
+    name: &'static str,
+    value: Option<T>,
+}
+
+impl<T> NodeValue<T>
+where
+    T: FromKdlNode,
+{
+    pub fn new(name: &'static str) -> Self {
+        NodeValue { name, value: None }
+    }
+
+    pub fn set(&mut self, node: &KdlNode) -> Result<(), NodeError> {
+        if self.value.is_some() {
+            return Err(NodeError::DuplicateField {
+                name: node.name().value().to_owned(),
+                span: node.span(),
+            });
+        }
+        self.value = Some(T::from_kdl_node(node)?);
+        Ok(())
+    }
+
+    pub fn set_with<F>(&mut self, node: &KdlNode, validate: F) -> Result<(), NodeError>
+    where
+        F: FnOnce(&T) -> Result<(), FieldError>,
+    {
+        self.set(node)?;
+
+        if let Some(value) = &self.value {
+            validate(value).map_err(|source| NodeError::InvalidField {
+                name: node.name().value().to_owned(),
+                span: node.span(),
+                source,
+            })?;
+        }
+
+        Ok(())
+    }
+
+    pub fn take_required(self, parent: &KdlNode) -> Result<T, NodeError> {
+        self.value.ok_or_else(|| NodeError::MissingFieldNew {
+            name: self.name.to_owned(),
+            span: parent.span(),
+        })
+    }
 }
 
 #[cfg(test)]

@@ -81,11 +81,15 @@ pub enum NodeError {
     #[error("duplicate field '{name}'")]
     DuplicateField { name: String, span: SourceSpan },
 
+    // TODO: deprecated. remove it and rename MissingFieldNew to MissingField
     #[error("missing required field '{name}'")]
     MissingField {
         name: &'static str,
         span: SourceSpan,
     },
+
+    #[error("missing required field '{name}'")]
+    MissingFieldNew { name: String, span: SourceSpan },
 
     #[error("invalid field '{name}': {source}")]
     InvalidField {

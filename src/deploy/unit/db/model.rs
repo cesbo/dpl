@@ -12,11 +12,12 @@ use percent_encoding::{
 use crate::{
     MainContext,
     config::{
+        FieldError,
         FromKdlNode,
         NodeError,
+        NodeValue,
         ResourceName,
         SecretName,
-        ValidateConfig,
         reject_children,
         set_field,
         string_node,
@@ -308,17 +309,28 @@ impl FromKdlNode for DbServerConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         kdl_args!(node)?;
 
-        let mut engine: Option<DbServerEngine> = None;
-        let mut version: Option<String> = None;
-        let mut secret: Option<SecretName> = None;
+        let mut engine = NodeValue::<DbServerEngine>::new("engine");
+        let mut version = NodeValue::<String>::new("version");
+        let mut secret = NodeValue::<SecretName>::new("secret");
 
         if let Some(children) = node.children() {
             for child in children.nodes() {
                 let name = child.name().value();
                 match name {
-                    "engine" => set_field(&mut engine, child)?,
-                    "version" => set_field(&mut version, child)?,
-                    "secret" => set_field(&mut secret, child)?,
+                    "engine" => engine.set(child)?,
+                    "version" => {
+                        version.set_with(child, |value| {
+                            if value.trim().is_empty() {
+                                Err(FieldError::InvalidValue {
+                                    expected: "non-empty",
+                                    span: child.span(),
+                                })
+                            } else {
+                                Ok(())
+                            }
+                        })?;
+                    }
+                    "secret" => secret.set(child)?,
                     _ => {
                         return Err(NodeError::UnknownField {
                             name: name.to_owned(),
@@ -329,42 +341,11 @@ impl FromKdlNode for DbServerConfig {
             }
         }
 
-        let Some(engine) = engine else {
-            return Err(NodeError::MissingField {
-                name: "engine",
-                span: node.span(),
-            });
-        };
-
-        let Some(version) = version else {
-            return Err(NodeError::MissingField {
-                name: "version",
-                span: node.span(),
-            });
-        };
-
-        let Some(secret) = secret else {
-            return Err(NodeError::MissingField {
-                name: "secret",
-                span: node.span(),
-            });
-        };
-
         Ok(DbServerConfig {
-            engine,
-            version,
-            secret,
+            engine: engine.take_required(node)?,
+            version: version.take_required(node)?,
+            secret: secret.take_required(node)?,
         })
-    }
-}
-
-impl ValidateConfig for DbServerConfig {
-    fn validate_config(&self) -> Result<(), String> {
-        if self.version.trim().is_empty() {
-            return Err("db version must not be empty".into());
-        }
-
-        Ok(())
     }
 }
 
@@ -580,13 +561,28 @@ mod tests {
     }
 
     #[test]
-    fn reject_empty_version() {
-        let config = DbServerConfig {
-            engine: DbServerEngine::Postgresql,
-            version: " ".into(),
-            secret: SecretName::new("pg-pass").unwrap(),
-        };
-        assert!(config.validate_config().is_err());
+    fn kdl_db_server_rejects_empty_version() {
+        let err = parse_db_server(
+            r#"
+            db-server {
+                engine "postgresql"
+                version " "
+                secret "pg-pass"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidValue { .. },
+                    ..
+                } if name == "version",
+            ),
+            "unexpected error: {err:?}",
+        );
     }
 
     #[test]
