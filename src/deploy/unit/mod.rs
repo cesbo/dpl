@@ -116,7 +116,7 @@ impl ValidateConfig for UnitConfig {
             UnitConfig::App(config) => config.validate_config(),
             UnitConfig::Db(_) => Ok(()),
             UnitConfig::DbServer(config) => config.validate_config(),
-            UnitConfig::Domain(config) => config.validate_config(),
+            UnitConfig::Domain(_) => Ok(()),
         }
     }
 }

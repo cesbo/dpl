@@ -16,7 +16,7 @@ server {
 {% endif %}
 {% for route in routes %}
 
-    location {{ route.path }} {
+    location {{ route.location }} {
 {% if route.kind == "reverse_proxy" %}
         proxy_hide_header Cache-Control;
         add_header Cache-Control "private, no-store" always;
@@ -28,7 +28,7 @@ server {
 {% elif route.kind == "serve_files" %}
         root {{ route.root }};
 {% if route.spa %}
-        try_files $uri $uri/ {{ route.path }}/index.html;
+        try_files $uri $uri/ {{ route.location }}/index.html;
 {% else %}
         try_files $uri $uri/ =404;
 {% endif %}

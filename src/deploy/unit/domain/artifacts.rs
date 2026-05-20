@@ -10,10 +10,13 @@ use minijinja::{
 };
 use serde::Serialize;
 
-use super::model::{
-    DomainConfig,
-    ProxyConfig,
-    RouteConfig,
+use super::{
+    RouteLocation,
+    model::{
+        DomainConfig,
+        ProxyConfig,
+        RouteConfig,
+    },
 };
 use crate::{
     MainContext,
@@ -106,11 +109,11 @@ impl<'a> RenderProxy<'a> {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum RenderRoute<'a> {
     ReverseProxy {
-        path: &'a str,
+        location: &'a RouteLocation,
         target: String,
     },
     ServeFiles {
-        path: &'a str,
+        location: &'a RouteLocation,
         root: String,
         spa: bool,
     },
@@ -118,16 +121,26 @@ enum RenderRoute<'a> {
 
 impl<'a> RenderRoute<'a> {
     fn new(ctx: &MainContext, route: &'a RouteConfig) -> Result<RenderRoute<'a>, RefError> {
-        Ok(match route {
-            RouteConfig::ReverseProxy { path, target } => RenderRoute::ReverseProxy {
-                path: path.as_str(),
-                target: target.render(ctx)?,
-            },
-            RouteConfig::ServeFiles { path, root, spa } => RenderRoute::ServeFiles {
-                path: path.as_str(),
-                root: root.render(ctx)?,
-                spa: *spa,
-            },
-        })
+        match route {
+            RouteConfig::ReverseProxy { location, target } => {
+                let render_route = RenderRoute::ReverseProxy {
+                    location,
+                    target: target.render(ctx)?,
+                };
+                Ok(render_route)
+            }
+            RouteConfig::ServeFiles {
+                location,
+                root,
+                spa,
+            } => {
+                let render_route = RenderRoute::ServeFiles {
+                    location,
+                    root: root.render(ctx)?,
+                    spa: *spa,
+                };
+                Ok(render_route)
+            }
+        }
     }
 }

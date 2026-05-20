@@ -4,13 +4,13 @@ use kdl::{
     KdlNode,
 };
 
+use super::RouteLocation;
 use crate::{
     MainContext,
     config::{
         FromKdlNode,
         HostName,
         NodeError,
-        ValidateConfig,
         push_field,
         reject_children,
         set_field,
@@ -22,7 +22,6 @@ use crate::{
         RefError,
     },
     kdl_args,
-    validate::url_path,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -133,14 +132,14 @@ impl FromKdlNode for ProxyConfig {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RouteConfig {
     ReverseProxy {
-        /// URL path prefix (e.g. "/billing")
-        path: String,
+        /// URL location prefix (e.g. "/billing")
+        location: RouteLocation,
         /// Upstream URL (e.g. "http://127.0.0.1:8000")
         target: Value,
     },
     ServeFiles {
-        /// URL path prefix (e.g. "/billing/static")
-        path: String,
+        /// URL location prefix (e.g. "/billing/static")
+        location: RouteLocation,
         /// Filesystem root
         root: Value,
         /// Single Page Application fallback
@@ -149,29 +148,27 @@ pub enum RouteConfig {
 }
 
 impl RouteConfig {
-    pub fn path(&self) -> &str {
-        match self {
-            RouteConfig::ReverseProxy { path, .. } | RouteConfig::ServeFiles { path, .. } => path,
-        }
-    }
-
     pub fn to_kdl_node(&self) -> KdlNode {
         let mut node = KdlNode::new("route");
         match self {
-            RouteConfig::ReverseProxy { path, target } => {
+            RouteConfig::ReverseProxy { location, target } => {
                 node.entries_mut()
                     .push(KdlEntry::new("reverse_proxy".to_owned()));
-                node.entries_mut().push(KdlEntry::new(path.clone()));
+                node.entries_mut().push(KdlEntry::from(location));
                 let mut children = KdlDocument::new();
                 children
                     .nodes_mut()
                     .push(string_node("target", &target.as_template()));
                 node.set_children(children);
             }
-            RouteConfig::ServeFiles { path, root, spa } => {
+            RouteConfig::ServeFiles {
+                location,
+                root,
+                spa,
+            } => {
                 node.entries_mut()
                     .push(KdlEntry::new("serve_files".to_owned()));
-                node.entries_mut().push(KdlEntry::new(path.clone()));
+                node.entries_mut().push(KdlEntry::from(location));
                 let mut children = KdlDocument::new();
                 children
                     .nodes_mut()
@@ -188,7 +185,7 @@ impl RouteConfig {
 
 impl FromKdlNode for RouteConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
-        let (variant, path) = kdl_args!(node, variant: String, path: String)?;
+        let (variant, location) = kdl_args!(node, variant: String, location: RouteLocation)?;
 
         let variant_span = node
             .entries()
@@ -214,7 +211,7 @@ impl FromKdlNode for RouteConfig {
                     }
                 }
                 Ok(RouteConfig::ReverseProxy {
-                    path,
+                    location,
                     target: target.ok_or(NodeError::MissingField {
                         name: "target",
                         span: node.span(),
@@ -252,7 +249,7 @@ impl FromKdlNode for RouteConfig {
                     }
                 }
                 Ok(RouteConfig::ServeFiles {
-                    path,
+                    location,
                     root: root.ok_or(NodeError::MissingField {
                         name: "root",
                         span: node.span(),
@@ -266,18 +263,6 @@ impl FromKdlNode for RouteConfig {
                 span: variant_span,
             }),
         }
-    }
-}
-
-impl ValidateConfig for DomainConfig {
-    fn validate_config(&self) -> Result<(), String> {
-        for route in &self.routes {
-            if !url_path(route.path()) {
-                return Err(format!("invalid route path: '{}'", route.path()));
-            }
-        }
-
-        Ok(())
     }
 }
 
@@ -374,10 +359,7 @@ mod tests {
     use kdl::KdlDocument;
 
     use super::*;
-    use crate::config::{
-        FieldError,
-        ValidateConfig,
-    };
+    use crate::config::FieldError;
 
     fn parse_proxy(src: &str) -> Result<ProxyConfig, NodeError> {
         let doc: KdlDocument = src.parse().expect("test KDL must parse");
@@ -598,7 +580,7 @@ mod tests {
         assert_eq!(
             cfg,
             RouteConfig::ReverseProxy {
-                path: "/api".into(),
+                location: RouteLocation::new("/api").unwrap(),
                 target: Value::parse("http://127.0.0.1:8000").unwrap(),
             },
         );
@@ -617,7 +599,7 @@ mod tests {
         assert_eq!(
             cfg,
             RouteConfig::ReverseProxy {
-                path: "/api".into(),
+                location: RouteLocation::new("/api").unwrap(),
                 target: Value::parse("${backend:url}").unwrap(),
             },
         );
@@ -637,7 +619,7 @@ mod tests {
         assert_eq!(
             cfg,
             RouteConfig::ServeFiles {
-                path: "/static".into(),
+                location: RouteLocation::new("/static").unwrap(),
                 root: Value::parse("/var/www/site").unwrap(),
                 spa: true,
             },
@@ -657,7 +639,7 @@ mod tests {
         assert_eq!(
             cfg,
             RouteConfig::ServeFiles {
-                path: "/static".into(),
+                location: RouteLocation::new("/static").unwrap(),
                 root: Value::parse("/var/www/site").unwrap(),
                 spa: false,
             },
@@ -795,7 +777,7 @@ mod tests {
     }
 
     #[test]
-    fn route_missing_path() {
+    fn route_missing_location() {
         let err = parse_route(
             r#"
             route reverse_proxy {
@@ -805,7 +787,13 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(err, NodeError::MissingArg { name: "path", .. }),
+            matches!(
+                err,
+                NodeError::MissingArg {
+                    name: "location",
+                    ..
+                }
+            ),
             "unexpected error: {err:?}",
         );
     }
@@ -821,7 +809,7 @@ mod tests {
             proxy: None,
             custom_config: String::new(),
             routes: vec![RouteConfig::ReverseProxy {
-                path: "/".into(),
+                location: RouteLocation::new("/").unwrap(),
                 target: Value::parse("http://127.0.0.1:8000").unwrap(),
             }],
         }
@@ -872,7 +860,6 @@ mod tests {
             RouteConfig::ServeFiles { spa, .. } => assert!(*spa),
             _ => panic!("expected serve_files action"),
         }
-        assert!(cfg.validate_config().is_ok());
     }
 
     #[test]
@@ -893,7 +880,6 @@ mod tests {
         assert_eq!(cfg.proxy, None);
         assert_eq!(cfg.custom_config, "");
         assert_eq!(cfg.routes.len(), 1);
-        assert!(cfg.validate_config().is_ok());
     }
 
     #[test]
@@ -1041,12 +1027,25 @@ mod tests {
     }
 
     #[test]
-    fn domain_validate_invalid_route_path() {
-        let mut cfg = sample_domain();
-        cfg.routes = vec![RouteConfig::ReverseProxy {
-            path: "no-leading-slash".into(),
-            target: Value::parse("http://127.0.0.1:8000").unwrap(),
-        }];
-        assert!(cfg.validate_config().is_err());
+    fn route_rejects_invalid_location() {
+        let err = parse_route(
+            r#"
+            route reverse_proxy "no-leading-slash" {
+                target "http://127.0.0.1:8000"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NodeError::InvalidField {
+                    name,
+                    source: FieldError::InvalidValue { .. },
+                    ..
+                } if name == "location",
+            ),
+            "unexpected error: {err:?}",
+        );
     }
 }
