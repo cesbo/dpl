@@ -131,17 +131,17 @@ impl FromKdlNode for DbConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         kdl_args!(node)?;
 
-        let mut server: Option<ResourceName> = None;
-        let mut user: Option<String> = None;
-        let mut secret: Option<SecretName> = None;
+        let mut server = NodeValue::<ResourceName>::new("server");
+        let mut user = NodeValue::<String>::new("user");
+        let mut secret = NodeValue::<SecretName>::new("secret");
 
         if let Some(children) = node.children() {
             for child in children.nodes() {
                 let name = child.name().value();
                 match name {
-                    "server" => set_field(&mut server, child)?,
-                    "user" => set_field(&mut user, child)?,
-                    "secret" => set_field(&mut secret, child)?,
+                    "server" => server.set(child)?,
+                    "user" => user.set(child)?,
+                    "secret" => secret.set(child)?,
                     _ => {
                         return Err(NodeError::UnknownField {
                             name: name.to_owned(),
@@ -153,18 +153,9 @@ impl FromKdlNode for DbConfig {
         }
 
         Ok(DbConfig {
-            server: server.ok_or(NodeError::MissingField {
-                name: "server",
-                span: node.span(),
-            })?,
-            user: user.ok_or(NodeError::MissingField {
-                name: "user",
-                span: node.span(),
-            })?,
-            secret: secret.ok_or(NodeError::MissingField {
-                name: "secret",
-                span: node.span(),
-            })?,
+            server: server.take_required(node)?,
+            user: user.take_required(node)?,
+            secret: secret.take_required(node)?,
         })
     }
 }
