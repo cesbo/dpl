@@ -313,6 +313,9 @@ mod tests {
             r#"
             domain {
                 host "example.com"
+                route reverse_proxy "/" {
+                    target "http://127.0.0.1:8000"
+                }
             }
             "#,
         )
@@ -665,6 +668,9 @@ db-server {
             r#"
 domain {
     host "example.com"
+    route reverse_proxy "/" {
+        target "http://127.0.0.1:8000"
+    }
 }
 "#,
         )

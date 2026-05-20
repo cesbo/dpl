@@ -385,19 +385,19 @@ mod tests {
     }
 
     #[test]
-    fn kdl_proxy_cloudflare_bare() {
+    fn proxy_cloudflare_bare() {
         let cfg = parse_proxy("proxy cloudflare").unwrap();
         assert_eq!(cfg, ProxyConfig::Cloudflare);
     }
 
     #[test]
-    fn kdl_proxy_fastly_bare() {
+    fn proxy_fastly_bare() {
         let cfg = parse_proxy("proxy fastly").unwrap();
         assert_eq!(cfg, ProxyConfig::Fastly);
     }
 
     #[test]
-    fn kdl_proxy_custom_basic() {
+    fn proxy_custom_basic() {
         let cfg = parse_proxy(
             r#"
             proxy custom {
@@ -417,7 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_proxy_custom_multiple_ips() {
+    fn proxy_custom_multiple_ips() {
         let cfg = parse_proxy(
             r#"
             proxy custom {
@@ -438,7 +438,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_proxy_unknown_variant() {
+    fn proxy_unknown_variant() {
         let err = parse_proxy(r#"proxy "other""#).unwrap_err();
         assert!(
             matches!(
@@ -451,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_proxy_missing_variant() {
+    fn proxy_missing_variant() {
         let err = parse_proxy("proxy").unwrap_err();
         assert!(
             matches!(
@@ -466,7 +466,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_proxy_custom_missing_header() {
+    fn proxy_custom_missing_header() {
         let err = parse_proxy(
             r#"
             proxy custom {
@@ -482,7 +482,23 @@ mod tests {
     }
 
     #[test]
-    fn kdl_proxy_custom_unknown_field() {
+    fn proxy_custom_missing_ip() {
+        let err = parse_proxy(
+            r#"
+            proxy custom {
+                header "X-Forwarded-For"
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, NodeError::MissingField { name, .. } if *name == "ip"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn proxy_custom_unknown_field() {
         let err = parse_proxy(
             r#"
             proxy custom {
@@ -499,7 +515,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_proxy_custom_duplicate_header() {
+    fn proxy_custom_duplicate_header() {
         let err = parse_proxy(
             r#"
             proxy custom {
@@ -517,7 +533,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_proxy_bare_variant_with_children() {
+    fn proxy_bare_variant_with_children() {
         let err = parse_proxy(
             r#"
             proxy cloudflare {
@@ -533,7 +549,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_proxy_named_arg_rejected() {
+    fn proxy_named_arg_rejected() {
         let err = parse_proxy(r#"proxy variant="custom""#).unwrap_err();
         assert!(
             matches!(
@@ -549,7 +565,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_proxy_variant_not_a_string() {
+    fn proxy_variant_not_a_string() {
         let err = parse_proxy("proxy 5").unwrap_err();
         assert!(
             matches!(
@@ -570,7 +586,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_route_reverse_proxy() {
+    fn route_reverse_proxy() {
         let cfg = parse_route(
             r#"
             route reverse_proxy "/api" {
@@ -589,7 +605,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_route_reverse_proxy_template_target() {
+    fn route_reverse_proxy_template_target() {
         let cfg = parse_route(
             r#"
             route reverse_proxy "/api" {
@@ -608,7 +624,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_route_serve_files_with_spa() {
+    fn route_serve_files_with_spa() {
         let cfg = parse_route(
             r#"
             route serve_files "/static" {
@@ -629,7 +645,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_route_serve_files_without_spa() {
+    fn route_serve_files_without_spa() {
         let cfg = parse_route(
             r#"
             route serve_files "/static" {
@@ -649,7 +665,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_route_missing_target() {
+    fn route_missing_target() {
         let err = parse_route(
             r#"
             route reverse_proxy "/api" {
@@ -664,7 +680,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_route_missing_root() {
+    fn route_missing_root() {
         let err = parse_route(
             r#"
             route serve_files "/static" {
@@ -680,7 +696,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_route_unknown_variant() {
+    fn route_unknown_variant() {
         let err = parse_route(r#"route redirect "/x""#).unwrap_err();
         assert!(
             matches!(
@@ -693,7 +709,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_route_unknown_child_on_serve_files() {
+    fn route_unknown_child_on_serve_files() {
         let err = parse_route(
             r#"
             route serve_files "/static" {
@@ -710,7 +726,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_route_unknown_child_on_reverse_proxy() {
+    fn route_unknown_child_on_reverse_proxy() {
         let err = parse_route(
             r#"
             route reverse_proxy "/api" {
@@ -727,7 +743,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_route_duplicate_target() {
+    fn route_duplicate_target() {
         let err = parse_route(
             r#"
             route reverse_proxy "/api" {
@@ -744,7 +760,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_route_duplicate_spa() {
+    fn route_duplicate_spa() {
         let err = parse_route(
             r#"
             route serve_files "/static" {
@@ -762,7 +778,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_route_spa_with_arg_rejected() {
+    fn route_spa_with_arg_rejected() {
         let err = parse_route(
             r#"
             route serve_files "/static" {
@@ -779,7 +795,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_route_missing_path() {
+    fn route_missing_path() {
         let err = parse_route(
             r#"
             route reverse_proxy {
@@ -804,12 +820,15 @@ mod tests {
             hosts: vec![HostName::new("example.com").unwrap()],
             proxy: None,
             custom_config: String::new(),
-            routes: Vec::new(),
+            routes: vec![RouteConfig::ReverseProxy {
+                path: "/".into(),
+                target: Value::parse("http://127.0.0.1:8000").unwrap(),
+            }],
         }
     }
 
     #[test]
-    fn kdl_domain_full() {
+    fn domain_full() {
         let cfg = parse_domain(
             r#"
             domain {
@@ -857,11 +876,14 @@ mod tests {
     }
 
     #[test]
-    fn kdl_domain_minimal() {
+    fn domain_minimal() {
         let cfg = parse_domain(
             r#"
             domain {
                 host "example.com"
+                route reverse_proxy "/" {
+                    target "http://127.0.0.1:8000"
+                }
             }
             "#,
         )
@@ -870,18 +892,21 @@ mod tests {
         assert_eq!(cfg.hosts, vec![HostName::new("example.com").unwrap()]);
         assert_eq!(cfg.proxy, None);
         assert_eq!(cfg.custom_config, "");
-        assert!(cfg.routes.is_empty());
+        assert_eq!(cfg.routes.len(), 1);
         assert!(cfg.validate_config().is_ok());
     }
 
     #[test]
-    fn kdl_domain_multiple_hosts() {
+    fn domain_multiple_hosts() {
         let cfg = parse_domain(
             r#"
             domain {
                 host "a.example.com"
                 host "b.example.com"
                 host "c.example.com"
+                route reverse_proxy "/" {
+                    target "http://127.0.0.1:8000"
+                }
             }
             "#,
         )
@@ -898,7 +923,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_domain_custom_config_multiline() {
+    fn domain_custom_config_multiline() {
         let cfg = parse_domain(
             r#"
             domain {
@@ -907,6 +932,9 @@ mod tests {
                     add_header X-Test true;
                     add_header X-Other "ok";
                     """
+                route reverse_proxy "/" {
+                    target "http://127.0.0.1:8000"
+                }
             }
             "#,
         )
@@ -919,7 +947,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_domain_unknown_field() {
+    fn domain_unknown_field() {
         let err = parse_domain(
             r#"
             domain {
@@ -936,7 +964,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_domain_duplicate_proxy() {
+    fn domain_duplicate_proxy() {
         let err = parse_domain(
             r#"
             domain {
@@ -954,7 +982,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_domain_duplicate_custom_config() {
+    fn domain_duplicate_custom_config() {
         let err = parse_domain(
             r#"
             domain {
@@ -972,7 +1000,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_domain_positional_arg_rejected() {
+    fn domain_positional_arg_rejected() {
         let err = parse_domain(r#"domain "x" { host "example.com" }"#).unwrap_err();
         assert!(
             matches!(err, NodeError::UnexpectedArg { .. }),
@@ -981,7 +1009,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_domain_rejects_empty_hosts() {
+    fn domain_rejects_empty_hosts() {
         let err = parse_domain("domain {}").unwrap_err();
         assert!(
             matches!(err, NodeError::MissingField { name: "host", .. }),
@@ -990,7 +1018,7 @@ mod tests {
     }
 
     #[test]
-    fn kdl_domain_rejects_invalid_host() {
+    fn domain_rejects_invalid_host() {
         let err = parse_domain(
             r#"
             domain {
@@ -1010,16 +1038,6 @@ mod tests {
             ),
             "unexpected error: {err:?}",
         );
-    }
-
-    #[test]
-    fn domain_validate_custom_proxy_no_ips() {
-        let mut cfg = sample_domain();
-        cfg.proxy = Some(ProxyConfig::Custom {
-            header: "X-Forwarded-For".into(),
-            proxies: Vec::new(),
-        });
-        assert!(cfg.validate_config().is_err());
     }
 
     #[test]
