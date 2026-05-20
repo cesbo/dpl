@@ -206,7 +206,7 @@ where
     }
 
     pub fn take_required(self, parent: &KdlNode) -> Result<T, NodeError> {
-        self.value.ok_or_else(|| NodeError::MissingFieldNew {
+        self.value.ok_or_else(|| NodeError::MissingField {
             name: self.name.to_owned(),
             span: parent.span(),
         })

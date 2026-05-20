@@ -111,33 +111,21 @@ impl FromKdlNode for ResourceName {
 }
 
 impl FromKdlArg for ResourceName {
-    fn from_kdl_arg(entry: &KdlEntry, field: &str) -> Result<Self, NodeError> {
+    fn from_kdl_arg(entry: &KdlEntry) -> Result<Self, FieldError> {
         if entry.name().is_some() {
-            return Err(NodeError::InvalidField {
-                name: field.to_owned(),
-                span: entry.span(),
-                source: FieldError::NamedEntry { span: entry.span() },
-            });
+            return Err(FieldError::NamedEntry { span: entry.span() });
         }
 
         let KdlValue::String(s) = entry.value() else {
-            return Err(NodeError::InvalidField {
-                name: field.to_owned(),
+            return Err(FieldError::InvalidType {
+                expected: "string",
                 span: entry.span(),
-                source: FieldError::InvalidType {
-                    expected: "string",
-                    span: entry.span(),
-                },
             });
         };
 
-        Self::new(s).map_err(|_| NodeError::InvalidField {
-            name: field.to_owned(),
+        Self::new(s).map_err(|_| FieldError::InvalidValue {
+            expected: EXPECTED,
             span: entry.span(),
-            source: FieldError::InvalidValue {
-                expected: EXPECTED,
-                span: entry.span(),
-            },
         })
     }
 }

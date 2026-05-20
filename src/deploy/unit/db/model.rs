@@ -439,7 +439,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(&err, NodeError::MissingFieldNew { name, .. } if *name == "secret"),
+            matches!(&err, NodeError::MissingField { name, .. } if *name == "secret"),
             "unexpected error: {err:?}",
         );
     }

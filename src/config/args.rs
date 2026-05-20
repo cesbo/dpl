@@ -10,32 +10,22 @@ use super::{
 };
 
 /// Convert a single positional entry of a wrapper node (e.g. the `"run-tasks"`
-/// in `timer "run-tasks" { ... }`) into a typed value. Implementors are
-/// responsible for rejecting named entries and reporting type mismatches via
-/// `NodeError::InvalidField` with the caller-supplied field name.
+/// in `timer "run-tasks" { ... }`) into a typed value.
 pub trait FromKdlArg: Sized {
-    fn from_kdl_arg(entry: &KdlEntry, field: &str) -> Result<Self, NodeError>;
+    fn from_kdl_arg(entry: &KdlEntry) -> Result<Self, FieldError>;
 }
 
 impl FromKdlArg for String {
-    fn from_kdl_arg(entry: &KdlEntry, field: &str) -> Result<Self, NodeError> {
+    fn from_kdl_arg(entry: &KdlEntry) -> Result<Self, FieldError> {
         if entry.name().is_some() {
-            return Err(NodeError::InvalidField {
-                name: field.to_owned(),
-                span: entry.span(),
-                source: FieldError::NamedEntry { span: entry.span() },
-            });
+            return Err(FieldError::NamedEntry { span: entry.span() });
         }
 
         match entry.value() {
             KdlValue::String(s) => Ok(s.clone()),
-            _ => Err(NodeError::InvalidField {
-                name: field.to_owned(),
+            _ => Err(FieldError::InvalidType {
+                expected: "string",
                 span: entry.span(),
-                source: FieldError::InvalidType {
-                    expected: "string",
-                    span: entry.span(),
-                },
             }),
         }
     }
@@ -88,7 +78,11 @@ macro_rules! kdl_args {
     ($node:expr, $name:ident : $ty:ty $(,)?) => {{
         const NAMES: &[&'static str] = &[stringify!($name)];
         $crate::config::kdl_args_check_arity($node, NAMES).and_then(|entries| {
-            <$ty as $crate::config::FromKdlArg>::from_kdl_arg(&entries[0], NAMES[0])
+            <$ty as $crate::config::FromKdlArg>::from_kdl_arg(&entries[0]).map_err(|source| $crate::config::NodeError::InvalidField {
+                name: $node.name().value().to_owned(),
+                span: $node.span(),
+                source,
+            })
         })
     }};
 
@@ -101,8 +95,11 @@ macro_rules! kdl_args {
                 $({
                     let v = <$ty as $crate::config::FromKdlArg>::from_kdl_arg(
                         &entries[__i],
-                        NAMES[__i],
-                    )?;
+                    ).map_err(|source| $crate::config::NodeError::InvalidField {
+                        name: $node.name().value().to_owned(),
+                        span: $node.span(),
+                        source,
+                    })?;
                     __i += 1;
                     v
                 },)+

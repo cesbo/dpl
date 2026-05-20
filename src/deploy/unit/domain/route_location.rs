@@ -13,7 +13,6 @@ use thiserror::Error;
 use crate::config::{
     FieldError,
     FromKdlArg,
-    NodeError,
 };
 
 const EXPECTED: &str = "url path ('/' or '/segment[/segment...]' with ASCII alphanumeric, '-', '_', '.'; no trailing '/', no '.'/'..' segments)";
@@ -88,33 +87,21 @@ impl From<&RouteLocation> for KdlEntry {
 }
 
 impl FromKdlArg for RouteLocation {
-    fn from_kdl_arg(entry: &KdlEntry, field: &str) -> Result<Self, NodeError> {
+    fn from_kdl_arg(entry: &KdlEntry) -> Result<Self, FieldError> {
         if entry.name().is_some() {
-            return Err(NodeError::InvalidField {
-                name: field.to_owned(),
-                span: entry.span(),
-                source: FieldError::NamedEntry { span: entry.span() },
-            });
+            return Err(FieldError::NamedEntry { span: entry.span() });
         }
 
         let KdlValue::String(s) = entry.value() else {
-            return Err(NodeError::InvalidField {
-                name: field.to_owned(),
+            return Err(FieldError::InvalidType {
+                expected: "string",
                 span: entry.span(),
-                source: FieldError::InvalidType {
-                    expected: "string",
-                    span: entry.span(),
-                },
             });
         };
 
-        Self::new(s).map_err(|_| NodeError::InvalidField {
-            name: field.to_owned(),
+        Self::new(s).map_err(|_| FieldError::InvalidValue {
+            expected: EXPECTED,
             span: entry.span(),
-            source: FieldError::InvalidValue {
-                expected: EXPECTED,
-                span: entry.span(),
-            },
         })
     }
 }
@@ -127,7 +114,10 @@ mod tests {
     };
 
     use super::*;
-    use crate::kdl_args;
+    use crate::{
+        config::NodeError,
+        kdl_args,
+    };
 
     fn node(src: &str) -> KdlNode {
         let doc: KdlDocument = src.parse().expect("test KDL must parse");
@@ -147,16 +137,7 @@ mod tests {
     #[test]
     fn new_rejects_invalid() {
         for bad in [
-            "",
-            "api",
-            "/api/",
-            "//",
-            "/api//v1",
-            "/.",
-            "/..",
-            "/api/..",
-            "/ api",
-            "/api?x=1",
+            "", "api", "/api/", "//", "/api//v1", "/.", "/..", "/api/..", "/ api", "/api?x=1",
             "/Ümlaut",
         ] {
             let err = RouteLocation::new(bad).unwrap_err();
