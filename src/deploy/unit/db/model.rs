@@ -19,7 +19,6 @@ use crate::{
         ResourceName,
         SecretName,
         reject_children,
-        set_field,
         string_node,
     },
     deploy::unit::UnitConfig,
@@ -440,7 +439,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(&err, NodeError::MissingField { name, .. } if *name == "secret"),
+            matches!(&err, NodeError::MissingFieldNew { name, .. } if *name == "secret"),
             "unexpected error: {err:?}",
         );
     }
