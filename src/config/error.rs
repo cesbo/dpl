@@ -1,10 +1,14 @@
 use std::io;
 
 use kdl::KdlNode;
-use miette::SourceSpan;
+use miette::{
+    Diagnostic,
+    NamedSource,
+    SourceSpan,
+};
 use thiserror::Error;
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error, Diagnostic, PartialEq, Eq)]
 pub enum TemplateError {
     #[error("unterminated reference at position {pos}: missing '}}'")]
     UnterminatedRef { pos: usize },
@@ -26,20 +30,30 @@ pub enum TemplateError {
     },
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error, Diagnostic, PartialEq, Eq)]
 pub enum FieldError {
     #[error("expected exactly one positional value")]
-    EntryCount { span: SourceSpan },
+    EntryCount {
+        #[label("here")]
+        span: SourceSpan,
+    },
 
     #[error("named entries are not allowed")]
-    NamedEntry { span: SourceSpan },
+    NamedEntry {
+        #[label("here")]
+        span: SourceSpan,
+    },
 
     #[error("child blocks are not allowed")]
-    HasChildren { span: SourceSpan },
+    HasChildren {
+        #[label("here")]
+        span: SourceSpan,
+    },
 
     #[error("expected {expected}")]
     InvalidType {
         expected: &'static str,
+        #[label("not a {expected}")]
         span: SourceSpan,
     },
 
@@ -47,11 +61,13 @@ pub enum FieldError {
     OutOfRange {
         min: i128,
         max: i128,
+        #[label("out of range")]
         span: SourceSpan,
     },
 
     #[error("invalid template: {source}")]
     InvalidTemplate {
+        #[label("here")]
         span: SourceSpan,
         #[source]
         source: TemplateError,
@@ -60,34 +76,55 @@ pub enum FieldError {
     #[error("expected {expected}")]
     InvalidValue {
         expected: &'static str,
+        #[label("not a {expected}")]
         span: SourceSpan,
     },
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error, Diagnostic, PartialEq, Eq)]
 pub enum NodeError {
     #[error("unexpected argument")]
-    UnexpectedArg { span: SourceSpan },
+    UnexpectedArg {
+        #[label("here")]
+        span: SourceSpan,
+    },
 
     #[error("missing argument '{name}'")]
     MissingArg {
         name: &'static str,
+        #[label("here")]
         span: SourceSpan,
     },
 
     #[error("unknown field '{name}'")]
-    UnknownField { name: String, span: SourceSpan },
+    #[diagnostic(help("check the unit schema in README.md for valid field names"))]
+    UnknownField {
+        name: String,
+        #[label("unknown")]
+        span: SourceSpan,
+    },
 
     #[error("duplicate field '{name}'")]
-    DuplicateField { name: String, span: SourceSpan },
+    DuplicateField {
+        name: String,
+        #[label("already defined above")]
+        span: SourceSpan,
+    },
 
     #[error("missing required field '{name}'")]
-    MissingField { name: String, span: SourceSpan },
+    #[diagnostic(help("add '{name}' to the unit config"))]
+    MissingField {
+        name: String,
+        #[label("required here")]
+        span: SourceSpan,
+    },
 
     #[error("invalid field '{name}'")]
     InvalidField {
         name: String,
+        #[label("in this field")]
         span: SourceSpan,
+        #[diagnostic_source]
         #[source]
         source: FieldError,
     },
@@ -96,6 +133,7 @@ pub enum NodeError {
     UnknownVariant {
         field: String,
         value: String,
+        #[label("not a valid {field}")]
         span: SourceSpan,
     },
 }
@@ -110,9 +148,10 @@ impl NodeError {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Diagnostic)]
 pub enum ConfigError {
     #[error("unit '{name}' not found")]
+    #[diagnostic(help("run `dpl unit list` to see available units"))]
     NotFound { name: String },
 
     #[error("read config for unit '{name}'")]
@@ -132,14 +171,18 @@ pub enum ConfigError {
     #[error("parse config for unit '{name}'")]
     Parse {
         name: String,
+        #[diagnostic_source]
         #[source]
-        source: Box<kdl::KdlError>,
+        source: kdl::KdlError,
     },
 
     #[error("invalid config for unit '{name}'")]
     Semantic {
         name: String,
+        #[source_code]
+        src: NamedSource<String>,
+        #[diagnostic_source]
         #[source]
-        source: Box<NodeError>,
+        source: Box<dyn Diagnostic + Send + Sync + 'static>,
     },
 }

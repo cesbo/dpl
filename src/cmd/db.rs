@@ -12,19 +12,20 @@ use std::{
     },
 };
 
-use anyhow::{
-    Context,
-    Result,
-    anyhow,
-    bail,
-    ensure,
-};
 use clap::Subcommand;
 use dialoguer::{
     FuzzySelect,
     Input,
     Select,
     theme::ColorfulTheme,
+};
+use miette::{
+    Context,
+    IntoDiagnostic,
+    Result,
+    bail,
+    ensure,
+    miette,
 };
 
 use crate::{
@@ -145,7 +146,9 @@ fn init(
     };
 
     let secret = match secret_name {
-        Some(value) => SecretName::new(&value).context("invalid --secret value")?,
+        Some(value) => SecretName::new(&value)
+            .into_diagnostic()
+            .wrap_err("invalid --secret value")?,
         None => super::secret::prompt_secret(ctx)?,
     };
 
@@ -163,7 +166,7 @@ fn init(
 
     UnitConfig::DbServer(config.clone())
         .save(ctx, &unit_name)
-        .with_context(|| format!("write unit '{unit_name}' config"))?;
+        .wrap_err_with(|| format!("write unit '{unit_name}' config"))?;
 
     let service_name = crate::deploy::unit::db::create_service_file(
         Path::new(crate::systemd::SYSTEMD_DIR),
@@ -172,11 +175,15 @@ fn init(
         &config.version,
         &root_password,
     )
-    .with_context(|| format!("create serivce file for db-server '{unit_name}'"))?;
+    .into_diagnostic()
+    .wrap_err_with(|| format!("create serivce file for db-server '{unit_name}'"))?;
 
-    crate::systemd::reload().context("reload systemd")?;
+    crate::systemd::reload()
+        .into_diagnostic()
+        .wrap_err("reload systemd")?;
     crate::systemd::enable_service(&service_name)
-        .with_context(|| format!("start service for db-server '{unit_name}'"))?;
+        .into_diagnostic()
+        .wrap_err_with(|| format!("start service for db-server '{unit_name}'"))?;
 
     scopeguard::ScopeGuard::into_inner(unit_dir);
 
@@ -212,7 +219,9 @@ fn create(
     };
 
     let secret = match secret_name {
-        Some(value) => SecretName::new(&value).context("invalid --secret value")?,
+        Some(value) => SecretName::new(&value)
+            .into_diagnostic()
+            .wrap_err("invalid --secret value")?,
         None => super::secret::prompt_secret(ctx)?,
     };
 
@@ -231,7 +240,7 @@ fn create(
 
     UnitConfig::Db(config.clone())
         .save(ctx, &db_name)
-        .with_context(|| format!("write unit '{db_name}' config"))?;
+        .wrap_err_with(|| format!("write unit '{db_name}' config"))?;
 
     server_config
         .engine
@@ -242,7 +251,8 @@ fn create(
             &config.user,
             &password,
         )
-        .with_context(|| format!("create database '{}' in '{}'", db_name, config.server))?;
+        .into_diagnostic()
+        .wrap_err_with(|| format!("create database '{}' in '{}'", db_name, config.server))?;
 
     scopeguard::ScopeGuard::into_inner(unit_dir);
 
@@ -284,12 +294,13 @@ fn wait(ctx: &MainContext, name: &str, timeout_secs: u64) -> Result<()> {
 
 fn resolve_secret(ctx: &MainContext, name: &SecretName) -> Result<String> {
     ctx.resolve_secret(name.as_str())
-        .with_context(|| format!("resolve secret '{name}'"))
+        .into_diagnostic()
+        .wrap_err_with(|| format!("resolve secret '{name}'"))
 }
 
 /// Validates the unit name format and checks its presence.
 fn check_unit_name(ctx: &MainContext, name: &str) -> Result<ResourceName> {
-    let unit_name = ResourceName::new(name)?;
+    let unit_name = ResourceName::new(name).into_diagnostic()?;
     match UnitConfig::load(ctx, &unit_name) {
         Ok(_) => bail!("unit '{name}' already exists"),
         Err(ConfigError::NotFound { .. }) => Ok(unit_name),
@@ -298,7 +309,7 @@ fn check_unit_name(ctx: &MainContext, name: &str) -> Result<ResourceName> {
 }
 
 fn load_db_server(ctx: &MainContext, name: &str) -> Result<(ResourceName, DbServerConfig)> {
-    let unit_name = ResourceName::new(name)?;
+    let unit_name = ResourceName::new(name).into_diagnostic()?;
     let unit = UnitConfig::load(ctx, &unit_name)?;
     let UnitConfig::DbServer(config) = unit else {
         bail!("unit '{name}' is not a db-server");
@@ -307,7 +318,7 @@ fn load_db_server(ctx: &MainContext, name: &str) -> Result<(ResourceName, DbServ
 }
 
 fn load_db(ctx: &MainContext, name: &str) -> Result<(ResourceName, DbConfig)> {
-    let unit_name = ResourceName::new(name)?;
+    let unit_name = ResourceName::new(name).into_diagnostic()?;
     let unit = UnitConfig::load(ctx, &unit_name)?;
     let UnitConfig::Db(config) = unit else {
         bail!("unit '{name}' is not a db");
@@ -319,7 +330,8 @@ fn prompt_name(ctx: &MainContext) -> Result<ResourceName> {
     loop {
         let value: String = Input::with_theme(&ColorfulTheme::default())
             .with_prompt("Unit name")
-            .interact_text()?;
+            .interact_text()
+            .into_diagnostic()?;
 
         match check_unit_name(ctx, &value) {
             Ok(unit_name) => return Ok(unit_name),
@@ -349,7 +361,8 @@ fn prompt_db_server(ctx: &MainContext) -> Result<(ResourceName, DbServerConfig)>
         .with_prompt("Database server")
         .items(&labels)
         .default(0)
-        .interact()?;
+        .interact()
+        .into_diagnostic()?;
 
     Ok(servers.into_iter().nth(index).unwrap())
 }
@@ -359,7 +372,7 @@ fn parse_engine(value: &str) -> Result<DbServerEngine> {
         .iter()
         .find(|(name, _)| *name == value)
         .map(|(_, engine)| *engine)
-        .ok_or_else(|| anyhow!("unsupported engine '{value}'"))
+        .ok_or_else(|| miette!("unsupported engine '{value}'"))
 }
 
 fn prompt_engine() -> Result<DbServerEngine> {
@@ -368,7 +381,8 @@ fn prompt_engine() -> Result<DbServerEngine> {
         .with_prompt("Database engine")
         .items(&labels)
         .default(0)
-        .interact()?;
+        .interact()
+        .into_diagnostic()?;
     Ok(ENGINES[index].1)
 }
 
@@ -377,7 +391,8 @@ fn prompt_version(engine: DbServerEngine) -> Result<String> {
         let value: String = Input::with_theme(&ColorfulTheme::default())
             .with_prompt("Engine version")
             .default(engine.default_version().to_string())
-            .interact_text()?
+            .interact_text()
+            .into_diagnostic()?
             .trim()
             .to_owned();
 
@@ -399,7 +414,8 @@ fn check_image_exists(image: &str) -> Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .output()
-        .context("failed to run podman")?;
+        .into_diagnostic()
+        .wrap_err("failed to run podman")?;
 
     if output.status.success() {
         return Ok(());

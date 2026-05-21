@@ -6,12 +6,6 @@ use std::{
     },
 };
 
-use anyhow::{
-    Context,
-    Result,
-    bail,
-    ensure,
-};
 use clap::Subcommand;
 use dialoguer::{
     Confirm,
@@ -19,6 +13,13 @@ use dialoguer::{
     Input,
     Password,
     theme::ColorfulTheme,
+};
+use miette::{
+    Context,
+    IntoDiagnostic,
+    Result,
+    bail,
+    ensure,
 };
 use rand::{
     Rng,
@@ -78,11 +79,14 @@ pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
 
 fn create(ctx: &MainContext, name: &str, source: Option<&str>) -> Result<()> {
     match ctx.check_secret(name) {
-        Ok(_) => bail!(SecretError::AlreadyExists {
-            name: name.to_string(),
-        }),
+        Ok(_) => bail!(
+            "{}",
+            SecretError::AlreadyExists {
+                name: name.to_string(),
+            }
+        ),
         Err(SecretError::NotFound { .. }) => {}
-        Err(err) => bail!(err),
+        Err(err) => bail!("{err}"),
     }
 
     let key = load_or_create_key(ctx)?;
@@ -91,26 +95,27 @@ fn create(ctx: &MainContext, name: &str, source: Option<&str>) -> Result<()> {
         None => prompt_value_or_random()?,
     };
     key.encrypt_to_file(name, &text)
-        .with_context(|| format!("save new secret '{name}' to file"))?;
+        .into_diagnostic()
+        .wrap_err_with(|| format!("save new secret '{name}' to file"))?;
 
     Ok(())
 }
 
 fn cat(ctx: &MainContext, name: &str) -> Result<()> {
-    let value = ctx.resolve_secret(name)?;
+    let value = ctx.resolve_secret(name).into_diagnostic()?;
     println!("{value}");
     Ok(())
 }
 
 fn rm(ctx: &MainContext, name: &str) -> Result<()> {
-    secret::remove(ctx.base(), name)?;
+    secret::remove(ctx.base(), name).into_diagnostic()?;
     println!("secret '{}' removed", name);
 
     Ok(())
 }
 
 fn ls(ctx: &MainContext) -> Result<()> {
-    let names = secret::list_secrets(ctx.base())?;
+    let names = secret::list_secrets(ctx.base()).into_diagnostic()?;
     if names.is_empty() {
         println!("No secrets found");
     } else {
@@ -128,10 +133,10 @@ pub fn load_or_create_key(ctx: &MainContext) -> Result<secret::MasterKey> {
         Ok(key) => Ok(key),
         Err(secret::SecretError::KeyNotFound) => {
             let key = secret::MasterKey::generate(ctx.base());
-            key.save().context("save new master key")?;
+            key.save().into_diagnostic().wrap_err("save new master key")?;
             Ok(key)
         }
-        err => err.context("load master key"),
+        err => err.into_diagnostic().wrap_err("load master key"),
     }
 }
 
@@ -140,13 +145,18 @@ fn read_external(source: &str) -> Result<String> {
         let mut buf = Vec::new();
         io::stdin()
             .read_to_end(&mut buf)
-            .context("read secret value from stdin")?;
+            .into_diagnostic()
+            .wrap_err("read secret value from stdin")?;
         buf
     } else {
-        fs::read(source).context("read secret value from file")?
+        fs::read(source)
+            .into_diagnostic()
+            .wrap_err("read secret value from file")?
     };
 
-    let value = String::from_utf8(buf).context("secret value is not valid UTF8")?;
+    let value = String::from_utf8(buf)
+        .into_diagnostic()
+        .wrap_err("secret value is not valid UTF8")?;
     ensure!(!value.is_empty(), "secret value is empty");
 
     Ok(value)
@@ -157,7 +167,8 @@ pub fn prompt_value_or_random() -> Result<String> {
     let value = Password::with_theme(&ColorfulTheme::default())
         .with_prompt("Secret value (empty = generate random)")
         .allow_empty_password(true)
-        .interact()?;
+        .interact()
+        .into_diagnostic()?;
 
     if value.is_empty() {
         let value = rand::thread_rng()
@@ -173,7 +184,7 @@ pub fn prompt_value_or_random() -> Result<String> {
 
 /// Pick an existing secret with a fuzzy selector, or create a new one inline.
 pub fn prompt_secret(ctx: &MainContext) -> Result<SecretName> {
-    let names = secret::list_secrets(ctx.base())?;
+    let names = secret::list_secrets(ctx.base()).into_diagnostic()?;
 
     let mut items: Vec<&str> = names.iter().map(String::as_str).collect();
     items.push(CREATE_NEW_SECRET);
@@ -182,7 +193,8 @@ pub fn prompt_secret(ctx: &MainContext) -> Result<SecretName> {
         .with_prompt("Secret name")
         .items(&items)
         .default(0)
-        .interact()?;
+        .interact()
+        .into_diagnostic()?;
 
     let name = if index < names.len() {
         names.into_iter().nth(index).unwrap()
@@ -197,7 +209,8 @@ fn create_new_secret(ctx: &MainContext) -> Result<String> {
     loop {
         let name: String = Input::with_theme(&ColorfulTheme::default())
             .with_prompt("Secret name")
-            .interact_text()?;
+            .interact_text()
+            .into_diagnostic()?;
 
         match ctx.check_secret(&name) {
             Ok(_) => return Ok(name),
@@ -211,7 +224,8 @@ fn create_new_secret(ctx: &MainContext) -> Result<String> {
         let create = Confirm::with_theme(&ColorfulTheme::default())
             .with_prompt(format!("secret '{name}' does not exist - create it now?"))
             .default(true)
-            .interact()?;
+            .interact()
+            .into_diagnostic()?;
 
         if !create {
             continue;
@@ -219,7 +233,7 @@ fn create_new_secret(ctx: &MainContext) -> Result<String> {
 
         let key = load_or_create_key(ctx)?;
         let value = prompt_value_or_random()?;
-        key.encrypt_to_file(&name, &value)?;
+        key.encrypt_to_file(&name, &value).into_diagnostic()?;
 
         return Ok(name);
     }

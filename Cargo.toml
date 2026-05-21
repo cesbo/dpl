@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 aes-gcm = "0.10"
-anyhow = "1"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4", features = ["derive"] }
@@ -15,7 +14,7 @@ flate2 = "1"
 fs4 = "0.13"
 indicatif = "0.17"
 kdl = "6"
-miette = "7"
+miette = { version = "7", features = ["fancy"] }
 minijinja = "2.12.0"
 rand = "0.8"
 scopeguard = "1"

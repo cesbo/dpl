@@ -14,7 +14,10 @@ use db::{
 };
 use domain::DomainConfig;
 use kdl::KdlDocument;
-use miette::SourceSpan;
+use miette::{
+    NamedSource,
+    SourceSpan,
+};
 
 use crate::{
     MainContext,
@@ -89,6 +92,7 @@ impl TryFrom<&KdlDocument> for UnitConfig {
 impl UnitConfig {
     pub fn load(ctx: &MainContext, name: &ResourceName) -> Result<Self, ConfigError> {
         let path = name.unit_dir(ctx).join("config.kdl");
+        let file_label = path.display().to_string();
         let content = fs::read_to_string(&path).map_err(|err| {
             if err.kind() == io::ErrorKind::NotFound {
                 ConfigError::NotFound {
@@ -104,11 +108,12 @@ impl UnitConfig {
 
         let doc: KdlDocument = content.parse().map_err(|err| ConfigError::Parse {
             name: name.to_string(),
-            source: Box::new(err),
+            source: err,
         })?;
 
-        Self::try_from(&doc).map_err(|err| ConfigError::Semantic {
+        Self::try_from(&doc).map_err(move |err| ConfigError::Semantic {
             name: name.to_string(),
+            src: NamedSource::new(file_label, content),
             source: Box::new(err),
         })
     }

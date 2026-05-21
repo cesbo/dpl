@@ -7,12 +7,13 @@ use std::{
     },
 };
 
-use anyhow::{
+use clap::Subcommand;
+use miette::{
     Context,
+    IntoDiagnostic,
     Result,
     bail,
 };
-use clap::Subcommand;
 
 use crate::{
     MainContext,
@@ -49,14 +50,14 @@ pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
 }
 
 pub fn check(ctx: &MainContext, name: &str) -> Result<()> {
-    let name = ResourceName::new(name)?;
+    let name = ResourceName::new(name).into_diagnostic()?;
     let _ = load_unit(ctx, &name)?;
     println!("ok");
     Ok(())
 }
 
 fn deploy(ctx: &MainContext, name: &str, path: Option<&Path>) -> Result<()> {
-    let name = ResourceName::new(name)?;
+    let name = ResourceName::new(name).into_diagnostic()?;
     let unit = load_unit(ctx, &name)?;
 
     let UnitConfig::App(app_config) = unit else {
@@ -64,14 +65,17 @@ fn deploy(ctx: &MainContext, name: &str, path: Option<&Path>) -> Result<()> {
     };
 
     let unit_dir = name.unit_dir(ctx);
-    let (_guard, state) =
-        DeployState::acquire(&unit_dir).with_context(|| format!("acquire unit '{name}'"))?;
+    let (_guard, state) = DeployState::acquire(&unit_dir)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("acquire unit '{name}'"))?;
 
     let app = AppUnit::new(ctx, name.as_str(), app_config);
 
     let (final_state, log) = match path {
         Some(path) => {
-            let file = fs::File::open(path).context("open archive")?;
+            let file = fs::File::open(path)
+                .into_diagnostic()
+                .wrap_err("open archive")?;
             app.deploy(state, file)
         }
         None => {
@@ -79,7 +83,8 @@ fn deploy(ctx: &MainContext, name: &str, path: Option<&Path>) -> Result<()> {
             app.deploy(state, stdin)
         }
     }
-    .with_context(|| format!("deploy unit '{name}'"))?;
+    .into_diagnostic()
+    .wrap_err_with(|| format!("deploy unit '{name}'"))?;
 
     let elapsed = fmt_elapsed(log.elapsed());
     let version = final_state.latest_build.version;
@@ -93,7 +98,7 @@ fn deploy(ctx: &MainContext, name: &str, path: Option<&Path>) -> Result<()> {
 }
 
 pub fn inspect(ctx: &MainContext, name: &str) -> Result<()> {
-    let name = ResourceName::new(name)?;
+    let name = ResourceName::new(name).into_diagnostic()?;
     let unit = UnitConfig::load(ctx, &name)?;
 
     let UnitConfig::App(_) = unit else {
@@ -101,7 +106,9 @@ pub fn inspect(ctx: &MainContext, name: &str) -> Result<()> {
     };
 
     let unit_dir = name.unit_dir(ctx);
-    let state = DeployState::load(&unit_dir).context("load deploy state")?;
+    let state = DeployState::load(&unit_dir)
+        .into_diagnostic()
+        .wrap_err("load deploy state")?;
     let build = &state.latest_build;
     let status = format!("{:?}", build.status).to_lowercase();
 
@@ -121,7 +128,8 @@ fn load_unit(ctx: &MainContext, name: &ResourceName) -> Result<UnitConfig> {
     let unit = UnitConfig::load(ctx, name)?;
 
     unit.validate_references(ctx)
-        .with_context(|| format!("unit '{name}' has invalid references"))?;
+        .map_err(|err| err.at(crate::error::Location::unit(name.as_str())))
+        .map_err(miette::Report::new)?;
 
     Ok(unit)
 }

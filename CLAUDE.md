@@ -55,7 +55,7 @@ Keep this split when adding functionality.
 | serde / serde_yaml | Config and model (de)serialization |
 | aes-gcm | AES-256-GCM for the secrets store |
 | fs4 | Advisory `flock(2)` for `.deploy.lock` |
-| thiserror / anyhow | Error types (`thiserror` for library, `anyhow` for CLI) |
+| thiserror / miette | Error types (`thiserror` + manual `Diagnostic` impls for the library layer, `miette` for CLI rendering with source spans) |
 | tracing | Structured logging |
 
 ### Current Limitations

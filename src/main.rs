@@ -11,13 +11,14 @@ mod validate;
 
 use std::path::PathBuf;
 
-use anyhow::{
-    Context,
-    Result,
-};
 use clap::{
     Parser,
     Subcommand,
+};
+use miette::{
+    Context,
+    IntoDiagnostic,
+    Result,
 };
 
 pub use self::context::MainContext;
@@ -55,7 +56,9 @@ enum Command {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let ctx = MainContext::load(&cli.base).context("load main context")?;
+    let ctx = MainContext::load(&cli.base)
+        .into_diagnostic()
+        .wrap_err("load main context")?;
 
     match cli.command {
         Command::Check { name } => cmd::unit::check(&ctx, &name),
