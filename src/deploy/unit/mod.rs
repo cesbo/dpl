@@ -15,7 +15,6 @@ use db::{
 use domain::DomainConfig;
 use kdl::KdlDocument;
 use miette::SourceSpan;
-use thiserror::Error;
 
 use crate::{
     MainContext,
@@ -30,28 +29,6 @@ use crate::{
         RefError,
     },
 };
-
-#[derive(Debug, Error)]
-pub enum UnitConfigError {
-    #[error("unit '{name}' not found")]
-    NotFound { name: String },
-
-    #[error("load config for unit '{name}'")]
-    Config {
-        name: String,
-        #[source]
-        source: ConfigError,
-    },
-}
-
-impl From<UnitConfigError> for RefError {
-    fn from(err: UnitConfigError) -> Self {
-        match err {
-            UnitConfigError::NotFound { name } => RefError::UnknownUnit { name },
-            UnitConfigError::Config { name, source } => RefError::LoadConfig { name, source },
-        }
-    }
-}
 
 #[derive(Debug)]
 pub enum UnitConfig {
@@ -110,42 +87,44 @@ impl TryFrom<&KdlDocument> for UnitConfig {
 }
 
 impl UnitConfig {
-    pub fn load(ctx: &MainContext, name: &ResourceName) -> Result<Self, UnitConfigError> {
-        let wrap = |source| UnitConfigError::Config {
-            name: name.to_string(),
-            source,
-        };
-
+    pub fn load(ctx: &MainContext, name: &ResourceName) -> Result<Self, ConfigError> {
         let path = name.unit_dir(ctx).join("config.kdl");
         let content = fs::read_to_string(&path).map_err(|err| {
             if err.kind() == io::ErrorKind::NotFound {
-                UnitConfigError::NotFound {
+                ConfigError::NotFound {
                     name: name.to_string(),
                 }
             } else {
-                wrap(ConfigError::Read(err))
+                ConfigError::Read {
+                    name: name.to_string(),
+                    source: err,
+                }
             }
         })?;
 
-        let doc: KdlDocument = content
-            .parse()
-            .map_err(|e| wrap(ConfigError::Parse(Box::new(e))))?;
+        let doc: KdlDocument = content.parse().map_err(|err| ConfigError::Parse {
+            name: name.to_string(),
+            source: Box::new(err),
+        })?;
 
-        Self::try_from(&doc).map_err(|e| wrap(ConfigError::Semantic(Box::new(e))))
+        Self::try_from(&doc).map_err(|err| ConfigError::Semantic {
+            name: name.to_string(),
+            source: Box::new(err),
+        })
     }
 
-    pub fn save(&self, ctx: &MainContext, name: &ResourceName) -> Result<(), UnitConfigError> {
+    pub fn save(&self, ctx: &MainContext, name: &ResourceName) -> Result<(), ConfigError> {
         let unit_dir = name.unit_dir(ctx);
-        fs::create_dir_all(&unit_dir).map_err(|err| UnitConfigError::Config {
+        fs::create_dir_all(&unit_dir).map_err(|err| ConfigError::Write {
             name: name.to_string(),
-            source: ConfigError::Write(err),
+            source: err,
         })?;
 
         let path = unit_dir.join("config.kdl");
         let doc: KdlDocument = self.into();
-        fs::write(&path, doc.to_string()).map_err(|err| UnitConfigError::Config {
+        fs::write(&path, doc.to_string()).map_err(|err| ConfigError::Write {
             name: name.to_string(),
-            source: ConfigError::Write(err),
+            source: err,
         })?;
 
         Ok(())

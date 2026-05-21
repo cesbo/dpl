@@ -32,12 +32,8 @@ pub enum RefError {
     #[error("unknown export '{key}'")]
     UnknownExport { key: String },
 
-    #[error("load config for unit '{name}'")]
-    LoadConfig {
-        name: String,
-        #[source]
-        source: ConfigError,
-    },
+    #[error(transparent)]
+    LoadConfig(Box<ConfigError>),
 
     #[error("{reason}")]
     Export { reason: String },
@@ -58,6 +54,15 @@ impl RefError {
         RefError::At {
             location,
             inner: Box::new(self),
+        }
+    }
+}
+
+impl From<ConfigError> for RefError {
+    fn from(err: ConfigError) -> Self {
+        match err {
+            ConfigError::NotFound { name } => RefError::UnknownUnit { name },
+            other => RefError::LoadConfig(Box::new(other)),
         }
     }
 }

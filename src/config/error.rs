@@ -112,15 +112,34 @@ impl NodeError {
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    #[error("read config")]
-    Read(#[source] io::Error),
+    #[error("unit '{name}' not found")]
+    NotFound { name: String },
 
-    #[error("write config")]
-    Write(#[source] io::Error),
+    #[error("read config for unit '{name}'")]
+    Read {
+        name: String,
+        #[source]
+        source: io::Error,
+    },
 
-    #[error("parse config")]
-    Parse(#[source] Box<kdl::KdlError>),
+    #[error("write config for unit '{name}'")]
+    Write {
+        name: String,
+        #[source]
+        source: io::Error,
+    },
 
-    #[error("invalid config")]
-    Semantic(#[source] Box<NodeError>),
+    #[error("parse config for unit '{name}'")]
+    Parse {
+        name: String,
+        #[source]
+        source: Box<kdl::KdlError>,
+    },
+
+    #[error("invalid config for unit '{name}'")]
+    Semantic {
+        name: String,
+        #[source]
+        source: Box<NodeError>,
+    },
 }
