@@ -50,14 +50,14 @@ pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
 }
 
 pub fn check(ctx: &MainContext, name: &str) -> Result<()> {
-    let name = ResourceName::new(name).into_diagnostic()?;
+    let name = ResourceName::new(name)?;
     let _ = load_unit(ctx, &name)?;
     println!("ok");
     Ok(())
 }
 
 fn deploy(ctx: &MainContext, name: &str, path: Option<&Path>) -> Result<()> {
-    let name = ResourceName::new(name).into_diagnostic()?;
+    let name = ResourceName::new(name)?;
     let unit = load_unit(ctx, &name)?;
 
     let UnitConfig::App(app_config) = unit else {
@@ -98,7 +98,7 @@ fn deploy(ctx: &MainContext, name: &str, path: Option<&Path>) -> Result<()> {
 }
 
 pub fn inspect(ctx: &MainContext, name: &str) -> Result<()> {
-    let name = ResourceName::new(name).into_diagnostic()?;
+    let name = ResourceName::new(name)?;
     let unit = UnitConfig::load(ctx, &name)?;
 
     let UnitConfig::App(_) = unit else {
@@ -128,8 +128,7 @@ fn load_unit(ctx: &MainContext, name: &ResourceName) -> Result<UnitConfig> {
     let unit = UnitConfig::load(ctx, name)?;
 
     unit.validate_references(ctx)
-        .map_err(|err| err.at(crate::error::Location::unit(name.as_str())))
-        .map_err(miette::Report::new)?;
+        .with_context(|| format!("invalid reference in unit '{name}'"))?;
 
     Ok(unit)
 }

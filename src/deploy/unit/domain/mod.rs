@@ -1,6 +1,5 @@
 mod artifacts;
 mod model;
-mod route_location;
 
 use std::{
     fs,
@@ -8,10 +7,7 @@ use std::{
 };
 
 use self::artifacts::ArtifactsContext;
-pub use self::{
-    model::DomainConfig,
-    route_location::RouteLocation,
-};
+pub use self::model::DomainConfig;
 use crate::{
     MainContext,
     deploy::{

@@ -592,7 +592,7 @@ mod tests {
                 &err,
                 NodeError::InvalidField {
                     name,
-                    source: FieldError::InvalidValue { .. },
+                    source: FieldError::InvalidSecretName { .. },
                     ..
                 } if name == "secret",
             ),
@@ -617,7 +617,7 @@ mod tests {
                 &err,
                 NodeError::InvalidField {
                     name,
-                    source: FieldError::InvalidValue { .. },
+                    source: FieldError::InvalidSecretName { .. },
                     ..
                 } if name == "secret",
             ),
@@ -642,7 +642,7 @@ mod tests {
                 &err,
                 NodeError::InvalidField {
                     name,
-                    source: FieldError::InvalidValue { .. },
+                    source: FieldError::InvalidResourceName { .. },
                     ..
                 } if name == "server",
             ),

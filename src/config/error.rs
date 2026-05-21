@@ -69,8 +69,45 @@ pub enum FieldError {
     InvalidTemplate {
         #[label("here")]
         span: SourceSpan,
+        #[diagnostic_source]
         #[source]
         source: TemplateError,
+    },
+
+    #[error("{source}")]
+    InvalidResourceName {
+        #[label("here")]
+        span: SourceSpan,
+        #[diagnostic_source]
+        #[source]
+        source: super::resource_name::InvalidResourceName,
+    },
+
+    #[error("{source}")]
+    InvalidHostName {
+        #[label("here")]
+        span: SourceSpan,
+        #[diagnostic_source]
+        #[source]
+        source: super::host_name::InvalidHostName,
+    },
+
+    #[error("{source}")]
+    InvalidSecretName {
+        #[label("here")]
+        span: SourceSpan,
+        #[diagnostic_source]
+        #[source]
+        source: super::secret_name::InvalidSecretName,
+    },
+
+    #[error("{source}")]
+    InvalidRouteLocation {
+        #[label("here")]
+        span: SourceSpan,
+        #[diagnostic_source]
+        #[source]
+        source: super::route_location::InvalidRouteLocation,
     },
 
     #[error("expected {expected}")]

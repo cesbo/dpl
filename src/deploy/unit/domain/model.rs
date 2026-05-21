@@ -4,7 +4,6 @@ use kdl::{
     KdlNode,
 };
 
-use super::RouteLocation;
 use crate::{
     MainContext,
     config::{
@@ -13,6 +12,7 @@ use crate::{
         NodeError,
         NodeList,
         NodeValue,
+        RouteLocation,
         reject_children,
         string_node,
     },
@@ -990,7 +990,7 @@ mod tests {
                 &err,
                 NodeError::InvalidField {
                     name,
-                    source: FieldError::InvalidValue { .. },
+                    source: FieldError::InvalidHostName { .. },
                     ..
                 } if name == "host",
             ),
@@ -1013,7 +1013,7 @@ mod tests {
                 &err,
                 NodeError::InvalidField {
                     name,
-                    source: FieldError::InvalidValue { .. },
+                    source: FieldError::InvalidRouteLocation { .. },
                     ..
                 } if name == "route",
             ),

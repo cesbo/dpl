@@ -4,21 +4,24 @@ use kdl::{
     KdlEntry,
     KdlValue,
 };
+use miette::Diagnostic;
 use serde::{
     Serialize,
     Serializer,
 };
 use thiserror::Error;
 
-use crate::config::{
+use super::{
     FieldError,
     FromKdlArg,
 };
 
-const EXPECTED: &str = "url path ('/' or '/segment[/segment...]' with ASCII alphanumeric, '-', '_', '.'; no trailing '/', no '.'/'..' segments)";
-
-#[derive(Error, Debug, Clone, PartialEq, Eq)]
-#[error("invalid route location '{input}' (expected: {EXPECTED})")]
+#[derive(Diagnostic, Error, Debug, Clone, PartialEq, Eq)]
+#[error("invalid route location '{input}'")]
+#[diagnostic(help(
+    "'/' or '/segment[/segment...]' with ASCII alphanumeric, '-', '_', '.'; no trailing '/'; no \
+     '.'/'..' segments"
+))]
 pub struct InvalidRouteLocation {
     pub input: String,
 }
@@ -99,9 +102,9 @@ impl FromKdlArg for RouteLocation {
             });
         };
 
-        Self::new(s).map_err(|_| FieldError::InvalidValue {
-            expected: EXPECTED,
+        Self::new(s).map_err(|source| FieldError::InvalidRouteLocation {
             span: entry.span(),
+            source,
         })
     }
 }
@@ -170,9 +173,12 @@ mod tests {
                 &err,
                 NodeError::InvalidField {
                     name,
-                    source: FieldError::InvalidValue { .. },
+                    source: FieldError::InvalidRouteLocation {
+                        source: InvalidRouteLocation { input },
+                        ..
+                    },
                     ..
-                } if name == "route",
+                } if name == "route" && input == "no-leading-slash",
             ),
             "unexpected: {err:?}",
         );

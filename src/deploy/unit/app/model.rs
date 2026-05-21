@@ -899,7 +899,7 @@ mod tests {
                 &err,
                 NodeError::InvalidField {
                     name,
-                    source: FieldError::InvalidValue { .. },
+                    source: FieldError::InvalidResourceName { .. },
                     ..
                 } if name == "timer",
             ),
@@ -1643,7 +1643,7 @@ mod tests {
                 &err,
                 NodeError::InvalidField {
                     name,
-                    source: FieldError::InvalidValue { .. },
+                    source: FieldError::InvalidResourceName { .. },
                     ..
                 } if name == "database",
             ),

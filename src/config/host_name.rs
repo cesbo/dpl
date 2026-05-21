@@ -4,6 +4,7 @@ use kdl::{
     KdlEntry,
     KdlNode,
 };
+use miette::Diagnostic;
 use serde::{
     Serialize,
     Serializer,
@@ -18,10 +19,12 @@ use super::{
     parse_string_child,
 };
 
-const EXPECTED: &str = "host name (dot-separated lowercase a-z/digit/'-' labels; optional leading '*.' wildcard requires at least two further labels)";
-
-#[derive(Error, Debug, Clone, PartialEq, Eq)]
-#[error("invalid host name '{input}' (expected: {EXPECTED})")]
+#[derive(Diagnostic, Error, Debug, Clone, PartialEq, Eq)]
+#[error("invalid host name '{input}'")]
+#[diagnostic(help(
+    "dot-separated lowercase a-z/digit/'-' labels; optional leading '*.' wildcard requires at \
+     least two further labels"
+))]
 pub struct InvalidHostName {
     pub input: String,
 }
@@ -87,15 +90,12 @@ impl FromKdlNode for HostName {
         let raw =
             parse_string_child(node).map_err(|source| NodeError::invalid_field(node, source))?;
 
-        Self::new(raw).map_err(|_| {
+        Self::new(raw).map_err(|source| {
             let span = node.entries()[0].span();
             NodeError::InvalidField {
                 name: node.name().value().to_owned(),
                 span,
-                source: FieldError::InvalidValue {
-                    expected: EXPECTED,
-                    span,
-                },
+                source: FieldError::InvalidHostName { span, source },
             }
         })
     }
@@ -175,9 +175,12 @@ mod tests {
                 &err,
                 NodeError::InvalidField {
                     name,
-                    source: FieldError::InvalidValue { .. },
+                    source: FieldError::InvalidHostName {
+                        source: InvalidHostName { input },
+                        ..
+                    },
                     ..
-                } if name == "host",
+                } if name == "host" && input == "Bad_Host",
             ),
             "unexpected: {err:?}",
         );
@@ -191,7 +194,7 @@ mod tests {
             matches!(
                 &err,
                 NodeError::InvalidField {
-                    source: FieldError::InvalidValue { .. },
+                    source: FieldError::InvalidHostName { .. },
                     ..
                 },
             ),

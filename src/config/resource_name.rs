@@ -8,6 +8,7 @@ use kdl::{
     KdlNode,
     KdlValue,
 };
+use miette::Diagnostic;
 use serde::{
     Serialize,
     Serializer,
@@ -23,11 +24,9 @@ use super::{
 };
 use crate::MainContext;
 
-const EXPECTED: &str =
-    "resource name (lowercase a-z, digits, '-'; not starting/ending with '-'; no '--')";
-
-#[derive(Error, Debug, Clone, PartialEq, Eq)]
-#[error("invalid name '{input}'. expected: {EXPECTED}")]
+#[derive(Diagnostic, Error, Debug, Clone, PartialEq, Eq)]
+#[error("invalid resource name '{input}'")]
+#[diagnostic(help("lowercase a-z, digits, '-'; not starting/ending with '-'; no '--'"))]
 pub struct InvalidResourceName {
     pub input: String,
 }
@@ -96,15 +95,12 @@ impl FromKdlNode for ResourceName {
         let raw =
             parse_string_child(node).map_err(|source| NodeError::invalid_field(node, source))?;
 
-        Self::new(raw).map_err(|_| {
+        Self::new(raw).map_err(|source| {
             let span = node.entries()[0].span();
             NodeError::InvalidField {
                 name: node.name().value().to_owned(),
                 span,
-                source: FieldError::InvalidValue {
-                    expected: EXPECTED,
-                    span,
-                },
+                source: FieldError::InvalidResourceName { span, source },
             }
         })
     }
@@ -123,9 +119,9 @@ impl FromKdlArg for ResourceName {
             });
         };
 
-        Self::new(s).map_err(|_| FieldError::InvalidValue {
-            expected: EXPECTED,
+        Self::new(s).map_err(|source| FieldError::InvalidResourceName {
             span: entry.span(),
+            source,
         })
     }
 }
@@ -180,9 +176,12 @@ mod tests {
                 &err,
                 NodeError::InvalidField {
                     name,
-                    source: FieldError::InvalidValue { .. },
+                    source: FieldError::InvalidResourceName {
+                        source: InvalidResourceName { input },
+                        ..
+                    },
                     ..
-                } if name == "server",
+                } if name == "server" && input == "Bad/Name",
             ),
             "unexpected: {err:?}",
         );
@@ -223,9 +222,12 @@ mod tests {
                 &err,
                 NodeError::InvalidField {
                     name,
-                    source: FieldError::InvalidValue { .. },
+                    source: FieldError::InvalidResourceName {
+                        source: InvalidResourceName { input },
+                        ..
+                    },
                     ..
-                } if name == "timer",
+                } if name == "timer" && input == "Bad_Name",
             ),
             "unexpected: {err:?}",
         );

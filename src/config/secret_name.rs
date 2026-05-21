@@ -4,6 +4,7 @@ use kdl::{
     KdlEntry,
     KdlNode,
 };
+use miette::Diagnostic;
 use serde::{
     Serialize,
     Serializer,
@@ -18,10 +19,12 @@ use super::{
 };
 use crate::validate;
 
-const EXPECTED: &str = "secret name (one or more '/'-separated lowercase a-z, digits, '-' segments; no leading/trailing '-'; no '--')";
-
-#[derive(Error, Debug, Clone, PartialEq, Eq)]
-#[error("invalid secret name '{input}' (expected: {EXPECTED})")]
+#[derive(Diagnostic, Error, Debug, Clone, PartialEq, Eq)]
+#[error("invalid secret name '{input}'")]
+#[diagnostic(help(
+    "one or more '/'-separated lowercase a-z, digits, '-' segments; no leading/trailing '-'; no \
+     '--'"
+))]
 pub struct InvalidSecretName {
     pub input: String,
 }
@@ -68,15 +71,12 @@ impl FromKdlNode for SecretName {
         let raw =
             parse_string_child(node).map_err(|source| NodeError::invalid_field(node, source))?;
 
-        Self::new(raw).map_err(|_| {
+        Self::new(raw).map_err(|source| {
             let span = node.entries()[0].span();
             NodeError::InvalidField {
                 name: node.name().value().to_owned(),
                 span,
-                source: FieldError::InvalidValue {
-                    expected: EXPECTED,
-                    span,
-                },
+                source: FieldError::InvalidSecretName { span, source },
             }
         })
     }
@@ -136,9 +136,12 @@ mod tests {
                 &err,
                 NodeError::InvalidField {
                     name,
-                    source: FieldError::InvalidValue { .. },
+                    source: FieldError::InvalidSecretName {
+                        source: InvalidSecretName { input },
+                        ..
+                    },
                     ..
-                } if name == "secret",
+                } if name == "secret" && input == "Bad/Name/",
             ),
             "unexpected: {err:?}",
         );
@@ -152,7 +155,7 @@ mod tests {
             matches!(
                 &err,
                 NodeError::InvalidField {
-                    source: FieldError::InvalidValue { .. },
+                    source: FieldError::InvalidSecretName { .. },
                     ..
                 },
             ),

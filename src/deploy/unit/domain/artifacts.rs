@@ -10,16 +10,14 @@ use minijinja::{
 };
 use serde::Serialize;
 
-use super::{
-    RouteLocation,
-    model::{
-        DomainConfig,
-        ProxyConfig,
-        RouteConfig,
-    },
+use super::model::{
+    DomainConfig,
+    ProxyConfig,
+    RouteConfig,
 };
 use crate::{
     MainContext,
+    config::RouteLocation,
     deploy::artifacts::{
         ArtifactError,
         render_template,
