@@ -10,8 +10,8 @@ use crate::{
         FieldError,
         FromKdlNode,
         NodeError,
-        NodeField,
         NodeList,
+        NodeValue,
         ResourceName,
         integer_node,
         string_node,
@@ -167,10 +167,10 @@ impl FromKdlNode for BuildConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         kdl_args!(node)?;
 
-        let mut description = NodeField::<String>::new("description");
+        let mut description = NodeValue::<String>::new("description");
         let mut files = NodeList::<String>::new("file");
-        let mut env = NodeField::<EnvList>::new("env");
-        let mut script = NodeField::<String>::new("script");
+        let mut env = NodeValue::<EnvList>::new("env");
+        let mut script = NodeValue::<String>::new("script");
 
         if let Some(children) = node.children() {
             for child in children.nodes() {
@@ -219,9 +219,9 @@ impl FromKdlNode for RuntimeConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         kdl_args!(node)?;
 
-        let mut env = NodeField::<EnvList>::new("env");
-        let mut init = NodeField::<String>::new("init");
-        let mut cmd = NodeField::<String>::new("cmd");
+        let mut env = NodeValue::<EnvList>::new("env");
+        let mut init = NodeValue::<String>::new("init");
+        let mut cmd = NodeValue::<String>::new("cmd");
 
         if let Some(children) = node.children() {
             for child in children.nodes() {
@@ -268,8 +268,8 @@ impl FromKdlNode for TimerConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         let name = kdl_args!(node, name: ResourceName)?;
 
-        let mut schedule = NodeField::<String>::new("schedule");
-        let mut script = NodeField::<String>::new("script");
+        let mut schedule = NodeValue::<String>::new("schedule");
+        let mut script = NodeValue::<String>::new("script");
 
         if let Some(children) = node.children() {
             for child in children.nodes() {
@@ -317,9 +317,9 @@ impl FromKdlNode for AppConfig {
     fn from_kdl_node(node: &KdlNode) -> Result<Self, NodeError> {
         kdl_args!(node)?;
 
-        let mut image = NodeField::<String>::new("image");
-        let mut port = NodeField::<u16>::new("port");
-        let mut runtime = NodeField::<RuntimeConfig>::new("runtime");
+        let mut image = NodeValue::<String>::new("image");
+        let mut port = NodeValue::<u16>::new("port");
+        let mut runtime = NodeValue::<RuntimeConfig>::new("runtime");
         let mut build = NodeList::<BuildConfig>::new("build");
         let mut volumes = NodeList::<VolumeConfig>::new("volumes");
         let mut exports = NodeList::<ExportConfig>::new("exports");

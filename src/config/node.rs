@@ -142,17 +142,17 @@ pub fn reject_children(node: &KdlNode) -> Result<(), NodeError> {
     Ok(())
 }
 
-pub struct NodeField<T> {
+pub struct NodeValue<T> {
     name: &'static str,
     value: Option<T>,
 }
 
-impl<T> NodeField<T>
+impl<T> NodeValue<T>
 where
     T: FromKdlNode,
 {
     pub fn new(name: &'static str) -> Self {
-        NodeField { name, value: None }
+        NodeValue { name, value: None }
     }
 
     /// Parses `node` with `T::from_kdl_node` and stores the result.

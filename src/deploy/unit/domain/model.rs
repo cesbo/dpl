@@ -11,8 +11,8 @@ use crate::{
         FromKdlNode,
         HostName,
         NodeError,
-        NodeField,
         NodeList,
+        NodeValue,
         reject_children,
         string_node,
     },
@@ -81,7 +81,7 @@ impl FromKdlNode for ProxyConfig {
                 Ok(ProxyConfig::Fastly)
             }
             "custom" => {
-                let mut header = NodeField::<String>::new("header");
+                let mut header = NodeValue::<String>::new("header");
                 let mut proxies = NodeList::<String>::new("ip");
 
                 if let Some(children) = node.children() {
@@ -184,7 +184,7 @@ impl FromKdlNode for RouteConfig {
 
         match variant.as_str() {
             "reverse_proxy" => {
-                let mut target = NodeField::<Value>::new("target");
+                let mut target = NodeValue::<Value>::new("target");
 
                 if let Some(children) = node.children() {
                     for child in children.nodes() {
@@ -207,7 +207,7 @@ impl FromKdlNode for RouteConfig {
                 })
             }
             "serve_files" => {
-                let mut root = NodeField::<Value>::new("root");
+                let mut root = NodeValue::<Value>::new("root");
                 let mut spa = false;
                 let mut spa_seen = false;
 
@@ -295,8 +295,8 @@ impl FromKdlNode for DomainConfig {
         kdl_args!(node)?;
 
         let mut hosts = NodeList::<HostName>::new("host");
-        let mut proxy = NodeField::<ProxyConfig>::new("proxy");
-        let mut custom_config = NodeField::<String>::new("custom-config");
+        let mut proxy = NodeValue::<ProxyConfig>::new("proxy");
+        let mut custom_config = NodeValue::<String>::new("custom-config");
         let mut routes = NodeList::<RouteConfig>::new("route");
 
         if let Some(children) = node.children() {

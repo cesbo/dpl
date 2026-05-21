@@ -84,7 +84,7 @@ pub enum NodeError {
     #[error("missing required field '{name}'")]
     MissingField { name: String, span: SourceSpan },
 
-    #[error("invalid field '{name}': {source}")]
+    #[error("invalid field '{name}'")]
     InvalidField {
         name: String,
         span: SourceSpan,
@@ -123,7 +123,4 @@ pub enum ConfigError {
 
     #[error("invalid config")]
     Semantic(#[source] Box<NodeError>),
-
-    #[error("invalid config: {0}")]
-    Invalid(String),
 }
