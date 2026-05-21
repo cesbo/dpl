@@ -5,13 +5,11 @@ use serde::{
 
 use crate::{
     MainContext,
-    config::ValidateConfig,
     deploy::env::Value,
     error::{
         Location,
         RefError,
     },
-    validate::url_path,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -20,8 +18,6 @@ pub struct DomainConfig {
     pub hosts: Vec<String>,
     #[serde(default)]
     pub proxy: Option<ProxyConfig>,
-    #[serde(default)]
-    pub https: Option<HttpsConfig>,
     #[serde(default)]
     pub custom_config: String,
     #[serde(default)]
@@ -39,88 +35,32 @@ pub enum ProxyConfig {
     },
 }
 
-impl ValidateConfig for ProxyConfig {
-    fn validate_config(&self) -> Result<(), String> {
-        match self {
-            ProxyConfig::Cloudflare | ProxyConfig::Fastly => Ok(()),
-            ProxyConfig::Custom { header, proxies } => {
-                if header.is_empty() {
-                    return Err("custom header must not be empty".into());
-                }
-
-                if proxies.is_empty() {
-                    return Err("custom proxies must not be empty".into());
-                }
-
-                Ok(())
-            }
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum HttpsConfig {
-    Proxy,
-    Acme,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-pub struct RouteConfig {
-    /// URL path prefix (e.g. "/billing", "/billing/static")
-    pub path: String,
-    #[serde(flatten)]
-    pub action: RouteAction,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum RouteAction {
+pub enum RouteConfig {
     ReverseProxy {
+        /// URL location prefix (e.g. "/billing")
+        location: String,
         /// Upstream URL (e.g. "http://127.0.0.1:8000")
         target: Value,
     },
     ServeFiles {
+        /// URL location prefix (e.g. "/billing/static")
+        location: String,
         /// Filesystem root
         root: Value,
-        /// Single Page Application fallback
+        /// Single Page Application
         #[serde(default)]
         spa: bool,
     },
 }
 
-impl ValidateConfig for DomainConfig {
-    fn validate_config(&self) -> Result<(), String> {
-        if self.hosts.is_empty() {
-            return Err("hosts must not be empty".into());
-        }
-
-        for host in &self.hosts {
-            if host.trim().is_empty() {
-                return Err("host must not be empty".into());
-            }
-        }
-
-        if let Some(proxy) = &self.proxy {
-            proxy.validate_config()?;
-        }
-
-        for route in &self.routes {
-            if !url_path(&route.path) {
-                return Err(format!("invalid route path: '{}'", route.path));
-            }
-        }
-
-        Ok(())
-    }
-}
-
 impl DomainConfig {
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
         for (index, route) in self.routes.iter().enumerate() {
-            let (value, leaf) = match &route.action {
-                RouteAction::ReverseProxy { target } => (target, "target"),
-                RouteAction::ServeFiles { root, .. } => (root, "root"),
+            let (value, leaf) = match &route {
+                RouteConfig::ReverseProxy { target, .. } => (target, "target"),
+                RouteConfig::ServeFiles { root, .. } => (root, "root"),
             };
             value
                 .render(ctx)
@@ -133,7 +73,6 @@ impl DomainConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ValidateConfig;
 
     #[test]
     fn parse_domain_config_with_custom_proxy() {
@@ -147,14 +86,13 @@ proxy:
   header: X-Forwarded-For
   proxies:
     - 192.0.2.10
-https: proxy
 custom_config: |
   add_header X-Test true;
 routes:
-  - path: /api
+  - location: /api
     kind: reverse_proxy
     target: "${backend:url}"
-  - path: /static
+  - location: /static
     kind: serve_files
     root: "/var/www/site"
     spa: true
@@ -173,24 +111,18 @@ routes:
                 proxies: vec!["192.0.2.10".into()],
             })
         );
-        assert_eq!(config.https, Some(HttpsConfig::Proxy));
         assert_eq!(config.routes.len(), 2);
 
-        assert!(matches!(
-            config.routes[0].action,
-            RouteAction::ReverseProxy { .. }
-        ));
-        match &config.routes[1].action {
-            RouteAction::ServeFiles { spa, .. } => assert!(*spa),
+        assert!(matches!(config.routes[0], RouteConfig::ReverseProxy { .. }));
+        match &config.routes[1] {
+            RouteConfig::ServeFiles { spa, .. } => assert!(*spa),
             _ => panic!("expected serve_files action"),
         }
-
-        assert!(config.validate_config().is_ok());
     }
 
     #[test]
     fn reject_custom_proxy_without_ip() {
-        let config: DomainConfig = serde_yaml::from_str(
+        let result: Result<DomainConfig, _> = serde_yaml::from_str(
             r#"
 hosts:
   - example.com
@@ -200,31 +132,9 @@ proxy:
   proxies: []
 https: acme
 "#,
-        )
-        .unwrap();
+        );
 
-        assert!(config.validate_config().is_err());
-    }
-
-    #[test]
-    fn parse_domain_config_without_proxy_and_https() {
-        let config: DomainConfig = serde_yaml::from_str(
-            r#"
-hosts:
-  - example.com
-custom_config: |
-  add_header X-Domain test;
-routes:
-  - path: /
-    kind: reverse_proxy
-    target: "${backend:url}"
-"#,
-        )
-        .unwrap();
-
-        assert_eq!(config.proxy, None);
-        assert_eq!(config.https, None);
-        assert!(config.validate_config().is_ok());
+        assert!(result.is_err());
     }
 
     #[test]
@@ -243,7 +153,7 @@ routes:
 
     #[test]
     fn reject_empty_hosts() {
-        let config: DomainConfig = serde_yaml::from_str(
+        let result: Result<DomainConfig, _> = serde_yaml::from_str(
             r#"
 hosts: []
 routes:
@@ -251,13 +161,9 @@ routes:
     kind: reverse_proxy
     target: "${backend:url}"
 "#,
-        )
-        .unwrap();
-
-        assert_eq!(
-            config.validate_config(),
-            Err("hosts must not be empty".into()),
         );
+
+        assert!(result.is_err());
     }
 
     #[test]

@@ -16,7 +16,7 @@ server {
 {% endif %}
 {% for route in routes %}
 
-    location {{ route.path }} {
+    location {{ route.location }} {
 {% if route.kind == "reverse_proxy" %}
         proxy_hide_header Cache-Control;
         add_header Cache-Control "private, no-store" always;

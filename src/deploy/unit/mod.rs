@@ -71,7 +71,7 @@ impl ValidateConfig for UnitConfig {
             UnitConfig::App(config) => config.validate_config(),
             UnitConfig::Db(config) => config.validate_config(),
             UnitConfig::DbServer(config) => config.validate_config(),
-            UnitConfig::Domain(config) => config.validate_config(),
+            UnitConfig::Domain(_) => Ok(()),
         }
     }
 }
@@ -214,9 +214,8 @@ hosts:
   - example.com
 proxy:
   type: cloudflare
-https: proxy
 routes:
-  - path: /api
+  - location: /api
     kind: reverse_proxy
     target: "${backend:url}"
 "#,
