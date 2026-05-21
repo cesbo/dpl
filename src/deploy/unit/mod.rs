@@ -182,6 +182,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::SecretName;
 
     #[test]
     fn parse_domain_unit_config() {
@@ -219,7 +220,7 @@ secret: pg-pass
             panic!("expected db-server variant");
         };
         assert_eq!(db.version, "18");
-        assert_eq!(db.secret, "pg-pass");
+        assert_eq!(db.secret.as_str(), "pg-pass");
     }
 
     #[test]
@@ -330,7 +331,7 @@ databases:
         let original = UnitConfig::DbServer(DbServerConfig {
             engine: DbServerEngine::Postgresql,
             version: "18-alpine".into(),
-            secret: "pg-pass".into(),
+            secret: SecretName::new("pg-pass").unwrap(),
         });
         original.save(&ctx, &unit_name).unwrap();
 
@@ -387,7 +388,8 @@ databases:
         let key = MasterKey::generate(base.path());
         key.save().unwrap();
         // Provide pg-main's password so recursive server-validation succeeds.
-        key.encrypt_to_file("pg-pass", "pg-secret").unwrap();
+        key.encrypt_to_file(&SecretName::new("pg-pass").unwrap(), "pg-secret")
+            .unwrap();
         // `foo-db-test-password` is intentionally absent — this is the leaf failure.
 
         let ctx = MainContext {

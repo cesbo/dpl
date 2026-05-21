@@ -27,6 +27,7 @@ use rand::{
 
 use crate::{
     MainContext,
+    config::SecretName,
     secret::{
         self,
         SecretError,
@@ -76,6 +77,7 @@ pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
 }
 
 fn create(ctx: &MainContext, name: &str, source: Option<&str>) -> Result<()> {
+    let name = &SecretName::new(name)?;
     match ctx.check_secret(name) {
         Ok(_) => bail!(SecretError::AlreadyExists {
             name: name.to_string(),
@@ -96,12 +98,14 @@ fn create(ctx: &MainContext, name: &str, source: Option<&str>) -> Result<()> {
 }
 
 fn cat(ctx: &MainContext, name: &str) -> Result<()> {
+    let name = &SecretName::new(name)?;
     let value = ctx.resolve_secret(name)?;
     println!("{value}");
     Ok(())
 }
 
 fn rm(ctx: &MainContext, name: &str) -> Result<()> {
+    let name = &SecretName::new(name)?;
     secret::remove(ctx.base(), name)?;
     println!("secret '{}' removed", name);
 
@@ -171,10 +175,10 @@ pub fn prompt_value_or_random() -> Result<String> {
 }
 
 /// Pick an existing secret with a fuzzy selector, or create a new one inline.
-pub fn prompt_secret(ctx: &MainContext) -> Result<String> {
+pub fn prompt_secret(ctx: &MainContext) -> Result<SecretName> {
     let names = secret::list_secrets(ctx.base())?;
 
-    let mut items: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut items: Vec<&str> = names.iter().map(SecretName::as_str).collect();
     items.push(CREATE_NEW_SECRET);
 
     let index = FuzzySelect::with_theme(&ColorfulTheme::default())
@@ -190,11 +194,19 @@ pub fn prompt_secret(ctx: &MainContext) -> Result<String> {
     }
 }
 
-fn create_new_secret(ctx: &MainContext) -> Result<String> {
+fn create_new_secret(ctx: &MainContext) -> Result<SecretName> {
     loop {
-        let name: String = Input::with_theme(&ColorfulTheme::default())
+        let raw: String = Input::with_theme(&ColorfulTheme::default())
             .with_prompt("Secret name")
             .interact_text()?;
+
+        let name = match SecretName::new(raw) {
+            Ok(name) => name,
+            Err(err) => {
+                eprintln!("{err}");
+                continue;
+            }
+        };
 
         match ctx.check_secret(&name) {
             Ok(_) => return Ok(name),

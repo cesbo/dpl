@@ -30,14 +30,6 @@ pub fn env_name(name: &str) -> bool {
         .all(|&b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
-pub fn secret_name(path: &str) -> bool {
-    if path.is_empty() {
-        return false;
-    }
-
-    path.split('/').all(resource_name)
-}
-
 pub fn url_path(path: &str) -> bool {
     if path == "/" {
         return true;
@@ -85,24 +77,6 @@ mod tests {
         assert!(!env_name("FOO BAR"));
         assert!(!env_name("FOO.BAR"));
         assert!(!env_name("ÜMLAUT"));
-    }
-
-    #[test]
-    fn secret_name_accepts_valid() {
-        assert!(secret_name("foo"));
-        assert!(secret_name("foo/bar"));
-        assert!(secret_name("a-b-c"));
-        assert!(secret_name("db/prod-password"));
-        assert!(secret_name("a/b/c"));
-    }
-
-    #[test]
-    fn secret_name_rejects_invalid() {
-        assert!(!secret_name(""));
-        assert!(!secret_name("/foo"));
-        assert!(!secret_name("foo/"));
-        assert!(!secret_name("foo//bar"));
-        assert!(!secret_name("foo/../bar"));
     }
 
     #[test]

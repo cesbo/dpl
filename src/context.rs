@@ -5,9 +5,12 @@ use std::path::{
 
 use thiserror::Error;
 
-use crate::secret::{
-    MasterKey,
-    SecretError,
+use crate::{
+    config::SecretName,
+    secret::{
+        MasterKey,
+        SecretError,
+    },
 };
 
 #[derive(Debug, Error)]
@@ -48,7 +51,7 @@ impl MainContext {
         &self.base
     }
 
-    pub fn resolve_secret(&self, name: &str) -> Result<String, SecretError> {
+    pub fn resolve_secret(&self, name: &SecretName) -> Result<String, SecretError> {
         let Some(master_key) = &self.master_key else {
             return Err(SecretError::KeyNotFound);
         };
@@ -56,7 +59,7 @@ impl MainContext {
         master_key.decrypt_from_file(name)
     }
 
-    pub fn check_secret(&self, name: &str) -> Result<(), SecretError> {
+    pub fn check_secret(&self, name: &SecretName) -> Result<(), SecretError> {
         crate::secret::check(&self.base, name)
     }
 }

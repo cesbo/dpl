@@ -8,13 +8,15 @@ use thiserror::Error;
 
 use crate::{
     MainContext,
-    config::ResourceName,
+    config::{
+        ResourceName,
+        SecretName,
+    },
     deploy::unit,
     error::{
         Location,
         RefError,
     },
-    validate,
 };
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -63,7 +65,7 @@ impl Ns {
 
     fn validate_name(&self, name: &str) -> bool {
         match self {
-            Self::Secret => validate::secret_name(name),
+            Self::Secret => SecretName::is_valid(name),
             Self::Unit(_) => true,
         }
     }
@@ -163,10 +165,13 @@ impl Value {
                 Segment::Ref { ns, name } => {
                     let token = format!("${{{}:{}}}", ns.as_str(), name);
                     let value = match ns {
-                        Ns::Secret => ctx
-                            .resolve_secret(name)
-                            .map_err(RefError::from)
-                            .map_err(|e| e.at(Location::token(&token)))?,
+                        Ns::Secret => {
+                            let secret = SecretName::new(name.clone())
+                                .expect("validated at parse");
+                            ctx.resolve_secret(&secret)
+                                .map_err(RefError::from)
+                                .map_err(|e| e.at(Location::token(&token)))?
+                        }
                         Ns::Unit(unit_name) => unit::resolve_export(ctx, unit_name, name)
                             .map_err(|e| e.at(Location::token(&token)))?,
                     };

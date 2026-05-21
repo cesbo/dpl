@@ -39,6 +39,8 @@ use serde::{
 };
 use thiserror::Error;
 
+use crate::config::SecretName;
+
 const KEY_NAME: &str = "master.key";
 const KEY_LEN: usize = 32;
 const NONCE_LEN: usize = 12;
@@ -65,9 +67,6 @@ pub struct SecretFile {
 
 #[derive(Debug, Error)]
 pub enum SecretError {
-    #[error("invalid secret name '{name}'")]
-    InvalidName { name: String },
-
     #[error("secret '{name}' not found")]
     NotFound { name: String },
 
@@ -128,27 +127,9 @@ pub fn get_secrets_dir(base: &Path) -> PathBuf {
     base.join(".secrets")
 }
 
-fn get_secret_path(secrets_dir: &Path, name: &str) -> Result<PathBuf, SecretError> {
-    if !crate::validate::secret_name(name) {
-        return Err(SecretError::InvalidName {
-            name: name.to_string(),
-        });
-    }
-
-    let mut dir = secrets_dir.to_path_buf();
-    let parts = name.split('/').collect::<Vec<&str>>();
-    let (last, rest) = parts.split_last().unwrap();
-    for item in rest {
-        dir = dir.join(item);
-    }
-    let path = dir.join(format!("{last}.yaml"));
-
-    Ok(path)
-}
-
 /// List all secret names under `base` (e.g. `foo`, `group/bar`), sorted.
 /// Returns an empty vec when the secrets dir does not exist.
-pub fn list_secrets(base: &Path) -> io::Result<Vec<String>> {
+pub fn list_secrets(base: &Path) -> io::Result<Vec<SecretName>> {
     let secrets_dir = get_secrets_dir(base);
     let mut out = Vec::new();
     walk_secrets(&secrets_dir, &secrets_dir, &mut out)?;
@@ -156,7 +137,7 @@ pub fn list_secrets(base: &Path) -> io::Result<Vec<String>> {
     Ok(out)
 }
 
-fn walk_secrets(root: &Path, dir: &Path, out: &mut Vec<String>) -> io::Result<()> {
+fn walk_secrets(root: &Path, dir: &Path, out: &mut Vec<SecretName>) -> io::Result<()> {
     let entries = match fs::read_dir(dir) {
         Ok(v) => v,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -195,15 +176,18 @@ fn walk_secrets(root: &Path, dir: &Path, out: &mut Vec<String>) -> io::Result<()
             display.push(parent);
         }
         display.push(stem);
-        out.push(display.to_string_lossy().into_owned());
+        let Ok(name) = SecretName::new(display.to_string_lossy().into_owned()) else {
+            continue;
+        };
+        out.push(name);
     }
 
     Ok(())
 }
 
-pub fn check(base: &Path, name: &str) -> Result<(), SecretError> {
+pub fn check(base: &Path, name: &SecretName) -> Result<(), SecretError> {
     let secrets_dir = get_secrets_dir(base);
-    let path = get_secret_path(&secrets_dir, name)?;
+    let path = name.file_path_in(&secrets_dir);
     match fs::metadata(path) {
         Ok(_) => Ok(()),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Err(SecretError::NotFound {
@@ -216,9 +200,9 @@ pub fn check(base: &Path, name: &str) -> Result<(), SecretError> {
     }
 }
 
-pub fn remove(base: &Path, name: &str) -> Result<(), SecretError> {
+pub fn remove(base: &Path, name: &SecretName) -> Result<(), SecretError> {
     let secrets_dir = get_secrets_dir(base);
-    let path = get_secret_path(&secrets_dir, name)?;
+    let path = name.file_path_in(&secrets_dir);
     match remove_file(&path) {
         Ok(_) => Ok(()),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Err(SecretError::NotFound {
@@ -283,12 +267,12 @@ impl MasterKey {
         Ok(())
     }
 
-    pub fn encrypt_to_file(&self, name: &str, text: &str) -> Result<(), SecretError> {
-        let path = get_secret_path(&self.secrets_dir, name)?;
+    pub fn encrypt_to_file(&self, name: &SecretName, text: &str) -> Result<(), SecretError> {
+        let path = name.file_path_in(&self.secrets_dir);
         let metadata = SecretMetadata {
             created_at: Utc::now(),
         };
-        let secret_file = self.encrypt(name, &metadata, text)?;
+        let secret_file = self.encrypt(name.as_str(), &metadata, text)?;
         let yaml =
             serde_yaml::to_string(&secret_file).map_err(|source| SecretError::Serialize {
                 name: name.to_string(),
@@ -366,8 +350,8 @@ impl MasterKey {
         })
     }
 
-    pub fn decrypt_from_file(&self, name: &str) -> Result<String, SecretError> {
-        let path = get_secret_path(&self.secrets_dir, name)?;
+    pub fn decrypt_from_file(&self, name: &SecretName) -> Result<String, SecretError> {
+        let path = name.file_path_in(&self.secrets_dir);
         let content = fs::read_to_string(&path).map_err(|source| {
             if source.kind() == io::ErrorKind::NotFound {
                 SecretError::NotFound {
@@ -387,7 +371,7 @@ impl MasterKey {
                 source,
             })?;
 
-        self.decrypt(name, &file)
+        self.decrypt(name.as_str(), &file)
     }
 
     fn decrypt(&self, name: &str, file: &SecretFile) -> Result<String, SecretError> {
@@ -507,13 +491,14 @@ mod tests {
         let tmp = tempdir().unwrap();
         let base = tmp.path();
         let key = MasterKey::generate(base);
-        key.encrypt_to_file("group/foo", "secret-value").unwrap();
+        let name = SecretName::new("group/foo").unwrap();
+        key.encrypt_to_file(&name, "secret-value").unwrap();
 
-        let path = get_secret_path(&get_secrets_dir(base), "group/foo").unwrap();
+        let path = name.file_path_in(&get_secrets_dir(base));
         assert!(path.extension().is_some_and(|ext| ext == "yaml"));
         assert!(path.exists());
 
-        let plain = key.decrypt_from_file("group/foo").unwrap();
+        let plain = key.decrypt_from_file(&name).unwrap();
         assert_eq!(plain, "secret-value");
     }
 
@@ -522,9 +507,10 @@ mod tests {
         let tmp = tempdir().unwrap();
         let base = tmp.path();
         let key = MasterKey::generate(base);
-        key.encrypt_to_file("foo", "v").unwrap();
+        let name = SecretName::new("foo").unwrap();
+        key.encrypt_to_file(&name, "v").unwrap();
 
-        let path = get_secret_path(&get_secrets_dir(base), "foo").unwrap();
+        let path = name.file_path_in(&get_secrets_dir(base));
         let content = fs::read_to_string(&path).unwrap();
         let file: SecretFile = serde_yaml::from_str(&content).unwrap();
         assert_eq!(file.version, 1);

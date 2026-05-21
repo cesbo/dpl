@@ -10,7 +10,10 @@ use serde::{
 
 use crate::{
     MainContext,
-    config::ResourceName,
+    config::{
+        ResourceName,
+        SecretName,
+    },
     deploy::unit::UnitConfig,
     error::{
         Location,
@@ -30,7 +33,7 @@ const USERINFO: &AsciiSet = &NON_ALPHANUMERIC
 pub struct DbServerConfig {
     pub engine: DbServerEngine,
     pub version: String,
-    pub secret: String,
+    pub secret: SecretName,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -38,7 +41,7 @@ pub struct DbServerConfig {
 pub struct DbConfig {
     pub server: ResourceName,
     pub user: String,
-    pub secret: String,
+    pub secret: SecretName,
 }
 
 impl DbConfig {
@@ -211,7 +214,23 @@ secret: pg-pass
 
         assert_eq!(config.engine, DbServerEngine::Postgresql);
         assert_eq!(config.version, "18");
-        assert_eq!(config.secret, "pg-pass");
+        assert_eq!(config.secret.as_str(), "pg-pass");
+    }
+
+    #[test]
+    fn reject_invalid_secret_name() {
+        let err = serde_yaml::from_str::<DbServerConfig>(
+            r#"
+engine: postgresql
+version: "18"
+secret: Bad/Name
+"#,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid secret name"),
+            "unexpected error: {err}"
+        );
     }
 
     // TODO: re-enable when proper validator lands
@@ -221,36 +240,9 @@ secret: pg-pass
         let config = DbServerConfig {
             engine: DbServerEngine::Postgresql,
             version: " ".into(),
-            secret: "pg-pass".into(),
+            secret: SecretName::new("pg-pass").unwrap(),
         };
         assert!(config.validate_config().is_err());
-    }
-
-    #[test]
-    fn reject_invalid_secret_name() {
-        let config = DbServerConfig {
-            engine: DbServerEngine::Postgresql,
-            version: "18".into(),
-            secret: "Bad/Name".into(),
-        };
-        assert!(config.validate_config().is_err());
-    }
-
-    #[test]
-    fn db_config_rejects_invalid_fields() {
-        let bad_server = DbConfig {
-            server: ResourceName::new("pg-main").unwrap(),
-            user: "Bad_User".into(),
-            secret: "app1-pass".into(),
-        };
-        assert!(bad_server.validate_config().is_err());
-
-        let bad_secret = DbConfig {
-            server: ResourceName::new("pg-main").unwrap(),
-            user: "app1".into(),
-            secret: "Bad/Secret/".into(),
-        };
-        assert!(bad_secret.validate_config().is_err());
     }
     */
 
@@ -267,7 +259,7 @@ secret: app1-pass
 
         assert_eq!(config.server.as_str(), "pg-main");
         assert_eq!(config.user, "app1");
-        assert_eq!(config.secret, "app1-pass");
+        assert_eq!(config.secret.as_str(), "app1-pass");
     }
 
     #[test]
@@ -275,7 +267,7 @@ secret: app1-pass
         let config = DbConfig {
             server: ResourceName::new("pg-main").unwrap(),
             user: "app1".into(),
-            secret: "app1-pass".into(),
+            secret: SecretName::new("app1-pass").unwrap(),
         };
         let unit = ResourceName::new("app-db").unwrap();
         let err = config
@@ -306,7 +298,8 @@ secret: app1-pass
 
         let key = MasterKey::generate(base.path());
         key.save().unwrap();
-        key.encrypt_to_file("app1-pass", "top$ecret&").unwrap();
+        key.encrypt_to_file(&SecretName::new("app1-pass").unwrap(), "top$ecret&")
+            .unwrap();
 
         let ctx = MainContext {
             base: base.path().to_path_buf(),
@@ -315,7 +308,7 @@ secret: app1-pass
         let config = DbConfig {
             server: ResourceName::new("pg-main").unwrap(),
             user: "app1".into(),
-            secret: "app1-pass".into(),
+            secret: SecretName::new("app1-pass").unwrap(),
         };
         let unit = ResourceName::new("app-db").unwrap();
 
@@ -371,7 +364,8 @@ secret: app1-pass
 
         let key = MasterKey::generate(base.path());
         key.save().unwrap();
-        key.encrypt_to_file("app1-pass", "top$ecret&").unwrap();
+        key.encrypt_to_file(&SecretName::new("app1-pass").unwrap(), "top$ecret&")
+            .unwrap();
 
         let ctx = MainContext {
             base: base.path().to_path_buf(),
@@ -380,7 +374,7 @@ secret: app1-pass
         let config = DbConfig {
             server: ResourceName::new("maria-main").unwrap(),
             user: "app1".into(),
-            secret: "app1-pass".into(),
+            secret: SecretName::new("app1-pass").unwrap(),
         };
         let unit = ResourceName::new("app-db").unwrap();
 

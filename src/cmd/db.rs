@@ -29,7 +29,10 @@ use dialoguer::{
 
 use crate::{
     MainContext,
-    config::ResourceName,
+    config::{
+        ResourceName,
+        SecretName,
+    },
     deploy::{
         UnitConfig,
         unit::{
@@ -143,7 +146,7 @@ fn init(
     };
 
     let secret_name = match secret_name {
-        Some(value) => value,
+        Some(value) => SecretName::new(value)?,
         None => super::secret::prompt_secret(ctx)?,
     };
 
@@ -217,7 +220,7 @@ fn create(
     };
 
     let secret_name = match secret_name {
-        Some(value) => value,
+        Some(value) => SecretName::new(value)?,
         None => super::secret::prompt_secret(ctx)?,
     };
 
@@ -287,7 +290,7 @@ fn wait(ctx: &MainContext, name: &str, timeout_secs: u64) -> Result<()> {
     }
 }
 
-fn resolve_secret(ctx: &MainContext, name: &str) -> Result<String> {
+fn resolve_secret(ctx: &MainContext, name: &SecretName) -> Result<String> {
     ctx.resolve_secret(name)
         .with_context(|| format!("resolve secret '{name}'"))
 }
