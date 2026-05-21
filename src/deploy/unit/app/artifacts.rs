@@ -197,9 +197,12 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::deploy::{
-        EnvList,
-        unit::app::model::*,
+    use crate::{
+        config::ResourceName,
+        deploy::{
+            EnvList,
+            unit::app::model::*,
+        },
     };
 
     #[test]
@@ -258,7 +261,10 @@ mod tests {
                     script: "echo sync".into(),
                 },
             ],
-            databases: vec!["main-db".to_owned(), "cache-db".to_owned()],
+            databases: vec![
+                ResourceName::new("main-db").unwrap(),
+                ResourceName::new("cache-db").unwrap(),
+            ],
         };
 
         let name = "my-app";

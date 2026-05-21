@@ -20,7 +20,7 @@ use crate::{
     MainContext,
     config::{
         ConfigError,
-        ValidateConfig,
+        ResourceName,
         load_config,
         save_config,
     },
@@ -32,9 +32,6 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum UnitConfigError {
-    #[error("invalid unit name '{name}'")]
-    InvalidName { name: String },
-
     #[error("unit '{name}' not found")]
     NotFound { name: String },
 
@@ -50,7 +47,6 @@ impl From<UnitConfigError> for RefError {
     fn from(err: UnitConfigError) -> Self {
         match err {
             UnitConfigError::NotFound { name } => RefError::UnknownUnit { name },
-            UnitConfigError::InvalidName { name } => RefError::UnknownUnit { name },
             UnitConfigError::Config { name, source } => RefError::LoadConfig { name, source },
         }
     }
@@ -65,26 +61,10 @@ pub enum UnitConfig {
     Domain(DomainConfig),
 }
 
-impl ValidateConfig for UnitConfig {
-    fn validate_config(&self) -> Result<(), String> {
-        match self {
-            UnitConfig::App(config) => config.validate_config(),
-            UnitConfig::Db(config) => config.validate_config(),
-            UnitConfig::DbServer(config) => config.validate_config(),
-            UnitConfig::Domain(_) => Ok(()),
-        }
-    }
-}
-
 impl UnitConfig {
-    pub fn load(ctx: &MainContext, name: &str) -> Result<Self, UnitConfigError> {
-        if !crate::validate::resource_name(name) {
-            return Err(UnitConfigError::InvalidName {
-                name: name.to_string(),
-            });
-        }
-
-        let path = ctx.base().join(name).join("config.yaml");
+    pub fn load(ctx: &MainContext, name: &ResourceName) -> Result<Self, UnitConfigError> {
+        let unit_dir = name.unit_dir(ctx);
+        let path = unit_dir.join("config.yaml");
         load_config(&path).map_err(|err| {
             if err.is_not_found() {
                 UnitConfigError::NotFound {
@@ -99,19 +79,13 @@ impl UnitConfig {
         })
     }
 
-    pub fn save(&self, ctx: &MainContext, name: &str) -> Result<(), UnitConfigError> {
-        if !crate::validate::resource_name(name) {
-            return Err(UnitConfigError::InvalidName {
-                name: name.to_string(),
-            });
-        }
-
-        let dir = ctx.base().join(name);
-        fs::create_dir_all(&dir).map_err(|err| UnitConfigError::Config {
+    pub fn save(&self, ctx: &MainContext, name: &ResourceName) -> Result<(), UnitConfigError> {
+        let unit_dir = name.unit_dir(ctx);
+        fs::create_dir_all(&unit_dir).map_err(|err| UnitConfigError::Config {
             name: name.to_string(),
             source: ConfigError::Write(err),
         })?;
-        let path = dir.join("config.yaml");
+        let path = unit_dir.join("config.yaml");
         save_config(&path, self).map_err(|source| UnitConfigError::Config {
             name: name.to_string(),
             source,
@@ -139,7 +113,7 @@ impl UnitConfig {
     pub fn resolve_export(
         &self,
         ctx: &MainContext,
-        unit_name: &str,
+        unit_name: &ResourceName,
         key: &str,
     ) -> Result<String, RefError> {
         match self {
@@ -152,15 +126,19 @@ impl UnitConfig {
     }
 }
 
-pub fn resolve_export(ctx: &MainContext, unit_name: &str, key: &str) -> Result<String, RefError> {
+pub fn resolve_export(
+    ctx: &MainContext,
+    unit_name: &ResourceName,
+    key: &str,
+) -> Result<String, RefError> {
     UnitConfig::load(ctx, unit_name)
         .map_err(RefError::from)
         .and_then(|cfg| cfg.resolve_export(ctx, unit_name, key))
-        .map_err(|err| err.at(Location::unit(unit_name)))
+        .map_err(|err| err.at(Location::unit(unit_name.as_str())))
 }
 
 /// Return all units satisfies `predicate`, sorted by name.
-pub fn list_units<F>(ctx: &MainContext, predicate: F) -> Vec<(String, UnitConfig)>
+pub fn list_units<F>(ctx: &MainContext, predicate: F) -> Vec<(ResourceName, UnitConfig)>
 where
     F: Fn(&UnitConfig) -> bool,
 {
@@ -169,7 +147,7 @@ where
         Err(_) => return Vec::new(),
     };
 
-    let mut out: Vec<(String, UnitConfig)> = Vec::new();
+    let mut out: Vec<(ResourceName, UnitConfig)> = Vec::new();
     for entry in entries.flatten() {
         let Ok(file_type) = entry.file_type() else {
             continue;
@@ -179,20 +157,21 @@ where
             continue;
         }
 
-        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+        let file_name = entry.file_name();
+        let Some(raw) = file_name.to_str() else {
             continue;
         };
 
-        if !crate::validate::resource_name(&name) {
+        let Ok(unit_name) = ResourceName::new(raw) else {
             continue;
-        }
+        };
 
-        let Ok(config) = UnitConfig::load(ctx, &name) else {
+        let Ok(config) = UnitConfig::load(ctx, &unit_name) else {
             continue;
         };
 
         if predicate(&config) {
-            out.push((name, config));
+            out.push((unit_name, config));
         }
     }
 
@@ -203,7 +182,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ValidateConfig;
 
     #[test]
     fn parse_domain_unit_config() {
@@ -223,7 +201,6 @@ routes:
         .unwrap();
 
         assert!(matches!(config, UnitConfig::Domain(_)));
-        assert!(config.validate_config().is_ok());
     }
 
     #[test]
@@ -243,7 +220,6 @@ secret: pg-pass
         };
         assert_eq!(db.version, "18");
         assert_eq!(db.secret, "pg-pass");
-        assert!(config.validate_config().is_ok());
     }
 
     #[test]
@@ -266,7 +242,8 @@ databases:
         let UnitConfig::App(app) = config else {
             panic!("expected app variant");
         };
-        assert_eq!(app.databases, vec!["main-db", "cache-db"]);
+        let dbs: Vec<&str> = app.databases.iter().map(|n| n.as_str()).collect();
+        assert_eq!(dbs, vec!["main-db", "cache-db"]);
     }
 
     #[test]
@@ -290,7 +267,7 @@ databases:
         };
 
         // load skips reference validation: succeeds even with a missing ref.
-        let unit = UnitConfig::load(&ctx, "app-x").unwrap();
+        let unit = UnitConfig::load(&ctx, &ResourceName::new("app-x").unwrap()).unwrap();
         assert!(matches!(unit, UnitConfig::App(_)));
 
         // validate_references surfaces the missing unit through the typed chain.
@@ -348,45 +325,20 @@ databases:
             base: base.path().to_path_buf(),
             master_key: None,
         };
+        let unit_name = ResourceName::new("pg-main").unwrap();
 
         let original = UnitConfig::DbServer(DbServerConfig {
             engine: DbServerEngine::Postgresql,
             version: "18-alpine".into(),
             secret: "pg-pass".into(),
         });
-        original.save(&ctx, "pg-main").unwrap();
+        original.save(&ctx, &unit_name).unwrap();
 
-        let loaded = UnitConfig::load(&ctx, "pg-main").unwrap();
+        let loaded = UnitConfig::load(&ctx, &unit_name).unwrap();
         let (UnitConfig::DbServer(a), UnitConfig::DbServer(b)) = (&original, &loaded) else {
             panic!("expected db-server variants");
         };
         assert_eq!(a, b);
-    }
-
-    #[test]
-    fn save_rejects_invalid_name() {
-        use tempfile::TempDir;
-
-        use crate::deploy::unit::db::{
-            DbServerConfig,
-            DbServerEngine,
-        };
-
-        let base = TempDir::new().unwrap();
-        let ctx = MainContext {
-            base: base.path().to_path_buf(),
-            master_key: None,
-        };
-
-        let unit = UnitConfig::DbServer(DbServerConfig {
-            engine: DbServerEngine::Postgresql,
-            version: "18".into(),
-            secret: "pg-pass".into(),
-        });
-        assert!(matches!(
-            unit.save(&ctx, "Bad/Name"),
-            Err(UnitConfigError::InvalidName { .. })
-        ));
     }
 
     #[test]
@@ -443,7 +395,7 @@ databases:
             master_key: Some(MasterKey::load(base.path()).unwrap()),
         };
 
-        let foo = UnitConfig::load(&ctx, "foo").unwrap();
+        let foo = UnitConfig::load(&ctx, &ResourceName::new("foo").unwrap()).unwrap();
         let err = foo.validate_references(&ctx).unwrap_err();
 
         // Expected chain (outer → inner):
@@ -496,7 +448,12 @@ databases:
 
     #[test]
     fn resolve_export_unknown_unit() {
-        let err = resolve_export(&MainContext::default(), "nope", "user").unwrap_err();
+        let err = resolve_export(
+            &MainContext::default(),
+            &ResourceName::new("nope").unwrap(),
+            "user",
+        )
+        .unwrap_err();
         let RefError::At { location, inner } = err else {
             panic!("expected At wrapper, got {err:?}");
         };
@@ -523,7 +480,8 @@ databases:
             base: base.path().to_path_buf(),
             master_key: None,
         };
-        let err = resolve_export(&ctx, "example-com", "host").unwrap_err();
+        let err =
+            resolve_export(&ctx, &ResourceName::new("example-com").unwrap(), "host").unwrap_err();
         let RefError::At { location, inner } = err else {
             panic!("expected At wrapper, got {err:?}");
         };
@@ -553,6 +511,5 @@ runtime:
             panic!("expected app variant");
         };
         assert_eq!(app.runtime.cmd, "./run");
-        assert_eq!(app.runtime.env.validate_config(), Ok(()));
     }
 }

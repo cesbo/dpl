@@ -16,6 +16,7 @@ use clap::Subcommand;
 
 use crate::{
     MainContext,
+    config::ResourceName,
     deploy::{
         DeployState,
         UnitConfig,
@@ -43,28 +44,32 @@ enum Cmd {
 
 pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
     match args.cmd {
-        Cmd::Deploy { name, path } => deploy(ctx, &name, path.as_deref()),
+        Cmd::Deploy { name, path } => {
+            let name = ResourceName::new(name)?;
+            deploy(ctx, &name, path.as_deref())
+        }
     }
 }
 
 pub fn check(ctx: &MainContext, name: &str) -> Result<()> {
-    let _ = load_unit(ctx, name)?;
+    let name = ResourceName::new(name)?;
+    let _ = load_unit(ctx, &name)?;
     println!("ok");
     Ok(())
 }
 
-fn deploy(ctx: &MainContext, name: &str, path: Option<&Path>) -> Result<()> {
+fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Result<()> {
     let unit = load_unit(ctx, name)?;
 
     let UnitConfig::App(app_config) = unit else {
         bail!("deploy not allowed for unit '{name}'");
     };
 
-    let unit_dir = ctx.base().join(name);
+    let unit_dir = name.unit_dir(ctx);
     let (_guard, state) =
         DeployState::acquire(&unit_dir).with_context(|| format!("acquire unit '{name}'"))?;
 
-    let app = AppUnit::new(ctx, name, app_config);
+    let app = AppUnit::new(ctx, name.as_str(), app_config);
 
     let (final_state, log) = match path {
         Some(path) => {
@@ -90,13 +95,14 @@ fn deploy(ctx: &MainContext, name: &str, path: Option<&Path>) -> Result<()> {
 }
 
 pub fn inspect(ctx: &MainContext, name: &str) -> Result<()> {
-    let unit = UnitConfig::load(ctx, name)?;
+    let name = ResourceName::new(name)?;
+    let unit = UnitConfig::load(ctx, &name)?;
 
     let UnitConfig::App(_) = unit else {
         bail!("inspect not yet supported for unit '{name}'");
     };
 
-    let unit_dir = ctx.base().join(name);
+    let unit_dir = name.unit_dir(ctx);
     let state = DeployState::load(&unit_dir).context("load deploy state")?;
     let build = &state.latest_build;
     let status = format!("{:?}", build.status).to_lowercase();
@@ -113,7 +119,7 @@ pub fn inspect(ctx: &MainContext, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn load_unit(ctx: &MainContext, name: &str) -> Result<UnitConfig> {
+fn load_unit(ctx: &MainContext, name: &ResourceName) -> Result<UnitConfig> {
     let unit = UnitConfig::load(ctx, name)?;
 
     unit.validate_references(ctx)

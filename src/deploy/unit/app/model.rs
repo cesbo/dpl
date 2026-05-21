@@ -5,7 +5,7 @@ use serde::{
 
 use crate::{
     MainContext,
-    config::ValidateConfig,
+    config::ResourceName,
     deploy::{
         EnvList,
         UnitConfig,
@@ -14,7 +14,6 @@ use crate::{
         Location,
         RefError,
     },
-    validate,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -31,7 +30,7 @@ pub struct AppConfig {
     #[serde(default)]
     pub timers: Vec<TimerConfig>,
     #[serde(default)]
-    pub databases: Vec<String>,
+    pub databases: Vec<ResourceName>,
 }
 
 /// Configuration for a build layer of the application
@@ -101,24 +100,6 @@ pub struct TimerConfig {
     pub script: String,
 }
 
-impl ValidateConfig for TimerConfig {
-    fn validate_config(&self) -> Result<(), String> {
-        if !validate::resource_name(&self.name) {
-            return Err(format!("invalid timer name: '{}'", self.name));
-        }
-
-        if self.schedule.is_empty() {
-            return Err(format!("timer '{}' has empty schedule", self.name));
-        }
-
-        if self.script.is_empty() {
-            return Err(format!("timer '{}' has empty script", self.name));
-        }
-
-        Ok(())
-    }
-}
-
 impl AppConfig {
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
         self.runtime.env.resolve(ctx, "runtime.env")?;
@@ -134,7 +115,7 @@ impl AppConfig {
                     continue;
                 }
                 Ok(_) => RefError::WrongUnitType {
-                    unit: db.clone(),
+                    unit: db.as_str().to_owned(),
                     expected: "db",
                 },
                 Err(err) => err.into(),
@@ -148,12 +129,12 @@ impl AppConfig {
     pub fn resolve_export(
         &self,
         ctx: &MainContext,
-        unit_name: &str,
+        unit_name: &ResourceName,
         key: &str,
     ) -> Result<String, RefError> {
         match key {
             "url" => {
-                let unit_dir = ctx.base().join(unit_name);
+                let unit_dir = unit_name.unit_dir(ctx);
                 let port = super::port::read_port(&unit_dir)
                     .map_err(|err| RefError::Export {
                         reason: format!("resolve app port: {err}"),
@@ -167,27 +148,6 @@ impl AppConfig {
                 key: key.to_owned(),
             }),
         }
-    }
-}
-
-impl ValidateConfig for AppConfig {
-    fn validate_config(&self) -> Result<(), String> {
-        self.runtime.env.validate_config()?;
-        for layer in &self.build {
-            layer.env.validate_config()?;
-        }
-
-        for timer in &self.timers {
-            timer.validate_config()?;
-        }
-
-        for export in &self.exports {
-            if !validate::url_path(&export.path) {
-                return Err(format!("invalid export path: '{}'", export.path));
-            }
-        }
-
-        Ok(())
     }
 }
 
@@ -229,7 +189,9 @@ mod tests {
         };
         let config = sample_config();
         assert_eq!(
-            config.resolve_export(&ctx, "web", "url").unwrap(),
+            config
+                .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "url")
+                .unwrap(),
             "http://127.0.0.1:12345"
         );
     }
@@ -242,7 +204,9 @@ mod tests {
             master_key: None,
         };
         let config = sample_config();
-        let err = config.resolve_export(&ctx, "web", "url").unwrap_err();
+        let err = config
+            .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "url")
+            .unwrap_err();
         let RefError::Export { reason } = err else {
             panic!("expected Export variant, got {err:?}");
         };

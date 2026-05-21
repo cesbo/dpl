@@ -8,6 +8,7 @@ use thiserror::Error;
 
 use crate::{
     MainContext,
+    config::ResourceName,
     deploy::unit,
     error::{
         Location,
@@ -41,7 +42,7 @@ pub enum ValueError {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Ns {
     Secret,
-    Unit(String),
+    Unit(ResourceName),
 }
 
 impl Ns {
@@ -50,17 +51,13 @@ impl Ns {
             return Some(Self::Secret);
         }
 
-        if validate::resource_name(raw) {
-            return Some(Self::Unit(raw.to_owned()));
-        }
-
-        None
+        ResourceName::new(raw).ok().map(Self::Unit)
     }
 
     fn as_str(&self) -> &str {
         match self {
             Self::Secret => "secret",
-            Self::Unit(name) => name,
+            Self::Unit(name) => name.as_str(),
         }
     }
 
@@ -281,7 +278,7 @@ mod tests {
 
     fn uref(unit: &str, key: &str) -> Segment {
         Segment::Ref {
-            ns: Ns::Unit(unit.to_owned()),
+            ns: Ns::Unit(ResourceName::new(unit).unwrap()),
             name: key.to_owned(),
         }
     }
@@ -451,7 +448,7 @@ mod tests {
             refs,
             vec![
                 (&Ns::Secret, "x"),
-                (&Ns::Unit("pg-main".to_owned()), "port"),
+                (&Ns::Unit(ResourceName::new("pg-main").unwrap()), "port"),
             ]
         );
     }
