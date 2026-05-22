@@ -21,7 +21,7 @@ use crate::{
 pub struct AppConfig {
     pub image: String,
     pub port: u16,
-    pub build: Vec<BuildLayerConfig>,
+    pub build: Vec<BuildConfig>,
     pub runtime: RuntimeConfig,
     #[serde(default)]
     pub volumes: Vec<VolumeConfig>,
@@ -36,7 +36,7 @@ pub struct AppConfig {
 /// Configuration for a build layer of the application
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct BuildLayerConfig {
+pub struct BuildConfig {
     /// Description
     pub description: Option<String>,
     /// Files to include in the build layer

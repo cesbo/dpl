@@ -212,28 +212,28 @@ mod tests {
             port: 8080,
             build: vec![
                 // without files
-                BuildLayerConfig {
+                BuildConfig {
                     description: None,
                     files: Vec::new(),
                     env: EnvList::new(),
                     script: Some("date".to_owned()),
                 },
                 // with some files
-                BuildLayerConfig {
+                BuildConfig {
                     description: None,
                     files: vec!["package.json".to_owned(), "package-lock.json".to_owned()],
                     env: EnvList::new(),
                     script: Some("npm ci".to_owned()),
                 },
                 // without script
-                BuildLayerConfig {
+                BuildConfig {
                     description: None,
                     files: vec!["test.txt".to_owned()],
                     env: EnvList::new(),
                     script: None,
                 },
                 // copy all
-                BuildLayerConfig {
+                BuildConfig {
                     description: None,
                     files: vec!["*".to_owned()],
                     env: serde_yaml::from_str("SITE_ID: hello-world").unwrap(),
