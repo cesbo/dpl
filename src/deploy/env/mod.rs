@@ -1,3 +1,4 @@
+mod name;
 mod value;
 
 use std::collections::BTreeMap;
@@ -7,7 +8,10 @@ use serde::{
     Serialize,
 };
 
-pub use self::value::Value;
+pub use self::{
+    name::Name,
+    value::Value,
+};
 use crate::{
     MainContext,
     error::{
@@ -17,7 +21,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-pub struct EnvList(BTreeMap<String, Value>);
+pub struct EnvList(BTreeMap<Name, Value>);
 
 impl EnvList {
     pub fn new() -> Self {
@@ -35,7 +39,7 @@ impl EnvList {
                 let value = v
                     .render(ctx)
                     .map_err(|err| err.at(Location::field(format!("{prefix}.{k}"))))?;
-                Ok((k.clone(), value))
+                Ok((k.to_string(), value))
             })
             .collect()
     }
