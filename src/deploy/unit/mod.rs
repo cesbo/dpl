@@ -94,9 +94,7 @@ impl UnitConfig {
         match self {
             UnitConfig::App(config) => config.resolve_export(ctx, unit_name, key),
             UnitConfig::Db(config) => config.resolve_export(ctx, unit_name, key),
-            _ => Err(RefError::UnknownExport {
-                key: key.to_owned(),
-            }),
+            _ => Err(RefError::unknown_export(key)),
         }
     }
 }
@@ -157,7 +155,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::SecretName;
+    use crate::{
+        config::SecretName,
+        error::RefErrorKind,
+    };
 
     #[test]
     fn parse_domain_unit_config() {
@@ -248,42 +249,26 @@ databases:
 
         // validate_references surfaces the missing unit through the typed chain.
         let err = unit.validate_references(&ctx).unwrap_err();
-        let RefError::At {
-            location: field_loc,
-            inner: env_inner,
-        } = err
-        else {
-            panic!("expected outer At(Field), got {err:?}");
-        };
+        // Trail is innermost-first: unit → token → field.
         assert!(
-            matches!(&field_loc, Location::Field { path } if path == "runtime.env.OTHER"),
-            "unexpected outer location: {field_loc:?}",
-        );
-        let RefError::At {
-            location: token_loc,
-            inner: unit_layer,
-        } = *env_inner
-        else {
-            panic!("expected At(Token) below field");
-        };
-        assert!(
-            matches!(&token_loc, Location::Token { raw } if raw == "${nope:user}"),
-            "unexpected token location: {token_loc:?}",
-        );
-        let RefError::At {
-            location: unit_loc,
-            inner: leaf,
-        } = *unit_layer
-        else {
-            panic!("expected At(Unit) below token");
-        };
-        assert!(
-            matches!(&unit_loc, Location::Unit { name } if name == "nope"),
-            "unexpected unit location: {unit_loc:?}",
+            matches!(&err.trail[0], Location::Unit { name } if name == "nope"),
+            "unexpected unit location: {:?}",
+            err.trail[0],
         );
         assert!(
-            matches!(*leaf, RefError::UnknownUnit { ref name } if name == "nope"),
-            "unexpected leaf: {leaf:?}",
+            matches!(&err.trail[1], Location::Token { raw } if raw == "${nope:user}"),
+            "unexpected token location: {:?}",
+            err.trail[1],
+        );
+        assert!(
+            matches!(&err.trail[2], Location::Field { path } if path == "runtime.env.OTHER"),
+            "unexpected field location: {:?}",
+            err.trail[2],
+        );
+        assert!(
+            matches!(err.kind, RefErrorKind::UnknownUnit { ref name } if name == "nope"),
+            "unexpected kind: {:?}",
+            err.kind,
         );
     }
 
@@ -375,51 +360,18 @@ databases:
         let foo = UnitConfig::load(&ctx, &ResourceName::new("foo").unwrap()).unwrap();
         let err = foo.validate_references(&ctx).unwrap_err();
 
-        // Expected chain (outer → inner):
-        //   At(Field "runtime.env.X")
-        //     At(Token "${db-test:password}")
-        //       At(Unit "db-test")
-        //         At(Field "secret")
-        //           Secret(NotFound { name: "foo-db-test-password" })
-        let RefError::At {
-            location: l1,
-            inner: i1,
-        } = err
-        else {
-            panic!("layer 1: expected At, got {err:?}");
-        };
-        assert!(matches!(&l1, Location::Field { path } if path == "runtime.env.X"));
-
-        let RefError::At {
-            location: l2,
-            inner: i2,
-        } = *i1
-        else {
-            panic!("layer 2: expected At");
-        };
-        assert!(matches!(&l2, Location::Token { raw } if raw == "${db-test:password}"));
-
-        let RefError::At {
-            location: l3,
-            inner: i3,
-        } = *i2
-        else {
-            panic!("layer 3: expected At");
-        };
-        assert!(matches!(&l3, Location::Unit { name } if name == "db-test"));
-
-        let RefError::At {
-            location: l4,
-            inner: i4,
-        } = *i3
-        else {
-            panic!("layer 4: expected At");
-        };
-        assert!(matches!(&l4, Location::Field { path } if path == "secret"));
-
+        // Expected trail, innermost-first:
+        //   field "secret" → unit "db-test" → token "${db-test:password}"
+        //     → field "runtime.env.X"
+        // with kind Secret(NotFound { name: "foo-db-test-password" }).
+        assert!(matches!(&err.trail[0], Location::Field { path } if path == "secret"));
+        assert!(matches!(&err.trail[1], Location::Unit { name } if name == "db-test"));
+        assert!(matches!(&err.trail[2], Location::Token { raw } if raw == "${db-test:password}"));
+        assert!(matches!(&err.trail[3], Location::Field { path } if path == "runtime.env.X"));
         assert!(
-            matches!(*i4, RefError::Secret(SecretError::NotFound { ref name }) if name == "foo-db-test-password"),
-            "unexpected leaf: {i4:?}",
+            matches!(err.kind, RefErrorKind::Secret(SecretError::NotFound { ref name }) if name == "foo-db-test-password"),
+            "unexpected kind: {:?}",
+            err.kind,
         );
     }
 
@@ -431,11 +383,8 @@ databases:
             "user",
         )
         .unwrap_err();
-        let RefError::At { location, inner } = err else {
-            panic!("expected At wrapper, got {err:?}");
-        };
-        assert!(matches!(&location, Location::Unit { name } if name == "nope"));
-        assert!(matches!(*inner, RefError::UnknownUnit { ref name } if name == "nope"));
+        assert!(matches!(&err.trail[0], Location::Unit { name } if name == "nope"));
+        assert!(matches!(err.kind, RefErrorKind::UnknownUnit { ref name } if name == "nope"));
     }
 
     #[test]
@@ -459,11 +408,8 @@ databases:
         };
         let err =
             resolve_export(&ctx, &ResourceName::new("example-com").unwrap(), "host").unwrap_err();
-        let RefError::At { location, inner } = err else {
-            panic!("expected At wrapper, got {err:?}");
-        };
-        assert!(matches!(&location, Location::Unit { name } if name == "example-com"));
-        assert!(matches!(*inner, RefError::UnknownExport { ref key } if key == "host"));
+        assert!(matches!(&err.trail[0], Location::Unit { name } if name == "example-com"));
+        assert!(matches!(err.kind, RefErrorKind::UnknownExport { ref key } if key == "host"));
     }
 
     #[test]

@@ -78,9 +78,7 @@ impl DbConfig {
                     db = unit_name,
                 ))
             }
-            _ => Err(RefError::UnknownExport {
-                key: key.to_owned(),
-            }),
+            _ => Err(RefError::unknown_export(key)),
         }
     }
 
@@ -95,10 +93,10 @@ impl DbConfig {
             .map_err(RefError::from)
             .and_then(|cfg| match cfg {
                 UnitConfig::DbServer(server) => Ok(server),
-                _ => Err(RefError::WrongUnitType {
-                    unit: self.server.to_string(),
-                    expected: "db-server",
-                }),
+                _ => Err(RefError::wrong_unit_type(
+                    self.server.to_string(),
+                    "db-server",
+                )),
             })
             .map_err(|err| err.at(Location::field("server")))
     }
@@ -200,6 +198,7 @@ impl DbServerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::RefErrorKind;
 
     #[test]
     fn parse_db_config() {
@@ -274,7 +273,7 @@ secret: app1-pass
             .resolve_export(&MainContext::default(), &unit, "unknown")
             .unwrap_err();
         assert!(
-            matches!(&err, RefError::UnknownExport { key } if key == "unknown"),
+            matches!(&err.kind, RefErrorKind::UnknownExport { key } if key == "unknown"),
             "unexpected error: {err:?}"
         );
     }
@@ -317,10 +316,7 @@ secret: app1-pass
             "app-db"
         );
 
-        assert_eq!(
-            config.resolve_export(&ctx, &unit, "user").unwrap(),
-            "app1"
-        );
+        assert_eq!(config.resolve_export(&ctx, &unit, "user").unwrap(), "app1");
 
         assert_eq!(
             config.resolve_export(&ctx, &unit, "password").unwrap(),
@@ -334,10 +330,7 @@ secret: app1-pass
             "pg-main"
         );
 
-        assert_eq!(
-            config.resolve_export(&ctx, &unit, "port").unwrap(),
-            "5432"
-        );
+        assert_eq!(config.resolve_export(&ctx, &unit, "port").unwrap(), "5432");
 
         assert_eq!(
             config.resolve_export(&ctx, &unit, "url").unwrap(),
@@ -383,10 +376,7 @@ secret: app1-pass
             "app-db"
         );
 
-        assert_eq!(
-            config.resolve_export(&ctx, &unit, "user").unwrap(),
-            "app1"
-        );
+        assert_eq!(config.resolve_export(&ctx, &unit, "user").unwrap(), "app1");
 
         assert_eq!(
             config.resolve_export(&ctx, &unit, "password").unwrap(),
@@ -400,10 +390,7 @@ secret: app1-pass
             "maria-main"
         );
 
-        assert_eq!(
-            config.resolve_export(&ctx, &unit, "port").unwrap(),
-            "3306"
-        );
+        assert_eq!(config.resolve_export(&ctx, &unit, "port").unwrap(), "3306");
 
         assert_eq!(
             config.resolve_export(&ctx, &unit, "url").unwrap(),

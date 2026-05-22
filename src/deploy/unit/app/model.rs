@@ -109,15 +109,12 @@ impl AppConfig {
         }
 
         for (index, db) in self.databases.iter().enumerate() {
-            let inner = match UnitConfig::load(ctx, db) {
+            let inner: RefError = match UnitConfig::load(ctx, db) {
                 Ok(UnitConfig::Db(config)) => {
                     config.validate_references(ctx)?;
                     continue;
                 }
-                Ok(_) => RefError::WrongUnitType {
-                    unit: db.as_str().to_owned(),
-                    expected: "db",
-                },
+                Ok(_) => RefError::wrong_unit_type(db.to_string(), "db"),
                 Err(err) => err.into(),
             };
             return Err(inner.at(Location::field(format!("databases[{index}]"))));
@@ -136,17 +133,13 @@ impl AppConfig {
             "url" => {
                 let unit_dir = unit_name.unit_dir(ctx);
                 let port = super::port::read_port(&unit_dir)
-                    .map_err(|err| RefError::Export {
-                        reason: format!("resolve app port: {err}"),
-                    })?
-                    .ok_or_else(|| RefError::Export {
-                        reason: format!("app '{unit_name}' is not deployed yet"),
+                    .map_err(|err| RefError::export(format!("resolve app port: {err}")))?
+                    .ok_or_else(|| {
+                        RefError::export(format!("app '{unit_name}' is not deployed yet"))
                     })?;
                 Ok(format!("http://127.0.0.1:{port}"))
             }
-            _ => Err(RefError::UnknownExport {
-                key: key.to_owned(),
-            }),
+            _ => Err(RefError::unknown_export(key)),
         }
     }
 }
@@ -158,6 +151,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+    use crate::error::RefErrorKind;
 
     fn sample_config() -> AppConfig {
         AppConfig {
@@ -207,8 +201,8 @@ mod tests {
         let err = config
             .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "url")
             .unwrap_err();
-        let RefError::Export { reason } = err else {
-            panic!("expected Export variant, got {err:?}");
+        let RefErrorKind::Export { reason } = err.kind else {
+            panic!("expected Export kind, got {:?}", err.kind);
         };
         assert!(
             reason.contains("is not deployed yet"),

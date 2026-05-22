@@ -18,8 +18,18 @@ pub fn format_error_chain(e: &(dyn std::error::Error + 'static)) -> String {
     out
 }
 
+/// A reference-resolution failure: a single [`RefErrorKind`] plus the trail of
+/// [`Location`] breadcrumbs that led to it.
+#[derive(Debug)]
+pub struct RefError {
+    pub kind: RefErrorKind,
+    /// Breadcrumbs leading to the failure, innermost-first (the order `.at(..)`
+    /// pushes them). Rendered outermost-first by [`Display`](fmt::Display).
+    pub trail: Vec<Location>,
+}
+
 #[derive(Debug, Error)]
-pub enum RefError {
+pub enum RefErrorKind {
     #[error("unit '{name}' not found")]
     UnknownUnit { name: String },
 
@@ -44,34 +54,77 @@ pub enum RefError {
 
     #[error(transparent)]
     Secret(#[from] SecretError),
-
-    #[error("at {location}")]
-    At {
-        location: Location,
-        #[source]
-        inner: Box<RefError>,
-    },
 }
 
-impl From<ConfigError> for RefError {
-    fn from(err: ConfigError) -> Self {
-        if err.is_not_found() {
-            RefError::UnknownUnit { name: err.name }
-        } else {
-            RefError::LoadConfig {
-                name: err.name.clone(),
-                source: err,
-            }
+impl RefError {
+    pub fn at(mut self, location: Location) -> Self {
+        self.trail.push(location);
+        self
+    }
+
+    pub fn unknown_export(key: impl Into<String>) -> Self {
+        RefErrorKind::UnknownExport { key: key.into() }.into()
+    }
+
+    pub fn export(reason: impl Into<String>) -> Self {
+        RefErrorKind::Export {
+            reason: reason.into(),
+        }
+        .into()
+    }
+
+    pub fn wrong_unit_type(unit: impl Into<String>, expected: &'static str) -> Self {
+        RefErrorKind::WrongUnitType {
+            unit: unit.into(),
+            expected,
+        }
+        .into()
+    }
+}
+
+impl fmt::Display for RefError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for location in self.trail.iter().rev() {
+            write!(f, "at {location}: ")?;
+        }
+        write!(f, "{}", self.kind)
+    }
+}
+
+impl std::error::Error for RefError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        // The kind's own message is already embedded by `Display`; surface only
+        // the source *behind* the kind (e.g. `LoadConfig`'s `ConfigError`).
+        self.kind.source()
+    }
+}
+
+impl From<RefErrorKind> for RefError {
+    fn from(kind: RefErrorKind) -> Self {
+        RefError {
+            kind,
+            trail: Vec::new(),
         }
     }
 }
 
-impl RefError {
-    pub fn at(self, location: Location) -> Self {
-        RefError::At {
-            location,
-            inner: Box::new(self),
-        }
+impl From<SecretError> for RefError {
+    fn from(err: SecretError) -> Self {
+        RefErrorKind::from(err).into()
+    }
+}
+
+impl From<ConfigError> for RefError {
+    fn from(err: ConfigError) -> Self {
+        let kind = if err.is_not_found() {
+            RefErrorKind::UnknownUnit { name: err.name }
+        } else {
+            RefErrorKind::LoadConfig {
+                name: err.name.clone(),
+                source: err,
+            }
+        };
+        kind.into()
     }
 }
 

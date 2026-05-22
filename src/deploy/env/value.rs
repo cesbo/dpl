@@ -166,8 +166,7 @@ impl Value {
                     let token = format!("${{{}:{}}}", ns.as_str(), name);
                     let value = match ns {
                         Ns::Secret => {
-                            let secret = SecretName::new(name.clone())
-                                .expect("validated at parse");
+                            let secret = SecretName::new(name.clone()).expect("validated at parse");
                             ctx.resolve_secret(&secret)
                                 .map_err(RefError::from)
                                 .map_err(|e| e.at(Location::token(&token)))?
@@ -268,7 +267,10 @@ impl<'de> Deserialize<'de> for Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::secret::SecretError;
+    use crate::{
+        error::RefErrorKind,
+        secret::SecretError,
+    };
 
     fn lit(s: &str) -> Segment {
         Segment::Literal(s.to_owned())
@@ -485,12 +487,9 @@ mod tests {
 
         let v = Value::parse("${secret:nope}").unwrap();
         let err = v.render(&ctx).unwrap_err();
-        let RefError::At { location, inner } = err else {
-            panic!("expected At wrapper, got {err:?}");
-        };
-        assert!(matches!(&location, Location::Token { raw } if raw == "${secret:nope}"));
+        assert!(matches!(&err.trail[0], Location::Token { raw } if raw == "${secret:nope}"));
         assert!(
-            matches!(*inner, RefError::Secret(SecretError::NotFound { ref name }) if name == "nope")
+            matches!(err.kind, RefErrorKind::Secret(SecretError::NotFound { ref name }) if name == "nope")
         );
     }
 
@@ -517,23 +516,10 @@ mod tests {
     fn render_unknown_unit() {
         let v = Value::parse("${nope:user}").unwrap();
         let err = v.render(&MainContext::default()).unwrap_err();
-        let RefError::At {
-            location: token_loc,
-            inner: unit_layer,
-        } = err
-        else {
-            panic!("expected At(Token), got {err:?}");
-        };
-        assert!(matches!(&token_loc, Location::Token { raw } if raw == "${nope:user}"));
-        let RefError::At {
-            location: unit_loc,
-            inner: leaf,
-        } = *unit_layer
-        else {
-            panic!("expected At(Unit) below token");
-        };
-        assert!(matches!(&unit_loc, Location::Unit { name } if name == "nope"));
-        assert!(matches!(*leaf, RefError::UnknownUnit { ref name } if name == "nope"));
+        // Trail innermost-first: unit "nope" → token "${nope:user}".
+        assert!(matches!(&err.trail[0], Location::Unit { name } if name == "nope"));
+        assert!(matches!(&err.trail[1], Location::Token { raw } if raw == "${nope:user}"));
+        assert!(matches!(err.kind, RefErrorKind::UnknownUnit { ref name } if name == "nope"));
     }
 
     #[test]
@@ -550,22 +536,9 @@ mod tests {
 
         let v = Value::parse("${app-db:unknown}").unwrap();
         let err = v.render(&ctx).unwrap_err();
-        let RefError::At {
-            location: token_loc,
-            inner: unit_layer,
-        } = err
-        else {
-            panic!("expected At(Token), got {err:?}");
-        };
-        assert!(matches!(&token_loc, Location::Token { raw } if raw == "${app-db:unknown}"));
-        let RefError::At {
-            location: unit_loc,
-            inner: leaf,
-        } = *unit_layer
-        else {
-            panic!("expected At(Unit) below token");
-        };
-        assert!(matches!(&unit_loc, Location::Unit { name } if name == "app-db"));
-        assert!(matches!(*leaf, RefError::UnknownExport { ref key } if key == "unknown"));
+        // Trail innermost-first: unit "app-db" → token "${app-db:unknown}".
+        assert!(matches!(&err.trail[0], Location::Unit { name } if name == "app-db"));
+        assert!(matches!(&err.trail[1], Location::Token { raw } if raw == "${app-db:unknown}"));
+        assert!(matches!(err.kind, RefErrorKind::UnknownExport { ref key } if key == "unknown"));
     }
 }
