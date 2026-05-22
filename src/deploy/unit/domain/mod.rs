@@ -1,4 +1,5 @@
 mod artifacts;
+mod host_name;
 mod model;
 mod route_location;
 

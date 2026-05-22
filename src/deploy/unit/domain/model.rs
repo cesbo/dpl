@@ -3,7 +3,10 @@ use serde::{
     Serialize,
 };
 
-use super::route_location::RouteLocation;
+use super::{
+    host_name::HostName,
+    route_location::RouteLocation,
+};
 use crate::{
     MainContext,
     deploy::env::Value,
@@ -16,7 +19,7 @@ use crate::{
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct DomainConfig {
-    pub hosts: Vec<String>,
+    pub hosts: Vec<HostName>,
     #[serde(default)]
     pub proxy: Option<ProxyConfig>,
     #[serde(default)]
@@ -103,7 +106,10 @@ routes:
 
         assert_eq!(
             config.hosts,
-            vec!["example.com".to_string(), "www.example.com".to_string()],
+            vec![
+                HostName::new("example.com").unwrap(),
+                HostName::new("www.example.com").unwrap(),
+            ],
         );
         assert_eq!(
             config.proxy,
