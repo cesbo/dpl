@@ -3,6 +3,7 @@ use serde::{
     Serialize,
 };
 
+use super::route_location::RouteLocation;
 use crate::{
     MainContext,
     deploy::env::Value,
@@ -40,13 +41,13 @@ pub enum ProxyConfig {
 pub enum RouteConfig {
     ReverseProxy {
         /// URL location prefix (e.g. "/billing")
-        location: String,
+        location: RouteLocation,
         /// Upstream URL (e.g. "http://127.0.0.1:8000")
         target: Value,
     },
     ServeFiles {
         /// URL location prefix (e.g. "/billing/static")
-        location: String,
+        location: RouteLocation,
         /// Filesystem root
         root: Value,
         /// Single Page Application

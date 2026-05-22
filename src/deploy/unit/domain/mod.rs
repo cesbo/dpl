@@ -1,5 +1,6 @@
 mod artifacts;
 mod model;
+mod route_location;
 
 use std::{
     fs,
