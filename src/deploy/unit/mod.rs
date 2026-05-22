@@ -2,7 +2,10 @@ pub mod app;
 pub mod db;
 pub mod domain;
 
-use std::fs;
+use std::{
+    fs,
+    io,
+};
 
 use app::AppConfig;
 use db::{
@@ -21,8 +24,6 @@ use crate::{
         ConfigError,
         ConfigErrorKind,
         ResourceName,
-        load_config,
-        save_config,
     },
     error::{
         Location,
@@ -41,17 +42,29 @@ pub enum UnitConfig {
 
 impl UnitConfig {
     pub fn load(ctx: &MainContext, name: &ResourceName) -> Result<Self, ConfigError> {
-        let path = name.unit_dir(ctx).join("config.yaml");
-        load_config(&path, name)
+        let unit_dir = name.unit_dir(ctx);
+        let path = unit_dir.join("config.yaml");
+        let content = fs::read_to_string(&path).map_err(|err| {
+            let kind = if err.kind() == io::ErrorKind::NotFound {
+                ConfigErrorKind::NotFound
+            } else {
+                ConfigErrorKind::Read(err)
+            };
+            ConfigError::new(name, kind)
+        })?;
+        serde_yaml::from_str(&content)
+            .map_err(|err| ConfigError::new(name, ConfigErrorKind::Parse(err)))
     }
 
     pub fn save(&self, ctx: &MainContext, name: &ResourceName) -> Result<(), ConfigError> {
         let unit_dir = name.unit_dir(ctx);
-        fs::create_dir_all(&unit_dir).map_err(|err| ConfigError {
-            name: name.to_string(),
-            kind: ConfigErrorKind::Write(err),
-        })?;
-        save_config(&unit_dir.join("config.yaml"), name, self)
+        fs::create_dir_all(&unit_dir)
+            .map_err(|err| ConfigError::new(name, ConfigErrorKind::Write(err)))?;
+        let yaml = serde_yaml::to_string(self)
+            .map_err(|err| ConfigError::new(name, ConfigErrorKind::Serialize(err)))?;
+        fs::write(unit_dir.join("config.yaml"), yaml)
+            .map_err(|err| ConfigError::new(name, ConfigErrorKind::Write(err)))?;
+        Ok(())
     }
 
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {

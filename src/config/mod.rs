@@ -1,20 +1,11 @@
 mod resource_name;
 mod secret_name;
 
-use std::{
-    fs,
-    io,
-    path::Path,
-};
-
-use serde::{
-    Serialize,
-    de::DeserializeOwned,
-};
-use thiserror::Error;
+use std::io;
 
 pub use resource_name::ResourceName;
 pub use secret_name::SecretName;
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 #[error("unit '{name}' config")]
@@ -47,37 +38,10 @@ impl ConfigError {
         matches!(self.kind, ConfigErrorKind::NotFound)
     }
 
-    fn new(name: &ResourceName, kind: ConfigErrorKind) -> Self {
+    pub fn new(name: &ResourceName, kind: ConfigErrorKind) -> Self {
         Self {
             name: name.to_string(),
             kind,
         }
     }
-}
-
-pub fn load_config<T>(path: &Path, name: &ResourceName) -> Result<T, ConfigError>
-where
-    T: DeserializeOwned,
-{
-    let content = fs::read_to_string(path).map_err(|err| {
-        let kind = if err.kind() == io::ErrorKind::NotFound {
-            ConfigErrorKind::NotFound
-        } else {
-            ConfigErrorKind::Read(err)
-        };
-        ConfigError::new(name, kind)
-    })?;
-    serde_yaml::from_str(&content)
-        .map_err(|err| ConfigError::new(name, ConfigErrorKind::Parse(err)))
-}
-
-pub fn save_config<T>(path: &Path, name: &ResourceName, config: &T) -> Result<(), ConfigError>
-where
-    T: Serialize,
-{
-    let yaml = serde_yaml::to_string(config)
-        .map_err(|err| ConfigError::new(name, ConfigErrorKind::Serialize(err)))?;
-    fs::write(path, yaml).map_err(|err| ConfigError::new(name, ConfigErrorKind::Write(err)))?;
-
-    Ok(())
 }
