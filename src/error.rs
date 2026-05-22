@@ -116,13 +116,17 @@ impl From<SecretError> for RefError {
 
 impl From<ConfigError> for RefError {
     fn from(err: ConfigError) -> Self {
-        let kind = if err.is_not_found() {
-            RefErrorKind::UnknownUnit { name: err.name }
-        } else {
-            RefErrorKind::LoadConfig {
-                name: err.name.clone(),
+        let kind = match &err {
+            ConfigError::NotFound { name } => RefErrorKind::UnknownUnit { name: name.clone() },
+            ConfigError::Read { name, .. } => RefErrorKind::LoadConfig {
+                name: name.clone(),
                 source: err,
-            }
+            },
+            ConfigError::Parse { name, .. } => RefErrorKind::LoadConfig {
+                name: name.clone(),
+                source: err,
+            },
+            _ => unreachable!(),
         };
         kind.into()
     }

@@ -22,7 +22,6 @@ use crate::{
     MainContext,
     config::{
         ConfigError,
-        ConfigErrorKind,
         ResourceName,
     },
     error::{
@@ -45,25 +44,37 @@ impl UnitConfig {
         let unit_dir = name.unit_dir(ctx);
         let path = unit_dir.join("config.yaml");
         let content = fs::read_to_string(&path).map_err(|err| {
-            let kind = if err.kind() == io::ErrorKind::NotFound {
-                ConfigErrorKind::NotFound
+            if err.kind() == io::ErrorKind::NotFound {
+                ConfigError::NotFound {
+                    name: name.to_string(),
+                }
             } else {
-                ConfigErrorKind::Read(err)
-            };
-            ConfigError::new(name, kind)
+                ConfigError::Read {
+                    name: name.to_string(),
+                    source: err,
+                }
+            }
         })?;
-        serde_yaml::from_str(&content)
-            .map_err(|err| ConfigError::new(name, ConfigErrorKind::Parse(err)))
+        serde_yaml::from_str(&content).map_err(|err| ConfigError::Parse {
+            name: name.to_string(),
+            source: err,
+        })
     }
 
     pub fn save(&self, ctx: &MainContext, name: &ResourceName) -> Result<(), ConfigError> {
         let unit_dir = name.unit_dir(ctx);
-        fs::create_dir_all(&unit_dir)
-            .map_err(|err| ConfigError::new(name, ConfigErrorKind::Write(err)))?;
-        let yaml = serde_yaml::to_string(self)
-            .map_err(|err| ConfigError::new(name, ConfigErrorKind::Serialize(err)))?;
-        fs::write(unit_dir.join("config.yaml"), yaml)
-            .map_err(|err| ConfigError::new(name, ConfigErrorKind::Write(err)))?;
+        fs::create_dir_all(&unit_dir).map_err(|err| ConfigError::Write {
+            name: name.to_string(),
+            source: err,
+        })?;
+        let yaml = serde_yaml::to_string(self).map_err(|err| ConfigError::Serialize {
+            name: name.to_string(),
+            source: err,
+        })?;
+        fs::write(unit_dir.join("config.yaml"), yaml).map_err(|err| ConfigError::Write {
+            name: name.to_string(),
+            source: err,
+        })?;
         Ok(())
     }
 

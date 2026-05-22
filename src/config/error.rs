@@ -2,43 +2,42 @@ use std::io;
 
 use thiserror::Error;
 
-use super::ResourceName;
-
 #[derive(Debug, Error)]
-#[error("unit '{name}' config")]
-pub struct ConfigError {
-    pub name: String,
-    #[source]
-    pub kind: ConfigErrorKind,
-}
+pub enum ConfigError {
+    #[error("unit '{name}' not found")]
+    NotFound { name: String },
 
-#[derive(Debug, Error)]
-pub enum ConfigErrorKind {
-    #[error("not found")]
-    NotFound,
+    #[error("read config for unit '{name}'")]
+    Read {
+        name: String,
+        #[source]
+        source: io::Error,
+    },
 
-    #[error("read")]
-    Read(#[source] io::Error),
+    #[error("write config for unit '{name}'")]
+    Write {
+        name: String,
+        #[source]
+        source: io::Error,
+    },
 
-    #[error("write")]
-    Write(#[source] io::Error),
+    #[error("parse config for unit '{name}'")]
+    Parse {
+        name: String,
+        #[source]
+        source: serde_yaml::Error,
+    },
 
-    #[error("parse")]
-    Parse(#[source] serde_yaml::Error),
-
-    #[error("serialize")]
-    Serialize(#[source] serde_yaml::Error),
+    #[error("serialize config for unit '{name}'")]
+    Serialize {
+        name: String,
+        #[source]
+        source: serde_yaml::Error,
+    },
 }
 
 impl ConfigError {
     pub fn is_not_found(&self) -> bool {
-        matches!(self.kind, ConfigErrorKind::NotFound)
-    }
-
-    pub fn new(name: &ResourceName, kind: ConfigErrorKind) -> Self {
-        Self {
-            name: name.to_string(),
-            kind,
-        }
+        matches!(self, ConfigError::NotFound { .. })
     }
 }
