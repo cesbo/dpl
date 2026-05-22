@@ -9,6 +9,7 @@ anyhow = "1"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4", features = ["derive"] }
+console = "0.15"
 dialoguer = { version = "0.11", features = ["fuzzy-select"] }
 cuid = "1.3"
 flate2 = "1"

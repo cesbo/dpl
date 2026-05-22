@@ -110,10 +110,10 @@ impl AppConfig {
 
         for (index, db) in self.databases.iter().enumerate() {
             let inner: RefError = match UnitConfig::load(ctx, db) {
-                Ok(UnitConfig::Db(config)) => {
-                    config.validate_references(ctx)?;
-                    continue;
-                }
+                Ok(UnitConfig::Db(config)) => match config.validate_references(ctx) {
+                    Ok(()) => continue,
+                    Err(err) => err.at(Location::unit(db.as_str())),
+                },
                 Ok(_) => RefError::wrong_unit_type(db.to_string(), "db"),
                 Err(err) => err.into(),
             };

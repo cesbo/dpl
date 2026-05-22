@@ -47,7 +47,9 @@ pub struct DbConfig {
 impl DbConfig {
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
         self.resolve_password(ctx)?;
-        self.resolve_server(ctx)?.validate_references(ctx)?;
+        self.resolve_server(ctx)?
+            .validate_references(ctx)
+            .map_err(|err| err.at(Location::unit(self.server.as_str())))?;
         Ok(())
     }
 

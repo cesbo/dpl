@@ -84,8 +84,20 @@ impl RefError {
 
 impl fmt::Display for RefError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for location in self.trail.iter().rev() {
-            write!(f, "at {location}: ")?;
+        writeln!(f, "Invalid reference:")?;
+
+        // Render the breadcrumb trail (outermost-first) as an arrow path
+        if !self.trail.is_empty() {
+            for location in self.trail.iter().rev() {
+                if console::colors_enabled_stderr() {
+                    write!(f, "{} ", console::style("→ ").red())?;
+                }
+                writeln!(f, "{location}")?;
+            }
+        }
+
+        if console::colors_enabled_stderr() {
+            write!(f, "{} ", console::style("✗ ").red())?;
         }
         write!(f, "{}", self.kind)
     }

@@ -387,6 +387,79 @@ databases:
     }
 
     #[test]
+    fn validate_references_databases_chain() {
+        use std::fs;
+
+        use tempfile::TempDir;
+
+        use crate::secret::{
+            MasterKey,
+            SecretError,
+        };
+
+        // Layout (the `databases:` recursion path, distinct from the env/token
+        // path above):
+        //   app `foo` → databases: [db-test]
+        //   db  `db-test` → server: pg-main (with its own secret present)
+        //   db-server `pg-main` → secret: pg-pass (intentionally MISSING)
+        // The leaf failure is on pg-main; the trail must keep every hop so the
+        // user sees databases[0] → db-test → pg-main → secret.
+        let base = TempDir::new().unwrap();
+
+        let app_dir = base.path().join("foo");
+        fs::create_dir_all(&app_dir).unwrap();
+        fs::write(
+            app_dir.join("config.yaml"),
+            "type: app\nimage: alpine\nport: 8080\nbuilds: []\nruntime:\n  cmd: ./run\ndatabases:\n  - db-test\n",
+        )
+        .unwrap();
+
+        let db_dir = base.path().join("db-test");
+        fs::create_dir_all(&db_dir).unwrap();
+        fs::write(
+            db_dir.join("config.yaml"),
+            "type: db\nserver: pg-main\nuser: app1\nsecret: db-test-password\n",
+        )
+        .unwrap();
+
+        let server_dir = base.path().join("pg-main");
+        fs::create_dir_all(&server_dir).unwrap();
+        fs::write(
+            server_dir.join("config.yaml"),
+            "type: db-server\nengine: postgresql\nversion: \"18\"\nsecret: pg-pass\n",
+        )
+        .unwrap();
+
+        let key = MasterKey::generate(base.path());
+        key.save().unwrap();
+        // db-test's own secret is present; only pg-main's `pg-pass` is missing,
+        // so the failure originates two hops deep, inside db-server validation.
+        key.encrypt_to_file(&SecretName::new("db-test-password").unwrap(), "db-secret")
+            .unwrap();
+
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: Some(MasterKey::load(base.path()).unwrap()),
+        };
+
+        let foo = UnitConfig::load(&ctx, &ResourceName::new("foo").unwrap()).unwrap();
+        let err = foo.validate_references(&ctx).unwrap_err();
+
+        // Expected trail, innermost-first:
+        //   field "secret" → unit "pg-main" → unit "db-test"
+        //     → field "databases[0]"
+        assert!(matches!(&err.trail[0], Location::Field { path } if path == "secret"));
+        assert!(matches!(&err.trail[1], Location::Unit { name } if name == "pg-main"));
+        assert!(matches!(&err.trail[2], Location::Unit { name } if name == "db-test"));
+        assert!(matches!(&err.trail[3], Location::Field { path } if path == "databases[0]"));
+        assert!(
+            matches!(err.kind, RefErrorKind::Secret(SecretError::NotFound { ref name }) if name == "pg-pass"),
+            "unexpected kind: {:?}",
+            err.kind,
+        );
+    }
+
+    #[test]
     fn resolve_export_unknown_unit() {
         let err = resolve_export(
             &MainContext::default(),

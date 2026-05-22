@@ -123,7 +123,7 @@ fn load_unit(ctx: &MainContext, name: &ResourceName) -> Result<UnitConfig> {
     let unit = UnitConfig::load(ctx, name)?;
 
     unit.validate_references(ctx)
-        .with_context(|| format!("unit '{name}' has invalid references"))?;
+        .with_context(|| format!("unit '{name}': broken reference chain"))?;
 
     Ok(unit)
 }
