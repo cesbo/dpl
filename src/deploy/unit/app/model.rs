@@ -21,7 +21,7 @@ use crate::{
 pub struct AppConfig {
     pub image: String,
     pub port: u16,
-    pub build: Vec<BuildConfig>,
+    pub builds: Vec<BuildConfig>,
     pub runtime: RuntimeConfig,
     #[serde(default)]
     pub volumes: Vec<VolumeConfig>,
@@ -104,8 +104,8 @@ impl AppConfig {
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
         self.runtime.env.resolve(ctx, "runtime.env")?;
 
-        for (index, layer) in self.build.iter().enumerate() {
-            layer.env.resolve(ctx, &format!("build[{index}].env"))?;
+        for (index, layer) in self.builds.iter().enumerate() {
+            layer.env.resolve(ctx, &format!("builds[{index}].env"))?;
         }
 
         for (index, db) in self.databases.iter().enumerate() {
@@ -157,7 +157,7 @@ mod tests {
         AppConfig {
             image: "alpine".into(),
             port: 8080,
-            build: Vec::new(),
+            builds: Vec::new(),
             runtime: RuntimeConfig {
                 env: EnvList::default(),
                 init: None,

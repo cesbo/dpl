@@ -71,7 +71,7 @@ type: app
 image: node:22-alpine
 port: 3000
 
-build:
+builds:
   - files: ["package.json", "package-lock.json"]
     script: |
       npm ci

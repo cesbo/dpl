@@ -87,7 +87,7 @@ impl<'a> ArtifactsContext<'a> {
 
         let layers = self
             .config
-            .build
+            .builds
             .iter()
             .map(|b| BuildContext {
                 files: &b.files,
@@ -118,13 +118,13 @@ impl<'a> ArtifactsContext<'a> {
             },
         )?;
 
-        for (index, layer) in self.config.build.iter().enumerate() {
+        for (index, layer) in self.config.builds.iter().enumerate() {
             let Some(script) = &layer.script else {
                 continue;
             };
 
             let path = artifacts_dir.join(format!("build-{}.sh", index + 1));
-            let prefix = format!("build[{index}].env");
+            let prefix = format!("builds[{index}].env");
             write_artifact(
                 path,
                 BUILD_SH_TEMPLATE,
@@ -210,7 +210,7 @@ mod tests {
         let config = AppConfig {
             image: "ghcr.io/example/demo:latest".into(),
             port: 8080,
-            build: vec![
+            builds: vec![
                 // without files
                 BuildConfig {
                     description: None,

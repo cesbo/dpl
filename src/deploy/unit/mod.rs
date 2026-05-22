@@ -206,7 +206,7 @@ secret: pg-pass
 type: app
 image: alpine
 port: 8080
-build: []
+builds: []
 runtime:
   cmd: "./run"
 databases:
@@ -234,7 +234,7 @@ databases:
         fs::create_dir_all(&app_dir).unwrap();
         fs::write(
             app_dir.join("config.yaml"),
-            "type: app\nimage: alpine\nport: 8080\nbuild: []\nruntime:\n  env:\n    OTHER: \"${nope:user}\"\n  cmd: ./run\n",
+            "type: app\nimage: alpine\nport: 8080\nbuilds: []\nruntime:\n  env:\n    OTHER: \"${nope:user}\"\n  cmd: ./run\n",
         )
         .unwrap();
 
@@ -325,7 +325,7 @@ databases:
         fs::create_dir_all(&app_dir).unwrap();
         fs::write(
             app_dir.join("config.yaml"),
-            "type: app\nimage: alpine\nport: 8080\nbuild: []\nruntime:\n  env:\n    X: \"${db-test:password}\"\n  cmd: ./run\n",
+            "type: app\nimage: alpine\nport: 8080\nbuilds: []\nruntime:\n  env:\n    X: \"${db-test:password}\"\n  cmd: ./run\n",
         )
         .unwrap();
 
@@ -419,7 +419,7 @@ databases:
 type: app
 image: alpine
 port: 8080
-build: []
+builds: []
 runtime:
   env:
     PLAIN: "hello"
