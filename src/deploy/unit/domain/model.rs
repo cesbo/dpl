@@ -149,7 +149,7 @@ https: acme
         let result: Result<DomainConfig, _> = serde_yaml::from_str(
             r#"
 routes:
-  - path: /
+  - location: /
     kind: reverse_proxy
     target: "${backend:url}"
 "#,
@@ -180,7 +180,7 @@ routes:
 hosts:
   - example.com
 routes:
-  - path: /api
+  - location: /api
 "#,
         );
 
@@ -194,7 +194,7 @@ routes:
 hosts:
   - example.com
 routes:
-  - path: /api
+  - location: /api
     kind: redirect
     target: "https://example.com"
 "#,
@@ -210,7 +210,7 @@ routes:
 hosts:
   - example.com
 routes:
-  - path: /static
+  - location: /static
     kind: serve_files
     spa: true
 "#,
@@ -226,7 +226,7 @@ routes:
 hosts:
   - example.com
 routes:
-  - path: /static
+  - location: /static
     kind: serve_files
     root: "/var/www"
     bogus: true
