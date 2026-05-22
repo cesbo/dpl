@@ -207,14 +207,7 @@ fn create(
     };
 
     let user = match user {
-        Some(value) => {
-            let value = value.trim().to_owned();
-            ensure!(
-                validate::resource_name(&value),
-                "invalid user name '{value}'"
-            );
-            value
-        }
+        Some(value) => value.trim().to_string(),
         None => db_name.to_string(),
     };
 
