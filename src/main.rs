@@ -7,7 +7,6 @@ mod error;
 mod log;
 mod secret;
 mod systemd;
-mod validate;
 
 use std::path::PathBuf;
 

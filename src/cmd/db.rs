@@ -44,7 +44,6 @@ use crate::{
             list_units,
         },
     },
-    validate,
 };
 
 const ENGINES: &[(&str, DbServerEngine)] = &[
