@@ -53,6 +53,19 @@ pub enum RefError {
     },
 }
 
+impl From<ConfigError> for RefError {
+    fn from(err: ConfigError) -> Self {
+        if err.is_not_found() {
+            RefError::UnknownUnit { name: err.name }
+        } else {
+            RefError::LoadConfig {
+                name: err.name.clone(),
+                source: err,
+            }
+        }
+    }
+}
+
 impl RefError {
     pub fn at(self, location: Location) -> Self {
         RefError::At {

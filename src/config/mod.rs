@@ -17,45 +17,67 @@ pub use resource_name::ResourceName;
 pub use secret_name::SecretName;
 
 #[derive(Debug, Error)]
-pub enum ConfigError {
-    #[error("read config")]
+#[error("unit '{name}' config")]
+pub struct ConfigError {
+    pub name: String,
+    #[source]
+    pub kind: ConfigErrorKind,
+}
+
+#[derive(Debug, Error)]
+pub enum ConfigErrorKind {
+    #[error("not found")]
+    NotFound,
+
+    #[error("read")]
     Read(#[source] io::Error),
 
-    #[error("write config")]
+    #[error("write")]
     Write(#[source] io::Error),
 
-    #[error("parse config")]
+    #[error("parse")]
     Parse(#[source] serde_yaml::Error),
 
-    #[error("serialize config")]
+    #[error("serialize")]
     Serialize(#[source] serde_yaml::Error),
-
-    #[error("invalid config: {0}")]
-    Invalid(String),
 }
 
 impl ConfigError {
     pub fn is_not_found(&self) -> bool {
-        matches!(self, Self::Read(err) if err.kind() == io::ErrorKind::NotFound)
+        matches!(self.kind, ConfigErrorKind::NotFound)
+    }
+
+    fn new(name: &ResourceName, kind: ConfigErrorKind) -> Self {
+        Self {
+            name: name.to_string(),
+            kind,
+        }
     }
 }
 
-pub fn load_config<T>(path: impl AsRef<Path>) -> Result<T, ConfigError>
+pub fn load_config<T>(path: &Path, name: &ResourceName) -> Result<T, ConfigError>
 where
     T: DeserializeOwned,
 {
-    let content = fs::read_to_string(path).map_err(ConfigError::Read)?;
-    let config: T = serde_yaml::from_str(&content).map_err(ConfigError::Parse)?;
-
-    Ok(config)
+    let content = fs::read_to_string(path).map_err(|err| {
+        let kind = if err.kind() == io::ErrorKind::NotFound {
+            ConfigErrorKind::NotFound
+        } else {
+            ConfigErrorKind::Read(err)
+        };
+        ConfigError::new(name, kind)
+    })?;
+    serde_yaml::from_str(&content)
+        .map_err(|err| ConfigError::new(name, ConfigErrorKind::Parse(err)))
 }
 
-pub fn save_config<T>(path: impl AsRef<Path>, config: &T) -> Result<(), ConfigError>
+pub fn save_config<T>(path: &Path, name: &ResourceName, config: &T) -> Result<(), ConfigError>
 where
     T: Serialize,
 {
-    let yaml = serde_yaml::to_string(config).map_err(ConfigError::Serialize)?;
-    fs::write(path, yaml).map_err(ConfigError::Write)?;
+    let yaml = serde_yaml::to_string(config)
+        .map_err(|err| ConfigError::new(name, ConfigErrorKind::Serialize(err)))?;
+    fs::write(path, yaml).map_err(|err| ConfigError::new(name, ConfigErrorKind::Write(err)))?;
 
     Ok(())
 }

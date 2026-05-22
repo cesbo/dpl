@@ -36,7 +36,6 @@ use crate::{
     deploy::{
         UnitConfig,
         unit::{
-            UnitConfigError,
             db::{
                 DbConfig,
                 DbServerConfig,
@@ -300,7 +299,7 @@ fn check_unit_name(ctx: &MainContext, name: &str) -> Result<ResourceName> {
     let unit_name = ResourceName::new(name)?;
     match UnitConfig::load(ctx, &unit_name) {
         Ok(_) => bail!("unit '{unit_name}' already exists"),
-        Err(UnitConfigError::NotFound { .. }) => Ok(unit_name),
+        Err(err) if err.is_not_found() => Ok(unit_name),
         Err(err) => Err(err.into()),
     }
 }

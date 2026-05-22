@@ -14,12 +14,12 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use thiserror::Error;
 
 use crate::{
     MainContext,
     config::{
         ConfigError,
+        ConfigErrorKind,
         ResourceName,
         load_config,
         save_config,
@@ -29,28 +29,6 @@ use crate::{
         RefError,
     },
 };
-
-#[derive(Debug, Error)]
-pub enum UnitConfigError {
-    #[error("unit '{name}' not found")]
-    NotFound { name: String },
-
-    #[error("load config for unit '{name}'")]
-    Config {
-        name: String,
-        #[source]
-        source: ConfigError,
-    },
-}
-
-impl From<UnitConfigError> for RefError {
-    fn from(err: UnitConfigError) -> Self {
-        match err {
-            UnitConfigError::NotFound { name } => RefError::UnknownUnit { name },
-            UnitConfigError::Config { name, source } => RefError::LoadConfig { name, source },
-        }
-    }
-}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
@@ -62,34 +40,18 @@ pub enum UnitConfig {
 }
 
 impl UnitConfig {
-    pub fn load(ctx: &MainContext, name: &ResourceName) -> Result<Self, UnitConfigError> {
-        let unit_dir = name.unit_dir(ctx);
-        let path = unit_dir.join("config.yaml");
-        load_config(&path).map_err(|err| {
-            if err.is_not_found() {
-                UnitConfigError::NotFound {
-                    name: name.to_string(),
-                }
-            } else {
-                UnitConfigError::Config {
-                    name: name.to_string(),
-                    source: err,
-                }
-            }
-        })
+    pub fn load(ctx: &MainContext, name: &ResourceName) -> Result<Self, ConfigError> {
+        let path = name.unit_dir(ctx).join("config.yaml");
+        load_config(&path, name)
     }
 
-    pub fn save(&self, ctx: &MainContext, name: &ResourceName) -> Result<(), UnitConfigError> {
+    pub fn save(&self, ctx: &MainContext, name: &ResourceName) -> Result<(), ConfigError> {
         let unit_dir = name.unit_dir(ctx);
-        fs::create_dir_all(&unit_dir).map_err(|err| UnitConfigError::Config {
+        fs::create_dir_all(&unit_dir).map_err(|err| ConfigError {
             name: name.to_string(),
-            source: ConfigError::Write(err),
+            kind: ConfigErrorKind::Write(err),
         })?;
-        let path = unit_dir.join("config.yaml");
-        save_config(&path, self).map_err(|source| UnitConfigError::Config {
-            name: name.to_string(),
-            source,
-        })
+        save_config(&unit_dir.join("config.yaml"), name, self)
     }
 
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
