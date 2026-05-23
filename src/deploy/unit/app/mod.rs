@@ -21,8 +21,17 @@ use systemd::SystemdContext;
 
 use self::artifacts::ArtifactsContext;
 pub use self::model::AppConfig;
+use super::{
+    UnitConfig,
+    domain::{
+        DomainConfig,
+        DomainUnit,
+    },
+    list_units,
+};
 use crate::{
     MainContext,
+    config::ResourceName,
     deploy::{
         DeployError,
         state::DeployState,
@@ -34,15 +43,14 @@ use crate::{
 #[derive(Debug)]
 pub struct AppUnit<'a> {
     pub ctx: &'a MainContext,
-    pub name: String,
+    pub name: &'a ResourceName,
     pub unit_dir: PathBuf,
     pub config: AppConfig,
 }
 
 impl<'a> AppUnit<'a> {
-    pub fn new(ctx: &'a MainContext, name: impl Into<String>, config: AppConfig) -> Self {
-        let name = name.into();
-        let unit_dir = ctx.base().join(&name);
+    pub fn new(ctx: &'a MainContext, name: &'a ResourceName, config: AppConfig) -> Self {
+        let unit_dir = name.unit_dir(ctx);
 
         Self {
             ctx,
@@ -74,7 +82,7 @@ impl<'a> AppUnit<'a> {
         let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
         let log_path = deploy_dir.join("log").join("build.log");
 
-        let log = match DeployLog::open(&log_path, &self.name, version) {
+        let log = match DeployLog::open(&log_path, self.name.as_str(), version) {
             Ok(log) => log,
             Err(source) => {
                 state.set_error(format!("open deploy log: {source}"));
@@ -118,7 +126,7 @@ impl<'a> AppUnit<'a> {
 
         let artifacts = ArtifactsContext {
             ctx: self.ctx,
-            name: &self.name,
+            name: self.name.as_str(),
             config: &self.config,
             version,
         };
@@ -159,7 +167,51 @@ impl<'a> AppUnit<'a> {
         state.set_ready();
         let _ = state.save(&self.unit_dir);
 
+        self.redeploy_dependent_domains(log);
+
         log.finish_ok();
+    }
+
+    /// Domain units whose routes reference this app via `${<app>:export|url}`.
+    fn dependent_domains(&self) -> Vec<(ResourceName, DomainConfig)> {
+        list_units(self.ctx, |c| matches!(c, UnitConfig::Domain(_)))
+            .into_iter()
+            .filter_map(|(name, config)| match config {
+                UnitConfig::Domain(d) if d.unit_deps().contains(self.name) => Some((name, d)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Re-render and reload every domain that depends on this app, so its nginx
+    /// config picks up the new active version. Best-effort: a domain that is
+    /// busy or fails to deploy is logged and skipped — it never fails the app
+    /// deploy, which is already committed by this point.
+    fn redeploy_dependent_domains(&self, log: &DeployLog) {
+        let domains = self.dependent_domains();
+        if domains.is_empty() {
+            return;
+        }
+
+        log.phase("updating dependent domains");
+        for (name, config) in domains {
+            let unit_dir = name.unit_dir(self.ctx);
+            let (_guard, state) = match DeployState::acquire(&unit_dir) {
+                Ok(v) => v,
+                Err(err) => {
+                    log.error(&format!("skip domain '{name}': {err}"));
+                    continue;
+                }
+            };
+
+            let domain = DomainUnit::new(self.ctx, name.as_str(), config);
+            if let Err(err) = domain.deploy(state) {
+                log.error(&format!(
+                    "domain '{name}' redeploy failed: {}",
+                    format_error_chain(&err)
+                ));
+            }
+        }
     }
 
     fn build_inner(
@@ -176,7 +228,7 @@ impl<'a> AppUnit<'a> {
         crate::archive::extract(&archive_path, &app_dir)?;
 
         log.phase("building image");
-        PodmanContext::new(&self.name, version)
+        PodmanContext::new(self.name.as_str(), version)
             .build(deploy_dir, log)
             .map_err(|source| DeployError::UnitError {
                 info: "failed to build image".to_string(),
@@ -189,7 +241,7 @@ impl<'a> AppUnit<'a> {
     fn install_inner(&self, version: u32, log: &DeployLog) -> Result<(), DeployError> {
         if !self.config.exports.is_empty() {
             log.phase("exporting files");
-            PodmanContext::new(&self.name, version)
+            PodmanContext::new(self.name.as_str(), version)
                 .export(&self.config.exports, log)
                 .map_err(|source| DeployError::UnitError {
                     info: "export static files".to_string(),
@@ -198,7 +250,7 @@ impl<'a> AppUnit<'a> {
         }
 
         let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
-        let systemd_ctx = SystemdContext::new(&self.name);
+        let systemd_ctx = SystemdContext::new(self.name.as_str());
 
         log.phase("installing service");
         systemd_ctx
@@ -209,9 +261,11 @@ impl<'a> AppUnit<'a> {
             })?;
 
         log.phase("health check");
-        health::check(&self.name, self.config.port).map_err(|source| DeployError::UnitError {
-            info: "health check".to_string(),
-            source,
+        health::check(self.name.as_str(), self.config.port).map_err(|source| {
+            DeployError::UnitError {
+                info: "health check".to_string(),
+                source,
+            }
         })?;
         systemd_ctx
             .set_restart_value("always")
@@ -227,11 +281,11 @@ impl<'a> AppUnit<'a> {
     }
 
     fn uninstall_inner(&self, version: u32, log: &DeployLog) {
-        let systemd_ctx = SystemdContext::new(&self.name);
+        let systemd_ctx = SystemdContext::new(self.name.as_str());
         systemd_ctx.uninstall_timers(log);
         systemd_ctx.uninstall_app(log);
 
-        let podman_ctx = PodmanContext::new(&self.name, version);
+        let podman_ctx = PodmanContext::new(self.name.as_str(), version);
         podman_ctx.remove_exports(log);
         podman_ctx.remove(log);
     }
@@ -242,4 +296,55 @@ fn save_archive<R: Read>(archive: R, dst: &Path) -> io::Result<()> {
     let mut archive_file = fs::File::create(dst)?;
     io::copy(&mut reader, &mut archive_file)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+
+    use super::*;
+
+    fn write_unit(base: &Path, name: &str, config: &str) {
+        let dir = base.join(name);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("config.yaml"), config).unwrap();
+    }
+
+    #[test]
+    fn dependent_domains_selects_only_referencing_domains() {
+        let base = TempDir::new().unwrap();
+
+        // Serves this app's static export — should be selected.
+        write_unit(
+            base.path(),
+            "site",
+            "type: domain\nhosts: [\"example.com\"]\nroutes:\n  - location: /\n    kind: serve_files\n    root: \"${web:export}\"\n",
+        );
+        // References a different app — should be skipped.
+        write_unit(
+            base.path(),
+            "other-site",
+            "type: domain\nhosts: [\"other.com\"]\nroutes:\n  - location: /\n    kind: reverse_proxy\n    target: \"${api:url}\"\n",
+        );
+        // A non-domain unit — must not match the domain predicate.
+        write_unit(
+            base.path(),
+            "web-db",
+            "type: db\nserver: pg-main\nuser: app1\nsecret: app1-pass\n",
+        );
+
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: None,
+        };
+        let config: AppConfig =
+            serde_yaml::from_str("image: alpine\nport: 8080\nbuilds: []\nruntime:\n  cmd: ./run\n")
+                .unwrap();
+        let unit_name = ResourceName::new("web").unwrap();
+        let app = AppUnit::new(&ctx, &unit_name, config);
+
+        let domains = app.dependent_domains();
+        let names: Vec<&str> = domains.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, vec!["site"]);
+    }
 }

@@ -69,7 +69,7 @@ fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Result
     let (_guard, state) =
         DeployState::acquire(&unit_dir).with_context(|| format!("acquire unit '{name}'"))?;
 
-    let app = AppUnit::new(ctx, name.as_str(), app_config);
+    let app = AppUnit::new(ctx, name, app_config);
 
     let (final_state, log) = match path {
         Some(path) => {
