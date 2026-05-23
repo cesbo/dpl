@@ -134,13 +134,13 @@ impl AppConfig {
             // The app is reachable by other units over the private `dpl`
             // container network at its container name and listening port.
             "url" => Ok(format!("http://dpl-{unit_name}:{port}", port = self.port)),
-            // Static export directory inside the shared nginx volume. The nginx
+            // Static export directory inside the nginx www volume. The nginx
             // container prepends its own mount base to this in-volume path.
             "export" => {
                 let unit_dir = unit_name.unit_dir(ctx);
                 let version = DeployState::get_active_version(&unit_dir)
                     .map_err(|_| RefError::not_deployed(unit_name.as_str()))?;
-                Ok(format!("/exports/{unit_name}_{version}"))
+                Ok(format!("/{unit_name}_{version}"))
             }
             _ => Err(RefError::unknown_export(key)),
         }
@@ -214,7 +214,7 @@ mod tests {
             sample_config()
                 .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "export")
                 .unwrap(),
-            "/exports/web_3"
+            "/web_3"
         );
     }
 

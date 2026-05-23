@@ -7,6 +7,14 @@ use std::{
     },
 };
 
+/// Podman volume for app static exports; mounts to `/var/www` in the nginx
+/// container. Holds `<name>_<version>/…` directories at its root.
+pub const NGINX_WWW_VOLUME: &str = "dpl-nginx-www";
+
+/// Podman volume for nginx configs; mounts to `/etc/nginx/conf.d` in the nginx
+/// container. Holds `<domain>.conf` files at its root.
+pub const NGINX_CONF_VOLUME: &str = "dpl-nginx-conf";
+
 /// Run podman and capture its trimmed stdout.
 pub fn run_podman(args: &[&str]) -> io::Result<String> {
     let output = Command::new("podman")

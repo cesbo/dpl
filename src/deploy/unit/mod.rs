@@ -30,10 +30,6 @@ use crate::{
     },
 };
 
-/// Shared podman volume for nginx: holds its configs and the app static
-/// exports it serves (under `exports/<name>_<version>/`).
-pub const NGINX_VOLUME: &str = "dpl-nginx";
-
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum UnitConfig {

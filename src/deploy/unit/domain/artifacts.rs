@@ -49,8 +49,8 @@ pub struct ArtifactsContext<'a> {
 
 impl<'a> ArtifactsContext<'a> {
     /// Render the nginx config and write it as `<unit-name>.conf` into the given
-    /// `conf_dir` (the central nginx container's `conf.d` inside the shared
-    /// `dpl-nginx` volume).
+    /// `conf_dir` (the root of the `dpl-nginx-conf` volume, which the nginx
+    /// container mounts at `/etc/nginx/conf.d`).
     pub fn save(&self, conf_dir: &Path) -> Result<(), ArtifactError> {
         let proxy = self.config.proxy.as_ref().map(RenderProxy::new);
 

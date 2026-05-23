@@ -12,10 +12,10 @@ use crate::{
     deploy::{
         DeployError,
         state::DeployState,
-        unit::NGINX_VOLUME,
     },
     error::format_error_chain,
     podman::{
+        NGINX_CONF_VOLUME,
         ensure_volume,
         volume_mountpoint,
     },
@@ -62,18 +62,16 @@ impl<'a> DomainUnit<'a> {
     }
 
     fn write_config(&self) -> Result<(), DeployError> {
-        ensure_volume(NGINX_VOLUME).map_err(|source| DeployError::UnitError {
-            info: format!("failed to get nginx volume '{NGINX_VOLUME}'"),
+        ensure_volume(NGINX_CONF_VOLUME).map_err(|source| DeployError::UnitError {
+            info: format!("get nginx volume '{NGINX_CONF_VOLUME}'"),
             source,
         })?;
 
-        let conf_dir = volume_mountpoint(NGINX_VOLUME)
-            .map_err(|source| DeployError::UnitError {
-                info: format!("failed to resolve nginx volume '{NGINX_VOLUME}' mountpoint"),
+        let conf_dir =
+            volume_mountpoint(NGINX_CONF_VOLUME).map_err(|source| DeployError::UnitError {
+                info: format!("resolve nginx volume '{NGINX_CONF_VOLUME}' mountpoint"),
                 source,
-            })?
-            .join("nginx")
-            .join("conf.d");
+            })?;
 
         let artifacts = ArtifactsContext {
             ctx: self.ctx,

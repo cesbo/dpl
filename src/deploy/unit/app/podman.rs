@@ -12,9 +12,9 @@ use std::{
 
 use super::model::ExportConfig;
 use crate::{
-    deploy::unit::NGINX_VOLUME,
     log::DeployLog,
     podman::{
+        NGINX_WWW_VOLUME,
         ensure_volume,
         run_podman,
         volume_mountpoint,
@@ -106,17 +106,17 @@ impl<'a> PodmanContext<'a> {
         Ok(())
     }
 
-    /// Export files from the podman image into the shared static volume under
-    /// `exports/<name>_<version>/<path>/`.
+    /// Export files from the podman image into the static volume under
+    /// `<name>_<version>/<path>/` at the volume root.
     pub fn export(&self, exports: &[ExportConfig], log: &DeployLog) -> io::Result<()> {
         if exports.is_empty() {
             return Ok(());
         }
 
-        // Ensure the shared volume exists, then resolve its host mountpoint so we
-        // can copy into it with `podman cp` (cp targets host paths, not volumes).
-        ensure_volume(NGINX_VOLUME)?;
-        let exports_root = volume_mountpoint(NGINX_VOLUME)?.join("exports");
+        // Ensure the volume exists, then resolve its host mountpoint so we can
+        // copy into it with `podman cp` (cp targets host paths, not volumes).
+        ensure_volume(NGINX_WWW_VOLUME)?;
+        let exports_root = volume_mountpoint(NGINX_WWW_VOLUME)?;
         std::fs::create_dir_all(&exports_root)?;
 
         let version_dir = exports_root.join(format!("{}_{}", self.name, self.version));
@@ -164,13 +164,12 @@ impl<'a> PodmanContext<'a> {
         log.detail("removed app image");
     }
 
-    /// Remove this version's exported files from the shared nginx volume.
+    /// Remove this version's exported files from the static volume.
     pub fn remove_exports(&self, log: &DeployLog) {
         // If the volume does not exist there is nothing to clean up.
-        let Ok(mountpoint) = volume_mountpoint(NGINX_VOLUME) else {
+        let Ok(exports_root) = volume_mountpoint(NGINX_WWW_VOLUME) else {
             return;
         };
-        let exports_root = mountpoint.join("exports");
 
         match remove_export_dir(&exports_root, self.name, self.version) {
             Ok(true) => log.detail(&format!("removed exports {}_{}", self.name, self.version)),
