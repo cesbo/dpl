@@ -125,20 +125,14 @@ impl AppConfig {
 
     pub fn resolve_export(
         &self,
-        ctx: &MainContext,
+        _ctx: &MainContext,
         unit_name: &ResourceName,
         key: &str,
     ) -> Result<String, RefError> {
         match key {
-            "url" => {
-                let unit_dir = unit_name.unit_dir(ctx);
-                let port = super::port::read_port(&unit_dir)
-                    .map_err(|err| RefError::export(format!("resolve app port: {err}")))?
-                    .ok_or_else(|| {
-                        RefError::export(format!("app '{unit_name}' is not deployed yet"))
-                    })?;
-                Ok(format!("http://127.0.0.1:{port}"))
-            }
+            // The app is reachable by other units over the private `dpl`
+            // container network at its container name and listening port.
+            "url" => Ok(format!("http://dpl-{unit_name}:{port}", port = self.port)),
             _ => Err(RefError::unknown_export(key)),
         }
     }
@@ -146,12 +140,7 @@ impl AppConfig {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
-    use tempfile::TempDir;
-
     use super::*;
-    use crate::error::RefErrorKind;
 
     fn sample_config() -> AppConfig {
         AppConfig {
@@ -172,41 +161,24 @@ mod tests {
 
     #[test]
     fn app_resolve_export_url() {
-        let base = TempDir::new().unwrap();
-        let unit_dir = base.path().join("web");
-        fs::create_dir_all(&unit_dir).unwrap();
-        fs::write(unit_dir.join("port.txt"), "12345").unwrap();
-
-        let ctx = MainContext {
-            base: base.path().to_path_buf(),
-            master_key: None,
-        };
+        let ctx = MainContext::default();
         let config = sample_config();
         assert_eq!(
             config
                 .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "url")
                 .unwrap(),
-            "http://127.0.0.1:12345"
+            "http://dpl-web:8080"
         );
     }
 
     #[test]
-    fn app_resolve_export_port_missing() {
-        let base = TempDir::new().unwrap();
-        let ctx = MainContext {
-            base: base.path().to_path_buf(),
-            master_key: None,
-        };
+    fn app_resolve_export_unknown_key() {
+        let ctx = MainContext::default();
         let config = sample_config();
-        let err = config
-            .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "url")
-            .unwrap_err();
-        let RefErrorKind::Export { reason } = err.kind else {
-            panic!("expected Export kind, got {:?}", err.kind);
-        };
         assert!(
-            reason.contains("is not deployed yet"),
-            "unexpected reason: {reason}"
+            config
+                .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "nope")
+                .is_err()
         );
     }
 }

@@ -25,7 +25,6 @@ ExecStart=/usr/bin/podman run \
   --cgroups=split \
   --sdnotify=conmon \
   --network=dpl \
-  -p 127.0.0.1:{{ host_port }}:{{ container_port }} \
 {% for volume in volumes %}
   -v {{ volume.source }}:{{ volume.path }} \
 {% endfor %}

@@ -49,9 +49,6 @@ pub enum RefErrorKind {
         source: ConfigError,
     },
 
-    #[error("{reason}")]
-    Export { reason: String },
-
     #[error(transparent)]
     Secret(#[from] SecretError),
 }
@@ -64,13 +61,6 @@ impl RefError {
 
     pub fn unknown_export(key: impl Into<String>) -> Self {
         RefErrorKind::UnknownExport { key: key.into() }.into()
-    }
-
-    pub fn export(reason: impl Into<String>) -> Self {
-        RefErrorKind::Export {
-            reason: reason.into(),
-        }
-        .into()
     }
 
     pub fn wrong_unit_type(unit: impl Into<String>, expected: &'static str) -> Self {

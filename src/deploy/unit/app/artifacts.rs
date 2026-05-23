@@ -70,7 +70,6 @@ pub struct ArtifactsContext<'a> {
     pub name: &'a str,
     pub config: &'a AppConfig,
     pub version: u32,
-    pub port: u16,
 }
 
 impl<'a> ArtifactsContext<'a> {
@@ -147,8 +146,6 @@ impl<'a> ArtifactsContext<'a> {
                 dpl_base => self.ctx.base().to_string_lossy(),
                 name => &self.name,
                 version => self.version,
-                host_port => self.port,
-                container_port => &self.config.port,
                 volumes => &self.config.volumes,
                 databases => &self.config.databases,
             },
@@ -278,7 +275,6 @@ mod tests {
             name,
             config: &config,
             version: 1,
-            port: 32323,
         };
 
         artifacts.save(&deploy_dir).unwrap();

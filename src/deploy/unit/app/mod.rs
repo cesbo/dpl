@@ -2,7 +2,6 @@ mod artifacts;
 mod health;
 mod model;
 mod podman;
-mod port;
 mod systemd;
 
 use std::{
@@ -117,17 +116,11 @@ impl<'a> AppUnit<'a> {
             source,
         })?;
 
-        let port = port::get_port(&self.unit_dir).map_err(|source| DeployError::UnitError {
-            info: "failed to get port".to_string(),
-            source,
-        })?;
-
         let artifacts = ArtifactsContext {
             ctx: self.ctx,
             name: &self.name,
             config: &self.config,
             version,
-            port,
         };
         artifacts.save(&deploy_dir)?;
 
