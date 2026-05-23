@@ -275,8 +275,8 @@ mod tests {
         let unit_dir = base.path().join("web");
         fs::create_dir_all(&unit_dir).unwrap();
         fs::write(
-            unit_dir.join("state.yaml"),
-            "active_version: 3\nlatest_build:\n  version: 3\n  status: ready\n",
+            unit_dir.join("state.json"),
+            r#"{"active_version":3,"latest_build":{"version":3,"status":"ready"}}"#,
         )
         .unwrap();
 
@@ -303,7 +303,7 @@ mod tests {
             base: base.path().to_path_buf(),
             master_key: None,
         };
-        // No state.yaml on disk → no active deployment to export from.
+        // No state.json on disk → no active deployment to export from.
         let err = sample_config()
             .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "export")
             .unwrap_err();

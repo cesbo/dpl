@@ -109,14 +109,14 @@ pub enum SecretError {
     Serialize {
         name: String,
         #[source]
-        source: serde_yaml::Error,
+        source: serde_json::Error,
     },
 
     #[error("deserialize secret '{name}'")]
     Deserialize {
         name: String,
         #[source]
-        source: serde_yaml::Error,
+        source: serde_json::Error,
     },
 
     #[error("unsupported secret file version {version} for '{name}'")]
@@ -162,7 +162,7 @@ fn walk_secrets(root: &Path, dir: &Path, out: &mut Vec<SecretName>) -> io::Resul
             continue;
         };
 
-        let Some(stem) = name.strip_suffix(".yaml") else {
+        let Some(stem) = name.strip_suffix(".json") else {
             continue;
         };
 
@@ -273,11 +273,12 @@ impl MasterKey {
             created_at: Utc::now(),
         };
         let secret_file = self.encrypt(name.as_str(), &metadata, text)?;
-        let yaml =
-            serde_yaml::to_string(&secret_file).map_err(|source| SecretError::Serialize {
+        let json = serde_json::to_string_pretty(&secret_file).map_err(|source| {
+            SecretError::Serialize {
                 name: name.to_string(),
                 source,
-            })?;
+            }
+        })?;
 
         if let Some(parent) = path.parent() {
             create_dir_all(parent).map_err(|source| SecretError::WriteSecret {
@@ -303,7 +304,7 @@ impl MasterKey {
                 }
             })?;
 
-        file.write_all(yaml.as_bytes())
+        file.write_all(json.as_bytes())
             .map_err(|source| SecretError::WriteSecret {
                 name: name.to_string(),
                 source,
@@ -366,7 +367,7 @@ impl MasterKey {
         })?;
 
         let file: SecretFile =
-            serde_yaml::from_str(&content).map_err(|source| SecretError::Deserialize {
+            serde_json::from_str(&content).map_err(|source| SecretError::Deserialize {
                 name: name.to_string(),
                 source,
             })?;
@@ -495,7 +496,7 @@ mod tests {
         key.encrypt_to_file(&name, "secret-value").unwrap();
 
         let path = name.file_path_in(&get_secrets_dir(base));
-        assert!(path.extension().is_some_and(|ext| ext == "yaml"));
+        assert!(path.extension().is_some_and(|ext| ext == "json"));
         assert!(path.exists());
 
         let plain = key.decrypt_from_file(&name).unwrap();
@@ -503,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn file_yaml_format() {
+    fn file_json_format() {
         let tmp = tempdir().unwrap();
         let base = tmp.path();
         let key = MasterKey::generate(base);
@@ -512,7 +513,7 @@ mod tests {
 
         let path = name.file_path_in(&get_secrets_dir(base));
         let content = fs::read_to_string(&path).unwrap();
-        let file: SecretFile = serde_yaml::from_str(&content).unwrap();
+        let file: SecretFile = serde_json::from_str(&content).unwrap();
         assert_eq!(file.version, 1);
         assert!(!file.nonce.is_empty());
         assert!(!file.ciphertext.is_empty());

@@ -20,7 +20,7 @@ use crate::{
 };
 
 const SECRETS_DIR: &str = ".secrets";
-const SECRET_FILE_EXT: &str = "yaml";
+const SECRET_FILE_EXT: &str = "json";
 
 #[derive(Error, Debug)]
 #[error("invalid secret name '{0}'")]
@@ -48,7 +48,7 @@ impl SecretName {
         !name.is_empty() && name.split('/').all(ResourceName::is_valid)
     }
 
-    /// `{base}/.secrets/{group_components}/{last}.yaml`
+    /// `{base}/.secrets/{group_components}/{last}.json`
     pub fn file_path(&self, ctx: &MainContext) -> PathBuf {
         self.file_path_in(&ctx.base().join(SECRETS_DIR))
     }
@@ -135,7 +135,7 @@ mod tests {
         let name = SecretName::new("foo").unwrap();
         assert_eq!(
             name.file_path_in(Path::new("/tmp/secrets")),
-            PathBuf::from("/tmp/secrets/foo.yaml")
+            PathBuf::from("/tmp/secrets/foo.json")
         );
     }
 
@@ -144,7 +144,7 @@ mod tests {
         let name = SecretName::new("a/b/c").unwrap();
         assert_eq!(
             name.file_path_in(Path::new("/tmp/secrets")),
-            PathBuf::from("/tmp/secrets/a/b/c.yaml")
+            PathBuf::from("/tmp/secrets/a/b/c.json")
         );
     }
 }

@@ -44,7 +44,7 @@ Each unit lives in its own directory `{unit_dir}` and has:
 
 - `config.yaml` - unit config. The `type` field selects the variant: `app`,
   `db-server`, `db`, or `domain`
-- `state.yaml` - serialized deploy state (`active_version` and `latest_build`).
+- `state.json` - serialized deploy state (`active_version` and `latest_build`).
   Only app deploys update this file
 - `.deploy.lock` - advisory `flock(2)` held for the duration of a deploy so
   two `dpl unit deploy` invocations against the same unit can't race
@@ -336,7 +336,7 @@ The full build log is at `{deploy_dir}/log/build.log`.
 ## Notes
 
 - The unit config is read fresh on each `dpl` invocation.
-- Deploy state is stored on disk in `{unit_dir}/state.yaml`.
+- Deploy state is stored on disk in `{unit_dir}/state.json`.
 - The busy lock at `{unit_dir}/.deploy.lock` is held via `flock(2)` for the
   duration of a deploy; the kernel releases it if `dpl` crashes.
 - If the archive has a single top-level folder, `dpl` flattens it after
