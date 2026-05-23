@@ -92,9 +92,6 @@ runtime:
     test -d /app/dist
   cmd: node server.js
 
-databases:
-  - app-db
-
 volumes:
   - source: myapp-data
     path: /app/data
@@ -116,9 +113,6 @@ Fields:
 - `port` - port the application listens on
 - `build` - list of build layers (see below)
 - `runtime` - runtime configuration (see below)
-- `databases` - list of `db` unit names this app depends on. Their values are
-  available to `runtime.env` and `build.env` via the `${<db-unit>:<key>}`
-  template (see [Database Units](#database-units))
 - `volumes` - persistent storage mounted into the container. Data in volumes
   survives redeploys
 - `exports` - copies files from the built image into `{deploy_dir}/exports/`
@@ -146,8 +140,10 @@ Build layer fields:
 - `${secret:<name>}` - inlined plaintext of an encrypted secret. See
   [Secrets](#secrets)
 - `${<db-unit>:<key>}` - export of a referenced `db` unit. Allowed keys:
-  `name`, `user`, `password`, `host`, `port`, `url`. The `db` unit must appear
-  in this app's `databases:` list and must already exist
+  `name`, `user`, `password`, `host`, `port`, `url`. The `db` unit must already
+  exist. Every `db` unit referenced this way is automatically treated as a
+  startup dependency: a `db wait` gate is added to the generated service and
+  its reference chain is validated recursively (no separate `databases:` list)
 
 References are validated by `dpl check`.
 
@@ -295,9 +291,9 @@ dpl check myapp
 ```
 
 Parses `{unit_dir}/config.yaml` and resolves every reference: each
-`${secret:...}` must exist, each unit named in `databases:` must be a `db`
-unit, and each `${<db>:<key>}` must use a known export. Exits non-zero on the
-first problem.
+`${secret:...}` must exist and each `${<db>:<key>}` must use a known export.
+Referenced `db` units are validated recursively through their db-server and
+secret. Exits non-zero on the first problem.
 
 ### Trigger a deploy
 

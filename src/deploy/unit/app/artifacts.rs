@@ -147,7 +147,7 @@ impl<'a> ArtifactsContext<'a> {
                 name => &self.name,
                 version => self.version,
                 volumes => &self.config.volumes,
-                databases => &self.config.databases,
+                databases => self.config.database_deps(self.ctx)?,
             },
         )?;
 
@@ -194,12 +194,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::{
-        config::ResourceName,
-        deploy::{
-            EnvList,
-            unit::app::model::*,
-        },
+    use crate::deploy::{
+        EnvList,
+        unit::app::model::*,
     };
 
     #[test]
@@ -222,11 +219,13 @@ mod tests {
                     env: EnvList::new(),
                     script: Some("npm ci".to_owned()),
                 },
-                // without script
+                // without script — its db references still feed the wait-gate
+                // but are never resolved (script-less layers skip rendering).
                 BuildConfig {
                     description: None,
                     files: vec!["test.txt".to_owned()],
-                    env: EnvList::new(),
+                    env: serde_yaml::from_str("DB: \"${main-db:url}\"\nCACHE: \"${cache-db:url}\"")
+                        .unwrap(),
                     script: None,
                 },
                 // copy all
@@ -258,10 +257,6 @@ mod tests {
                     script: "echo sync".into(),
                 },
             ],
-            databases: vec![
-                ResourceName::new("main-db").unwrap(),
-                ResourceName::new("cache-db").unwrap(),
-            ],
         };
 
         let name = "my-app";
@@ -269,7 +264,22 @@ mod tests {
         let deploy_dir = temp_dir.path().join(name);
         fs::create_dir_all(&deploy_dir).unwrap();
 
-        let ctx = MainContext::default();
+        // `database_deps` loads each referenced unit to classify it; the two db
+        // units must exist on disk to land in the `db wait` startup gate.
+        for db in ["main-db", "cache-db"] {
+            let db_dir = temp_dir.path().join(db);
+            fs::create_dir_all(&db_dir).unwrap();
+            fs::write(
+                db_dir.join("config.yaml"),
+                "type: db\nserver: pg-main\nuser: app1\nsecret: app1-pass\n",
+            )
+            .unwrap();
+        }
+
+        let ctx = MainContext {
+            base: temp_dir.path().to_path_buf(),
+            master_key: None,
+        };
         let artifacts = ArtifactsContext {
             ctx: &ctx,
             name,

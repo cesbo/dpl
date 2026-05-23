@@ -211,30 +211,6 @@ secret: pg-pass
     }
 
     #[test]
-    fn parse_app_unit_config_with_databases() {
-        let config: UnitConfig = serde_yaml::from_str(
-            r#"
-type: app
-image: alpine
-port: 8080
-builds: []
-runtime:
-  cmd: "./run"
-databases:
-  - main-db
-  - cache-db
-"#,
-        )
-        .unwrap();
-
-        let UnitConfig::App(app) = config else {
-            panic!("expected app variant");
-        };
-        let dbs: Vec<&str> = app.databases.iter().map(|n| n.as_str()).collect();
-        assert_eq!(dbs, vec!["main-db", "cache-db"]);
-    }
-
-    #[test]
     fn load_skips_reference_validation() {
         use std::fs;
 
@@ -397,20 +373,21 @@ databases:
             SecretError,
         };
 
-        // Layout (the `databases:` recursion path, distinct from the env/token
-        // path above):
-        //   app `foo` → databases: [db-test]
+        // Layout (the db-dependency recursion path, distinct from the leaf
+        // env/token failure exercised by `validate_references_full_chain`):
+        //   app `foo` → runtime.env.DB = "${db-test:url}"
         //   db  `db-test` → server: pg-main (with its own secret present)
         //   db-server `pg-main` → secret: pg-pass (intentionally MISSING)
-        // The leaf failure is on pg-main; the trail must keep every hop so the
-        // user sees databases[0] → db-test → pg-main → secret.
+        // The url renders fine (db-test's own secret is present), so the env
+        // `resolve` passes; the failure surfaces only when the dependency walk
+        // descends into db-test → pg-main. The trail must keep every hop.
         let base = TempDir::new().unwrap();
 
         let app_dir = base.path().join("foo");
         fs::create_dir_all(&app_dir).unwrap();
         fs::write(
             app_dir.join("config.yaml"),
-            "type: app\nimage: alpine\nport: 8080\nbuilds: []\nruntime:\n  cmd: ./run\ndatabases:\n  - db-test\n",
+            "type: app\nimage: alpine\nport: 8080\nbuilds: []\nruntime:\n  env:\n    DB: \"${db-test:url}\"\n  cmd: ./run\n",
         )
         .unwrap();
 
@@ -447,11 +424,9 @@ databases:
 
         // Expected trail, innermost-first:
         //   field "secret" → unit "pg-main" → unit "db-test"
-        //     → field "databases[0]"
         assert!(matches!(&err.trail[0], Location::Field { path } if path == "secret"));
         assert!(matches!(&err.trail[1], Location::Unit { name } if name == "pg-main"));
         assert!(matches!(&err.trail[2], Location::Unit { name } if name == "db-test"));
-        assert!(matches!(&err.trail[3], Location::Field { path } if path == "databases[0]"));
         assert!(
             matches!(err.kind, RefErrorKind::Secret(SecretError::NotFound { ref name }) if name == "pg-pass"),
             "unexpected kind: {:?}",

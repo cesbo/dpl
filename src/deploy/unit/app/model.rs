@@ -32,8 +32,6 @@ pub struct AppConfig {
     pub exports: Vec<ExportConfig>,
     #[serde(default)]
     pub timers: Vec<TimerConfig>,
-    #[serde(default)]
-    pub databases: Vec<ResourceName>,
 }
 
 /// Configuration for a build layer of the application
@@ -106,15 +104,24 @@ pub struct TimerConfig {
 impl AppConfig {
     /// Units referenced through `${unit:key}` tokens across `runtime.env` and
     /// every build layer's `env`, deduplicated and sorted.
-    ///
-    /// Reference-derived only — the explicit `databases` list is a separate
-    /// concern (the startup wait-gate) and is intentionally not folded in here.
     pub fn unit_deps(&self) -> BTreeSet<ResourceName> {
         let mut deps: BTreeSet<ResourceName> = self.runtime.env.unit_refs().cloned().collect();
         for layer in &self.builds {
             deps.extend(layer.env.unit_refs().cloned());
         }
         deps
+    }
+
+    pub fn database_deps(&self, ctx: &MainContext) -> Result<Vec<ResourceName>, RefError> {
+        let mut dbs = Vec::new();
+        for dep in self.unit_deps() {
+            match UnitConfig::load(ctx, &dep) {
+                Ok(UnitConfig::Db(_)) => dbs.push(dep),
+                Ok(_) => continue,
+                Err(err) => return Err(RefError::from(err).at(Location::unit(dep.as_str()))),
+            }
+        }
+        Ok(dbs)
     }
 
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
@@ -124,16 +131,14 @@ impl AppConfig {
             layer.env.resolve(ctx, &format!("builds[{index}].env"))?;
         }
 
-        for (index, db) in self.databases.iter().enumerate() {
-            let inner: RefError = match UnitConfig::load(ctx, db) {
-                Ok(UnitConfig::Db(config)) => match config.validate_references(ctx) {
-                    Ok(()) => continue,
-                    Err(err) => err.at(Location::unit(db.as_str())),
-                },
-                Ok(_) => RefError::wrong_unit_type(db.to_string(), "db"),
-                Err(err) => err.into(),
-            };
-            return Err(inner.at(Location::field(format!("databases[{index}]"))));
+        for dep in self.unit_deps() {
+            match UnitConfig::load(ctx, &dep) {
+                Ok(UnitConfig::Db(config)) => config
+                    .validate_references(ctx)
+                    .map_err(|err| err.at(Location::unit(dep.as_str())))?,
+                Ok(_) => continue,
+                Err(err) => return Err(RefError::from(err).at(Location::unit(dep.as_str()))),
+            }
         }
 
         Ok(())
@@ -179,7 +184,6 @@ mod tests {
             volumes: Vec::new(),
             exports: Vec::new(),
             timers: Vec::new(),
-            databases: Vec::new(),
         }
     }
 
@@ -198,6 +202,44 @@ mod tests {
     #[test]
     fn app_unit_deps_empty_without_refs() {
         assert!(sample_config().unit_deps().is_empty());
+    }
+
+    #[test]
+    fn app_database_deps_keeps_db_skips_other_kinds() {
+        use std::fs;
+
+        use tempfile::TempDir;
+
+        // app `foo` references a `db` unit and another `app` unit. Only the db
+        // is a startup dependency; the app reference is dropped.
+        let config: AppConfig = serde_yaml::from_str(
+            "image: alpine\nport: 8080\nruntime:\n  cmd: ./run\n  env:\n    DB: \"${db-x:url}\"\n    UPSTREAM: \"${other-app:url}\"\nbuilds: []\n",
+        )
+        .unwrap();
+
+        let base = TempDir::new().unwrap();
+        let db_dir = base.path().join("db-x");
+        fs::create_dir_all(&db_dir).unwrap();
+        fs::write(
+            db_dir.join("config.yaml"),
+            "type: db\nserver: pg-main\nuser: app1\nsecret: db-x-pass\n",
+        )
+        .unwrap();
+        let app_dir = base.path().join("other-app");
+        fs::create_dir_all(&app_dir).unwrap();
+        fs::write(
+            app_dir.join("config.yaml"),
+            "type: app\nimage: alpine\nport: 9090\nbuilds: []\nruntime:\n  cmd: ./run\n",
+        )
+        .unwrap();
+
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: None,
+        };
+        let deps = config.database_deps(&ctx).unwrap();
+        let names: Vec<&str> = deps.iter().map(ResourceName::as_str).collect();
+        assert_eq!(names, vec!["db-x"]);
     }
 
     #[test]
