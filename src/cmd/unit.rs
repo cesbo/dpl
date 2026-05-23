@@ -19,7 +19,12 @@ use crate::{
     config::ResourceName,
     deploy::{
         DeployState,
+        DeployStatus,
+        Field,
+        Health,
+        Section,
         UnitConfig,
+        UnitReport,
         unit::app::AppUnit,
     },
     log::fmt_elapsed,
@@ -104,19 +109,38 @@ pub fn inspect(ctx: &MainContext, name: &str) -> Result<()> {
 
     let unit_dir = name.unit_dir(ctx);
     let state = DeployState::load(&unit_dir).context("load deploy state")?;
-    let build = &state.latest_build;
-    let status = format!("{:?}", build.status).to_lowercase();
+    let report = app_report(&name, &state);
 
-    println!("version: {}", build.version);
-    println!("status:  {status}");
+    let json = serde_json::to_string_pretty(&report).context("serialize report")?;
+    println!("{json}");
+    Ok(())
+}
+
+/// Assemble the app unit report from its on-disk deploy state. Steps 2+ move
+/// this into `deploy/unit/app/inspect.rs` and grow it with container/systemd
+/// probes; for now it ports the four fields the previous `inspect` printed.
+fn app_report(name: &ResourceName, state: &DeployState) -> UnitReport {
+    let build = &state.latest_build;
+    let (status, health) = match build.status {
+        DeployStatus::Ready => ("ready", Health::Ok),
+        DeployStatus::Failed => ("failed", Health::Down),
+        DeployStatus::Building => ("building", Health::Warn),
+        DeployStatus::Idle => ("idle", Health::Unknown),
+    };
+
+    let mut deploy = Section::new("deploy");
+    deploy.push(Field::new("version", build.version.to_string()).health(Health::Ok));
+    deploy.push(Field::new("status", status).health(health));
     if let Some(active) = state.active_version {
-        println!("active:  {active}");
+        deploy.push(Field::new("active", active.to_string()));
     }
     if let Some(err) = &build.error {
-        println!("error:   {err}");
+        deploy.push(Field::new("error", err.clone()).health(Health::Down));
     }
 
-    Ok(())
+    let mut report = UnitReport::new(name.as_str(), "app");
+    report.push(deploy);
+    report
 }
 
 fn load_unit(ctx: &MainContext, name: &ResourceName) -> Result<UnitConfig> {
