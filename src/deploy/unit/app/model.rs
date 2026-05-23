@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use serde::{
     Deserialize,
     Serialize,
@@ -102,6 +104,19 @@ pub struct TimerConfig {
 }
 
 impl AppConfig {
+    /// Units referenced through `${unit:key}` tokens across `runtime.env` and
+    /// every build layer's `env`, deduplicated and sorted.
+    ///
+    /// Reference-derived only — the explicit `databases` list is a separate
+    /// concern (the startup wait-gate) and is intentionally not folded in here.
+    pub fn unit_deps(&self) -> BTreeSet<ResourceName> {
+        let mut deps: BTreeSet<ResourceName> = self.runtime.env.unit_refs().cloned().collect();
+        for layer in &self.builds {
+            deps.extend(layer.env.unit_refs().cloned());
+        }
+        deps
+    }
+
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
         self.runtime.env.resolve(ctx, "runtime.env")?;
 
@@ -166,6 +181,23 @@ mod tests {
             timers: Vec::new(),
             databases: Vec::new(),
         }
+    }
+
+    #[test]
+    fn app_unit_deps_from_env_and_builds() {
+        let config: AppConfig = serde_yaml::from_str(
+            "image: alpine\nport: 8080\nruntime:\n  cmd: ./run\n  env:\n    DB: \"${app-db:url}\"\n    SECRET: \"${secret:k}\"\nbuilds:\n  - env:\n      API: \"${api:url}\"\n",
+        )
+        .unwrap();
+        // BTreeSet → sorted, deduped, secret ref dropped.
+        let deps = config.unit_deps();
+        let names: Vec<&str> = deps.iter().map(ResourceName::as_str).collect();
+        assert_eq!(names, vec!["api", "app-db"]);
+    }
+
+    #[test]
+    fn app_unit_deps_empty_without_refs() {
+        assert!(sample_config().unit_deps().is_empty());
     }
 
     #[test]

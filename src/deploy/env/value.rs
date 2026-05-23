@@ -156,6 +156,19 @@ impl Value {
         })
     }
 
+    /// Names of the units this value references, in document order
+    /// (duplicates possible).
+    ///
+    /// Drops `${secret:…}` refs; use [`Value::references`] for all of them.
+    /// This is purely syntactic — it does not load or classify the referenced
+    /// units.
+    pub fn unit_refs(&self) -> impl Iterator<Item = &ResourceName> {
+        self.references().filter_map(|(ns, _)| match ns {
+            Ns::Unit(name) => Some(name),
+            Ns::Secret => None,
+        })
+    }
+
     pub fn render(&self, ctx: &MainContext) -> Result<String, RefError> {
         let mut out = String::new();
         for seg in &self.0 {
@@ -458,6 +471,25 @@ mod tests {
                 (&Ns::Unit(ResourceName::new("pg-main").unwrap()), "port"),
             ]
         );
+    }
+
+    #[test]
+    fn unit_refs_drops_secrets_keeps_order() {
+        let v = Value::parse("${secret:x}-${pg-main:port}@${app-db:url}").unwrap();
+        let refs: Vec<&ResourceName> = v.unit_refs().collect();
+        assert_eq!(
+            refs,
+            vec![
+                &ResourceName::new("pg-main").unwrap(),
+                &ResourceName::new("app-db").unwrap(),
+            ]
+        );
+    }
+
+    #[test]
+    fn unit_refs_empty_without_unit_refs() {
+        let v = Value::parse("postgres://${secret:db}@host").unwrap();
+        assert_eq!(v.unit_refs().count(), 0);
     }
 
     fn write_db_unit(base: &std::path::Path) {

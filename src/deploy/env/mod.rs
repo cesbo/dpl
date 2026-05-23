@@ -14,6 +14,7 @@ pub use self::{
 };
 use crate::{
     MainContext,
+    config::ResourceName,
     error::{
         Location,
         RefError,
@@ -43,6 +44,13 @@ impl EnvList {
             })
             .collect()
     }
+
+    /// Names of all units referenced across every entry (duplicates possible).
+    ///
+    /// Purely syntactic; see [`Value::unit_refs`].
+    pub fn unit_refs(&self) -> impl Iterator<Item = &ResourceName> {
+        self.0.values().flat_map(|value| value.unit_refs())
+    }
 }
 
 #[cfg(test)]
@@ -68,5 +76,16 @@ mod tests {
     fn deserialize_rejects_template_syntax_error() {
         let err = serde_yaml::from_str::<EnvList>("BAD: \"${secret:}\"").unwrap_err();
         assert!(err.to_string().contains("malformed reference"));
+    }
+
+    #[test]
+    fn unit_refs_across_entries_skipping_secrets() {
+        let list: EnvList = serde_yaml::from_str(
+            "DB_URL: \"${app-db:url}\"\nCACHE: \"${secret:redis}\"\nUPSTREAM: \"${api:url}\"\n",
+        )
+        .unwrap();
+        // BTreeMap iterates by key (CACHE, DB_URL, UPSTREAM); secret ref dropped.
+        let names: Vec<&str> = list.unit_refs().map(ResourceName::as_str).collect();
+        assert_eq!(names, vec!["app-db", "api"]);
     }
 }

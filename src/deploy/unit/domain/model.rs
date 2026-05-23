@@ -3,12 +3,15 @@ use serde::{
     Serialize,
 };
 
+use std::collections::BTreeSet;
+
 use super::{
     host_name::HostName,
     route_location::RouteLocation,
 };
 use crate::{
     MainContext,
+    config::ResourceName,
     deploy::env::Value,
     error::{
         Location,
@@ -60,6 +63,22 @@ pub enum RouteConfig {
 }
 
 impl DomainConfig {
+    /// Units referenced through `${unit:key}` tokens across every route's
+    /// `target`/`root`, deduplicated and sorted.
+    ///
+    /// Reference-derived only; purely syntactic (no unit loading).
+    pub fn unit_deps(&self) -> BTreeSet<ResourceName> {
+        let mut deps = BTreeSet::new();
+        for route in &self.routes {
+            let value = match route {
+                RouteConfig::ReverseProxy { target, .. } => target,
+                RouteConfig::ServeFiles { root, .. } => root,
+            };
+            deps.extend(value.unit_refs().cloned());
+        }
+        deps
+    }
+
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
         for (index, route) in self.routes.iter().enumerate() {
             let (value, leaf) = match &route {
@@ -77,6 +96,18 @@ impl DomainConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn domain_unit_deps_from_routes() {
+        let config: DomainConfig = serde_yaml::from_str(
+            "hosts:\n  - example.com\nroutes:\n  - location: /api\n    kind: reverse_proxy\n    target: \"${backend:url}\"\n  - location: /static\n    kind: serve_files\n    root: \"${assets:export}\"\n  - location: /lit\n    kind: serve_files\n    root: \"/var/www/site\"\n",
+        )
+        .unwrap();
+        let deps = config.unit_deps();
+        let names: Vec<&str> = deps.iter().map(ResourceName::as_str).collect();
+        // Sorted; the literal root contributes nothing.
+        assert_eq!(names, vec!["assets", "backend"]);
+    }
 
     #[test]
     fn parse_domain_config_with_custom_proxy() {
