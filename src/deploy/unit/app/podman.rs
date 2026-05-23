@@ -3,7 +3,10 @@ use std::{
         self,
         BufRead,
     },
-    path::Path,
+    path::{
+        Path,
+        PathBuf,
+    },
     process::{
         Command,
         Stdio,
@@ -11,7 +14,10 @@ use std::{
 };
 
 use super::model::ExportConfig;
-use crate::log::DeployLog;
+use crate::{
+    deploy::unit::NGINX_VOLUME,
+    log::DeployLog,
+};
 
 pub struct PodmanContext<'a> {
     name: &'a str,
@@ -98,44 +104,41 @@ impl<'a> PodmanContext<'a> {
         Ok(())
     }
 
-    /// Export files from podman image into deploy directory
-    pub fn export(
-        &self,
-        deploy_dir: &Path,
-        exports: &[ExportConfig],
-        log: &DeployLog,
-    ) -> io::Result<()> {
+    /// Export files from the podman image into the shared static volume under
+    /// `exports/<name>_<version>/<path>/`.
+    pub fn export(&self, exports: &[ExportConfig], log: &DeployLog) -> io::Result<()> {
         if exports.is_empty() {
             return Ok(());
         }
 
-        let exports_dir = deploy_dir.join("exports");
-        std::fs::create_dir(&exports_dir)?;
+        // Ensure the shared volume exists, then resolve its host mountpoint so we
+        // can copy into it with `podman cp` (cp targets host paths, not volumes).
+        ensure_volume(NGINX_VOLUME)?;
+        let exports_root = volume_mountpoint(NGINX_VOLUME)?.join("exports");
+        std::fs::create_dir_all(&exports_root)?;
+
+        let version_dir = exports_root.join(format!("{}_{}", self.name, self.version));
+        std::fs::create_dir_all(&version_dir)?;
 
         let container = format!("dpl-export-{}", cuid::cuid2());
 
         run_podman(&["create", "--name", &container, &self.image_tag])?;
 
         for export in exports {
-            if export.path == "/" {
-                continue;
-            }
-
-            let mut dst = exports_dir.clone();
+            let mut dst = version_dir.clone();
             for item in export.path.trim_start_matches('/').split('/') {
-                if item.is_empty() {
-                    continue;
+                if !item.is_empty() {
+                    dst = dst.join(item);
                 }
-                dst = dst.join(item);
-                std::fs::create_dir(&dst)?;
             }
+            std::fs::create_dir_all(&dst)?;
 
             let source = export.source.trim_end_matches('/');
             let src = format!("{container}:{source}/.");
 
             match run_podman(&["cp", "-a", "--overwrite", &src, &dst.to_string_lossy()]) {
                 Ok(_) => {
-                    log.detail(&format!("export {src} completed"));
+                    log.detail(&format!("export {src} -> {} completed", dst.display()));
                 }
                 Err(err) => {
                     log.warn(&format!("export {src} failed: {err}"));
@@ -158,6 +161,24 @@ impl<'a> PodmanContext<'a> {
 
         log.detail("removed app image");
     }
+
+    /// Remove this version's exported files from the shared nginx volume.
+    pub fn remove_exports(&self, log: &DeployLog) {
+        // If the volume does not exist there is nothing to clean up.
+        let Ok(mountpoint) = volume_mountpoint(NGINX_VOLUME) else {
+            return;
+        };
+        let exports_root = mountpoint.join("exports");
+
+        match remove_export_dir(&exports_root, self.name, self.version) {
+            Ok(true) => log.detail(&format!("removed exports {}_{}", self.name, self.version)),
+            Ok(false) => {}
+            Err(err) => log.warn(&format!(
+                "remove exports {}_{} failed: {err}",
+                self.name, self.version
+            )),
+        }
+    }
 }
 
 fn log_podman_output<R>(reader: R, log: &DeployLog)
@@ -174,16 +195,78 @@ where
     }
 }
 
-pub fn run_podman(args: &[&str]) -> io::Result<()> {
-    let status = Command::new("podman")
+/// Run podman and capture its trimmed stdout.
+pub fn run_podman(args: &[&str]) -> io::Result<String> {
+    let output = Command::new("podman")
         .args(args)
-        .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()?;
+        .output()?;
 
-    if status.success() {
-        Ok(())
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
-        Err(io::Error::other(format!("podman exited with {status}")))
+        Err(io::Error::other(format!(
+            "podman exited with {}",
+            output.status
+        )))
+    }
+}
+
+/// Create the named volume if it does not already exist.
+fn ensure_volume(name: &str) -> io::Result<()> {
+    if run_podman(&["volume", "exists", name]).is_err() {
+        run_podman(&["volume", "create", name])?;
+    }
+
+    Ok(())
+}
+
+/// Resolve the host mountpoint of a named volume.
+fn volume_mountpoint(name: &str) -> io::Result<PathBuf> {
+    let mountpoint = run_podman(&["volume", "inspect", name, "--format", "{{.Mountpoint}}"])?;
+    if mountpoint.is_empty() {
+        return Err(io::Error::other(format!("volume {name} has no mountpoint")));
+    }
+    Ok(PathBuf::from(mountpoint))
+}
+
+/// Remove a single `<name>_<version>` export dir. Returns whether it existed.
+fn remove_export_dir(exports_root: &Path, name: &str, version: u32) -> io::Result<bool> {
+    let dir = exports_root.join(format!("{name}_{version}"));
+
+    match std::fs::remove_dir_all(&dir) {
+        Ok(()) => Ok(true),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[test]
+    fn remove_export_dir_removes_only_the_given_version() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+
+        for name in ["web_1", "web_2", "webapp_1"] {
+            std::fs::create_dir(root.join(name)).unwrap();
+        }
+
+        assert!(remove_export_dir(root, "web", 1).unwrap());
+
+        assert!(!root.join("web_1").exists());
+        // Other versions and prefix-related units are untouched.
+        assert!(root.join("web_2").exists());
+        assert!(root.join("webapp_1").exists());
+    }
+
+    #[test]
+    fn remove_export_dir_missing_is_ok() {
+        let dir = TempDir::new().unwrap();
+        assert!(!remove_export_dir(dir.path(), "web", 9).unwrap());
     }
 }

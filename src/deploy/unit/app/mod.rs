@@ -193,7 +193,7 @@ impl<'a> AppUnit<'a> {
 
         if !self.config.exports.is_empty() {
             log.phase("exporting files");
-            ctx.export(deploy_dir, &self.config.exports, log)
+            ctx.export(&self.config.exports, log)
                 .map_err(|source| DeployError::UnitError {
                     info: "failed to export static files".to_string(),
                     source,
@@ -227,6 +227,7 @@ impl<'a> AppUnit<'a> {
         systemd_ctx.uninstall_app(log);
 
         let podman_ctx = PodmanContext::new(&self.name, version);
+        podman_ctx.remove_exports(log);
         podman_ctx.remove(log);
     }
 }
