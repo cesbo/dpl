@@ -25,6 +25,14 @@ use crate::{
 };
 
 const NGINX_CONFIG_TEMPLATE: &str = "nginx-config";
+const NGINX_SERVICE_TEMPLATE: &str = "nginx-service";
+
+/// Container image for the singleton `dpl-nginx` service.
+const NGINX_IMAGE: &str = "docker.io/library/nginx:stable";
+
+/// Global nginx config dropped into the `dpl-nginx-conf` volume as
+/// `00-dpl.conf` (loads first; included in nginx's `http` context).
+const GLOBAL_CONFIG: &str = include_str!("templates/00-dpl.conf");
 
 static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
     let mut env = Environment::new();
@@ -38,8 +46,32 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
     )
     .unwrap();
 
+    env.add_template(
+        NGINX_SERVICE_TEMPLATE,
+        include_str!("templates/nginx-service.jinja"),
+    )
+    .unwrap();
+
     env
 });
+
+/// Write the global `00-dpl.conf` into `conf_dir` (the root of the
+/// `dpl-nginx-conf` volume).
+pub fn write_global_config(conf_dir: &Path) -> Result<(), ArtifactError> {
+    let path = conf_dir.join("00-dpl.conf");
+    fs::write(&path, GLOBAL_CONFIG).map_err(ArtifactError::Write)
+}
+
+/// Render the singleton `dpl-nginx.service` and write it into `systemd_dir`.
+pub fn create_nginx_service(systemd_dir: &Path) -> Result<(), ArtifactError> {
+    let content = render_template(
+        &TEMPLATES,
+        NGINX_SERVICE_TEMPLATE,
+        context! { image => NGINX_IMAGE },
+    )?;
+    let path = systemd_dir.join("dpl-nginx.service");
+    fs::write(&path, content).map_err(ArtifactError::Write)
+}
 
 pub struct ArtifactsContext<'a> {
     pub ctx: &'a MainContext,
@@ -141,5 +173,44 @@ impl<'a> RenderRoute<'a> {
                 Ok(render_route)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tempfile::tempdir;
+
+    use super::*;
+
+    #[test]
+    fn render_nginx_service() {
+        let temp_dir = tempdir().unwrap();
+        let systemd_dir = temp_dir.path();
+
+        create_nginx_service(systemd_dir).unwrap();
+
+        let service_path = systemd_dir.join("dpl-nginx.service");
+        assert!(service_path.exists());
+
+        let body = fs::read_to_string(&service_path).unwrap();
+        assert!(body.contains("--name dpl-nginx"));
+        assert!(body.contains("-v dpl-nginx-conf:/etc/nginx/conf.d"));
+        assert!(body.contains("-v dpl-nginx-www:/var/www"));
+        assert!(body.contains("docker.io/library/nginx:stable"));
+        assert!(body.contains("ExecReload=/usr/bin/podman exec dpl-nginx nginx -s reload"));
+    }
+
+    #[test]
+    fn write_global_config_drops_file() {
+        let temp_dir = tempdir().unwrap();
+        let conf_dir = temp_dir.path();
+
+        write_global_config(&conf_dir).unwrap();
+
+        let path = conf_dir.join("00-dpl.conf");
+        assert!(path.exists());
+
+        let body = fs::read_to_string(&path).unwrap();
+        assert!(body.contains("ssl_session_cache"));
     }
 }

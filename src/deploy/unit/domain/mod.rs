@@ -3,7 +3,10 @@ mod host_name;
 mod model;
 mod route_location;
 
-use std::path::PathBuf;
+use std::path::{
+    Path,
+    PathBuf,
+};
 
 use self::artifacts::ArtifactsContext;
 pub use self::model::DomainConfig;
@@ -16,10 +19,14 @@ use crate::{
     error::format_error_chain,
     podman::{
         NGINX_CONF_VOLUME,
+        NGINX_WWW_VOLUME,
         ensure_volume,
         volume_mountpoint,
     },
+    systemd,
 };
+
+const NGINX_SERVICE: &str = "dpl-nginx.service";
 
 #[derive(Debug)]
 pub struct DomainUnit<'a> {
@@ -46,10 +53,10 @@ impl<'a> DomainUnit<'a> {
         let version = state.bump_version()?;
         state.save(&self.unit_dir)?;
 
-        if let Err(err) = self.write_config() {
+        if let Err(err) = self.install_inner() {
             let chain = format_error_chain(&err);
-            eprintln!("render nginx config failed for {}: {chain}", self.name);
-            state.set_error(format!("render nginx config failed: {chain}"));
+            eprintln!("install nginx failed for {}: {chain}", self.name);
+            state.set_error(format!("install nginx failed: {chain}"));
             let _ = state.save(&self.unit_dir);
             return Err(err);
         }
@@ -61,7 +68,11 @@ impl<'a> DomainUnit<'a> {
         Ok(state)
     }
 
-    fn write_config(&self) -> Result<(), DeployError> {
+    /// Render this domain's config into the `dpl-nginx-conf` volume, then make
+    /// sure the singleton `dpl-nginx` service is running: create it on first
+    /// use (also dropping the global `00-dpl.conf`), or reload nginx if it is
+    /// already installed.
+    fn install_inner(&self) -> Result<(), DeployError> {
         ensure_volume(NGINX_CONF_VOLUME).map_err(|source| DeployError::UnitError {
             info: format!("get nginx volume '{NGINX_CONF_VOLUME}'"),
             source,
@@ -73,12 +84,53 @@ impl<'a> DomainUnit<'a> {
                 source,
             })?;
 
+        self.write_config(&conf_dir)?;
+
+        // If nginx is already running, just reload its config; otherwise
+        // (first deploy, or a stopped/crashed service) (re)create and start it.
+        if systemd::is_active(NGINX_SERVICE) {
+            systemd::reload_service(NGINX_SERVICE).map_err(|source| DeployError::UnitError {
+                info: format!("reload service '{NGINX_SERVICE}'"),
+                source,
+            })?;
+        } else {
+            self.install_service(&conf_dir, Path::new(systemd::SYSTEMD_DIR))?;
+        }
+
+        Ok(())
+    }
+
+    /// Create the singleton `dpl-nginx` service: ensure the static-export
+    /// volume exists, drop the global `00-dpl.conf`, render the service unit,
+    /// then `daemon-reload` and `enable --now`.
+    fn install_service(&self, conf_dir: &Path, systemd_dir: &Path) -> Result<(), DeployError> {
+        ensure_volume(NGINX_WWW_VOLUME).map_err(|source| DeployError::UnitError {
+            info: format!("get nginx volume '{NGINX_WWW_VOLUME}'"),
+            source,
+        })?;
+
+        artifacts::write_global_config(conf_dir)?;
+        artifacts::create_nginx_service(systemd_dir)?;
+
+        systemd::reload().map_err(|source| DeployError::UnitError {
+            info: "reload systemd".to_string(),
+            source,
+        })?;
+        systemd::enable_service(NGINX_SERVICE).map_err(|source| DeployError::UnitError {
+            info: format!("enable service '{NGINX_SERVICE}'"),
+            source,
+        })?;
+
+        Ok(())
+    }
+
+    fn write_config(&self, conf_dir: &Path) -> Result<(), DeployError> {
         let artifacts = ArtifactsContext {
             ctx: self.ctx,
             name: &self.name,
             config: &self.config,
         };
-        artifacts.save(&conf_dir)?;
+        artifacts.save(conf_dir)?;
 
         Ok(())
     }

@@ -24,6 +24,15 @@ pub fn reload() -> io::Result<()> {
     run_systemctl(&["-q", "daemon-reload"])
 }
 
+pub fn reload_service(name: &str) -> io::Result<()> {
+    run_systemctl(&["-q", "reload", name])
+}
+
+/// Returns `true` if the unit is currently active (running).
+pub fn is_active(name: &str) -> bool {
+    run_systemctl(&["-q", "is-active", name]).is_ok()
+}
+
 pub fn run_systemctl(args: &[&str]) -> io::Result<()> {
     let status = Command::new("systemctl")
         .args(args)
