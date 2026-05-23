@@ -175,38 +175,50 @@ impl<'a> AppUnit<'a> {
 
         crate::archive::extract(&archive_path, &app_dir)?;
 
-        let ctx = PodmanContext::new(&self.name, version);
-
         log.phase("building image");
-        ctx.build(deploy_dir, log)
+        PodmanContext::new(&self.name, version)
+            .build(deploy_dir, log)
             .map_err(|source| DeployError::UnitError {
                 info: "failed to build image".to_string(),
                 source,
             })?;
 
+        Ok(())
+    }
+
+    fn install_inner(&self, version: u32, log: &DeployLog) -> Result<(), DeployError> {
         if !self.config.exports.is_empty() {
             log.phase("exporting files");
-            ctx.export(&self.config.exports, log)
+            PodmanContext::new(&self.name, version)
+                .export(&self.config.exports, log)
                 .map_err(|source| DeployError::UnitError {
-                    info: "failed to export static files".to_string(),
+                    info: "export static files".to_string(),
                     source,
                 })?;
         }
 
-        Ok(())
-    }
-
-    fn install_inner(&self, version: u32, log: &DeployLog) -> io::Result<()> {
         let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
-
         let systemd_ctx = SystemdContext::new(&self.name);
 
         log.phase("installing service");
-        systemd_ctx.install_app(&deploy_dir, log)?;
+        systemd_ctx
+            .install_app(&deploy_dir, log)
+            .map_err(|source| DeployError::UnitError {
+                info: "install app service".to_string(),
+                source,
+            })?;
 
         log.phase("health check");
-        health::check(&self.name, self.config.port)?;
-        systemd_ctx.set_restart_value("always")?;
+        health::check(&self.name, self.config.port).map_err(|source| DeployError::UnitError {
+            info: "health check".to_string(),
+            source,
+        })?;
+        systemd_ctx
+            .set_restart_value("always")
+            .map_err(|source| DeployError::UnitError {
+                info: "set restart policy to 'always'".to_string(),
+                source,
+            })?;
 
         log.phase("installing timers");
         systemd_ctx.install_timers(&deploy_dir, log);

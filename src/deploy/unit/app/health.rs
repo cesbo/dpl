@@ -32,5 +32,5 @@ pub fn check(name: &str, port: u16) -> io::Result<()> {
         }
     }
 
-    Err(io::Error::other("health check: timed out".to_string()))
+    Err(io::Error::other("timed out".to_string()))
 }
