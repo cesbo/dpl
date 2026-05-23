@@ -9,6 +9,7 @@ use crate::{
     deploy::{
         EnvList,
         UnitConfig,
+        state::DeployState,
     },
     error::{
         Location,
@@ -125,7 +126,7 @@ impl AppConfig {
 
     pub fn resolve_export(
         &self,
-        _ctx: &MainContext,
+        ctx: &MainContext,
         unit_name: &ResourceName,
         key: &str,
     ) -> Result<String, RefError> {
@@ -133,6 +134,14 @@ impl AppConfig {
             // The app is reachable by other units over the private `dpl`
             // container network at its container name and listening port.
             "url" => Ok(format!("http://dpl-{unit_name}:{port}", port = self.port)),
+            // Static export directory inside the shared nginx volume. The nginx
+            // container prepends its own mount base to this in-volume path.
+            "export" => {
+                let unit_dir = unit_name.unit_dir(ctx);
+                let version = DeployState::get_active_version(&unit_dir)
+                    .map_err(|_| RefError::not_deployed(unit_name.as_str()))?;
+                Ok(format!("/exports/{unit_name}_{version}"))
+            }
             _ => Err(RefError::unknown_export(key)),
         }
     }
@@ -180,5 +189,50 @@ mod tests {
                 .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "nope")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn app_resolve_export_dir() {
+        use std::fs;
+
+        use tempfile::TempDir;
+
+        let base = TempDir::new().unwrap();
+        let unit_dir = base.path().join("web");
+        fs::create_dir_all(&unit_dir).unwrap();
+        fs::write(
+            unit_dir.join("state.yaml"),
+            "active_version: 3\nlatest_build:\n  version: 3\n  status: ready\n",
+        )
+        .unwrap();
+
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: None,
+        };
+        assert_eq!(
+            sample_config()
+                .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "export")
+                .unwrap(),
+            "/exports/web_3"
+        );
+    }
+
+    #[test]
+    fn app_resolve_export_not_deployed() {
+        use tempfile::TempDir;
+
+        use crate::error::RefErrorKind;
+
+        let base = TempDir::new().unwrap();
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: None,
+        };
+        // No state.yaml on disk → no active deployment to export from.
+        let err = sample_config()
+            .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "export")
+            .unwrap_err();
+        assert!(matches!(err.kind, RefErrorKind::NotDeployed { name } if name == "web"));
     }
 }

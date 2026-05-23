@@ -42,6 +42,9 @@ pub enum RefErrorKind {
     #[error("unknown export '{key}'")]
     UnknownExport { key: String },
 
+    #[error("unit '{name}' has no active deployment")]
+    NotDeployed { name: String },
+
     #[error("load config for unit '{name}'")]
     LoadConfig {
         name: String,
@@ -61,6 +64,10 @@ impl RefError {
 
     pub fn unknown_export(key: impl Into<String>) -> Self {
         RefErrorKind::UnknownExport { key: key.into() }.into()
+    }
+
+    pub fn not_deployed(name: impl Into<String>) -> Self {
+        RefErrorKind::NotDeployed { name: name.into() }.into()
     }
 
     pub fn wrong_unit_type(unit: impl Into<String>, expected: &'static str) -> Self {
