@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use super::podman::run_podman;
+use crate::podman::run_podman;
 
 const ATTEMPTS: usize = 30;
 const INTERVAL: Duration = Duration::from_millis(800);

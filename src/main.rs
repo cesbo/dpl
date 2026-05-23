@@ -5,6 +5,7 @@ mod context;
 mod deploy;
 mod error;
 mod log;
+mod podman;
 mod secret;
 mod systemd;
 

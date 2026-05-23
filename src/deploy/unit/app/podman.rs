@@ -3,10 +3,7 @@ use std::{
         self,
         BufRead,
     },
-    path::{
-        Path,
-        PathBuf,
-    },
+    path::Path,
     process::{
         Command,
         Stdio,
@@ -17,6 +14,10 @@ use super::model::ExportConfig;
 use crate::{
     deploy::unit::NGINX_VOLUME,
     log::DeployLog,
+    podman::{
+        run_podman,
+        volume_mountpoint,
+    },
 };
 
 pub struct PodmanContext<'a> {
@@ -195,23 +196,6 @@ where
     }
 }
 
-/// Run podman and capture its trimmed stdout.
-pub fn run_podman(args: &[&str]) -> io::Result<String> {
-    let output = Command::new("podman")
-        .args(args)
-        .stderr(Stdio::null())
-        .output()?;
-
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        Err(io::Error::other(format!(
-            "podman exited with {}",
-            output.status
-        )))
-    }
-}
-
 /// Create the named volume if it does not already exist.
 fn ensure_volume(name: &str) -> io::Result<()> {
     if run_podman(&["volume", "exists", name]).is_err() {
@@ -219,15 +203,6 @@ fn ensure_volume(name: &str) -> io::Result<()> {
     }
 
     Ok(())
-}
-
-/// Resolve the host mountpoint of a named volume.
-fn volume_mountpoint(name: &str) -> io::Result<PathBuf> {
-    let mountpoint = run_podman(&["volume", "inspect", name, "--format", "{{.Mountpoint}}"])?;
-    if mountpoint.is_empty() {
-        return Err(io::Error::other(format!("volume {name} has no mountpoint")));
-    }
-    Ok(PathBuf::from(mountpoint))
 }
 
 /// Remove a single `<name>_<version>` export dir. Returns whether it existed.
