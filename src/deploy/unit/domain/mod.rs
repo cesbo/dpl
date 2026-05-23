@@ -3,10 +3,7 @@ mod host_name;
 mod model;
 mod route_location;
 
-use std::{
-    fs,
-    path::PathBuf,
-};
+use std::path::PathBuf;
 
 use self::artifacts::ArtifactsContext;
 pub use self::model::DomainConfig;
@@ -15,8 +12,13 @@ use crate::{
     deploy::{
         DeployError,
         state::DeployState,
+        unit::NGINX_VOLUME,
     },
     error::format_error_chain,
+    podman::{
+        ensure_volume,
+        volume_mountpoint,
+    },
 };
 
 #[derive(Debug)]
@@ -44,7 +46,7 @@ impl<'a> DomainUnit<'a> {
         let version = state.bump_version()?;
         state.save(&self.unit_dir)?;
 
-        if let Err(err) = self.write_artifacts(version) {
+        if let Err(err) = self.write_config() {
             let chain = format_error_chain(&err);
             eprintln!("render nginx config failed for {}: {chain}", self.name);
             state.set_error(format!("render nginx config failed: {chain}"));
@@ -59,19 +61,26 @@ impl<'a> DomainUnit<'a> {
         Ok(state)
     }
 
-    fn write_artifacts(&self, version: u32) -> Result<(), DeployError> {
-        let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
-        fs::create_dir_all(&deploy_dir).map_err(|source| DeployError::UnitError {
-            info: "failed to create deploy directory".to_string(),
+    fn write_config(&self) -> Result<(), DeployError> {
+        ensure_volume(NGINX_VOLUME).map_err(|source| DeployError::UnitError {
+            info: format!("failed to get nginx volume '{NGINX_VOLUME}'"),
             source,
         })?;
+
+        let conf_dir = volume_mountpoint(NGINX_VOLUME)
+            .map_err(|source| DeployError::UnitError {
+                info: format!("failed to resolve nginx volume '{NGINX_VOLUME}' mountpoint"),
+                source,
+            })?
+            .join("nginx")
+            .join("conf.d");
 
         let artifacts = ArtifactsContext {
             ctx: self.ctx,
             name: &self.name,
             config: &self.config,
         };
-        artifacts.save(&deploy_dir)?;
+        artifacts.save(&conf_dir)?;
 
         Ok(())
     }

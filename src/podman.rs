@@ -24,6 +24,15 @@ pub fn run_podman(args: &[&str]) -> io::Result<String> {
     }
 }
 
+/// Create the named volume if it does not already exist.
+pub fn ensure_volume(name: &str) -> io::Result<()> {
+    if run_podman(&["volume", "exists", name]).is_err() {
+        run_podman(&["volume", "create", name])?;
+    }
+
+    Ok(())
+}
+
 /// Resolve the host mountpoint of a named volume.
 pub fn volume_mountpoint(name: &str) -> io::Result<PathBuf> {
     let mountpoint = run_podman(&["volume", "inspect", name, "--format", "{{.Mountpoint}}"])?;

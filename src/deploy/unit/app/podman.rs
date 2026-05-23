@@ -15,6 +15,7 @@ use crate::{
     deploy::unit::NGINX_VOLUME,
     log::DeployLog,
     podman::{
+        ensure_volume,
         run_podman,
         volume_mountpoint,
     },
@@ -194,15 +195,6 @@ where
         };
         log.podman_line(&line);
     }
-}
-
-/// Create the named volume if it does not already exist.
-fn ensure_volume(name: &str) -> io::Result<()> {
-    if run_podman(&["volume", "exists", name]).is_err() {
-        run_podman(&["volume", "create", name])?;
-    }
-
-    Ok(())
 }
 
 /// Remove a single `<name>_<version>` export dir. Returns whether it existed.

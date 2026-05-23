@@ -48,10 +48,10 @@ pub struct ArtifactsContext<'a> {
 }
 
 impl<'a> ArtifactsContext<'a> {
-    pub fn save(&self, deploy_dir: &Path) -> Result<(), ArtifactError> {
-        let artifacts_dir = deploy_dir.join("artifacts");
-        fs::create_dir_all(&artifacts_dir).map_err(ArtifactError::CreateDir)?;
-
+    /// Render the nginx config and write it as `<unit-name>.conf` into the given
+    /// `conf_dir` (the central nginx container's `conf.d` inside the shared
+    /// `dpl-nginx` volume).
+    pub fn save(&self, conf_dir: &Path) -> Result<(), ArtifactError> {
         let proxy = self.config.proxy.as_ref().map(RenderProxy::new);
 
         let mut routes = Vec::new();
@@ -59,7 +59,6 @@ impl<'a> ArtifactsContext<'a> {
             routes.push(RenderRoute::new(self.ctx, route)?);
         }
 
-        let path = artifacts_dir.join(format!("{}.conf", self.name));
         let content = render_template(
             &TEMPLATES,
             NGINX_CONFIG_TEMPLATE,
@@ -71,6 +70,9 @@ impl<'a> ArtifactsContext<'a> {
             },
         )?;
 
+        fs::create_dir_all(conf_dir).map_err(ArtifactError::CreateDir)?;
+
+        let path = conf_dir.join(format!("{}.conf", self.name));
         fs::write(&path, content).map_err(ArtifactError::Write)?;
 
         Ok(())
