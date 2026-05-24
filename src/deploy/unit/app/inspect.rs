@@ -16,15 +16,36 @@ use crate::{
 };
 
 impl AppUnit<'_> {
-    /// Assemble a read-only runtime report for the unit. Does **not** take the
-    /// deploy lock — inspection never mutates state.
     pub fn inspect(&self) -> Result<UnitReport, DeployError> {
-        let state = DeployState::load(&self.unit_dir)?;
-
         let mut report = UnitReport::new(self.name.as_str(), "app");
-        report.push(deploy_section(&state));
+        report.push(self.deploy_section()?);
         report.push(self.container_section());
         Ok(report)
+    }
+
+    /// On-disk deploy state: version, status, active version, last error.
+    fn deploy_section(&self) -> Result<Section, DeployError> {
+        let state = DeployState::load(&self.unit_dir)?;
+
+        let mut section = Section::new("deploy");
+        let build = &state.latest_build;
+        let (status, health) = match build.status {
+            DeployStatus::Ready => ("ready", Health::Ok),
+            DeployStatus::Failed => ("failed", Health::Down),
+            DeployStatus::Building => ("building", Health::Warn),
+            DeployStatus::Idle => ("idle", Health::Unknown),
+        };
+
+        section.push(Field::new("version", build.version.to_string()).health(Health::Ok));
+        section.push(Field::new("status", status).health(health));
+        if let Some(active) = state.active_version {
+            section.push(Field::new("active", active.to_string()));
+        }
+        if let Some(err) = &build.error {
+            section.push(Field::new("error", err.clone()).health(Health::Down));
+        }
+
+        Ok(section)
     }
 
     /// Live container state from `podman container inspect`.
@@ -56,27 +77,4 @@ impl AppUnit<'_> {
 
         section
     }
-}
-
-/// On-disk deploy state: version, status, active version, last error.
-fn deploy_section(state: &DeployState) -> Section {
-    let build = &state.latest_build;
-    let (status, health) = match build.status {
-        DeployStatus::Ready => ("ready", Health::Ok),
-        DeployStatus::Failed => ("failed", Health::Down),
-        DeployStatus::Building => ("building", Health::Warn),
-        DeployStatus::Idle => ("idle", Health::Unknown),
-    };
-
-    let mut section = Section::new("deploy");
-    section.push(Field::new("version", build.version.to_string()).health(Health::Ok));
-    section.push(Field::new("status", status).health(health));
-    if let Some(active) = state.active_version {
-        section.push(Field::new("active", active.to_string()));
-    }
-    if let Some(err) = &build.error {
-        section.push(Field::new("error", err.clone()).health(Health::Down));
-    }
-
-    section
 }
