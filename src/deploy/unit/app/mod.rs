@@ -1,5 +1,6 @@
 mod artifacts;
 mod health;
+mod inspect;
 mod model;
 mod podman;
 mod systemd;

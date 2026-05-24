@@ -1,8 +1,7 @@
 use serde::Serialize;
 
-/// A structured, render-agnostic snapshot of a unit's runtime state. Collection
-/// (per-unit probes) is kept separate from formatting: the same tree feeds the
-/// human renderer here and, later, a `--json` dump.
+/// A structured, render-agnostic snapshot of a unit's runtime state.
+/// Per-unit probes, in `deploy/unit/<kind>/inspect.rs`
 #[derive(Debug, Serialize)]
 pub struct UnitReport {
     pub name: String,
@@ -23,8 +22,9 @@ pub struct Field {
     pub health: Health,
 }
 
-/// Health signal carried per field. Not yet surfaced in the human render; kept
-/// for the upcoming `--json` output and future status markers.
+/// Per-field machine-readable health signal, emitted in the JSON for consumers
+/// (`jq 'select(.health=="down")'`) and the data source for the planned
+/// exit-code semantics (0 healthy / non-zero degraded).
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Health {

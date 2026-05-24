@@ -19,6 +19,12 @@ use crate::{
     },
 };
 
+/// Name of the podman container backing an app unit.
+pub(super) fn container_name(name: impl AsRef<str>) -> String {
+    let name = name.as_ref();
+    format!("dpl-{name}")
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
@@ -153,7 +159,11 @@ impl AppConfig {
         match key {
             // The app is reachable by other units over the private `dpl`
             // container network at its container name and listening port.
-            "url" => Ok(format!("http://dpl-{unit_name}:{port}", port = self.port)),
+            "url" => Ok(format!(
+                "http://{}:{}",
+                container_name(unit_name),
+                self.port
+            )),
             // Static export directory inside the nginx www volume. The nginx
             // container prepends its own mount base to this in-volume path.
             "export" => {

@@ -7,6 +7,8 @@ use std::{
     },
 };
 
+use serde::Deserialize;
+
 /// Podman volume for app static exports; mounts to `/var/www` in the nginx
 /// container. Holds `<name>_<version>/…` directories at its root.
 pub const NGINX_WWW_VOLUME: &str = "dpl-nginx-www";
@@ -48,4 +50,60 @@ pub fn volume_mountpoint(name: &str) -> io::Result<PathBuf> {
         return Err(io::Error::other(format!("volume {name} has no mountpoint")));
     }
     Ok(PathBuf::from(mountpoint))
+}
+
+/// Subset of `podman container inspect` we surface in reports.
+#[derive(Debug, Deserialize)]
+pub struct ContainerState {
+    #[serde(rename = "State")]
+    pub state: ContainerStatus,
+    #[serde(rename = "RestartCount")]
+    pub restart_count: u32,
+    #[serde(rename = "ImageName")]
+    pub image_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ContainerStatus {
+    /// running / exited / created / paused / …
+    #[serde(rename = "Status")]
+    pub status: String,
+    #[serde(rename = "StartedAt")]
+    pub started_at: String,
+    #[serde(rename = "ExitCode")]
+    pub exit_code: i32,
+}
+
+/// Inspect a container by name. `None` when it does not exist (podman
+/// inspect exits non-zero)
+pub fn inspect_container(name: &str) -> Option<ContainerState> {
+    let out = run_podman(&["container", "inspect", name, "--format", "{{json .}}"]).ok()?;
+    let state = serde_json::from_str(&out).ok()?;
+    Some(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_container_inspect_json() {
+        let json = r#"{
+            "Id": "abc123",
+            "State": {
+                "Status": "running",
+                "StartedAt": "2026-05-20T10:11:12.123456789Z",
+                "ExitCode": 0
+            },
+            "RestartCount": 2,
+            "ImageName": "localhost/dpl-web:3"
+        }"#;
+
+        let state: ContainerState = serde_json::from_str(json).unwrap();
+        assert_eq!(state.state.status, "running");
+        assert_eq!(state.state.started_at, "2026-05-20T10:11:12.123456789Z");
+        assert_eq!(state.state.exit_code, 0);
+        assert_eq!(state.restart_count, 2);
+        assert_eq!(state.image_name, "localhost/dpl-web:3");
+    }
 }

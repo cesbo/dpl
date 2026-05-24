@@ -19,10 +19,6 @@ use crate::{
     config::ResourceName,
     deploy::{
         DeployState,
-        DeployStatus,
-        Field,
-        Health,
-        Section,
         UnitConfig,
         UnitReport,
         unit::app::AppUnit,
@@ -103,44 +99,16 @@ pub fn inspect(ctx: &MainContext, name: &str) -> Result<()> {
     let name = ResourceName::new(name)?;
     let unit = UnitConfig::load(ctx, &name)?;
 
-    let UnitConfig::App(_) = unit else {
-        bail!("inspect not yet supported for unit '{name}'");
+    let report = match unit {
+        UnitConfig::App(app_config) => AppUnit::new(ctx, &name, app_config)
+            .inspect()
+            .with_context(|| format!("inspect unit '{name}'"))?,
+        other => UnitReport::new(name.as_str(), other.kind()),
     };
-
-    let unit_dir = name.unit_dir(ctx);
-    let state = DeployState::load(&unit_dir).context("load deploy state")?;
-    let report = app_report(&name, &state);
 
     let json = serde_json::to_string_pretty(&report).context("serialize report")?;
     println!("{json}");
     Ok(())
-}
-
-/// Assemble the app unit report from its on-disk deploy state. Steps 2+ move
-/// this into `deploy/unit/app/inspect.rs` and grow it with container/systemd
-/// probes; for now it ports the four fields the previous `inspect` printed.
-fn app_report(name: &ResourceName, state: &DeployState) -> UnitReport {
-    let build = &state.latest_build;
-    let (status, health) = match build.status {
-        DeployStatus::Ready => ("ready", Health::Ok),
-        DeployStatus::Failed => ("failed", Health::Down),
-        DeployStatus::Building => ("building", Health::Warn),
-        DeployStatus::Idle => ("idle", Health::Unknown),
-    };
-
-    let mut deploy = Section::new("deploy");
-    deploy.push(Field::new("version", build.version.to_string()).health(Health::Ok));
-    deploy.push(Field::new("status", status).health(health));
-    if let Some(active) = state.active_version {
-        deploy.push(Field::new("active", active.to_string()));
-    }
-    if let Some(err) = &build.error {
-        deploy.push(Field::new("error", err.clone()).health(Health::Down));
-    }
-
-    let mut report = UnitReport::new(name.as_str(), "app");
-    report.push(deploy);
-    report
 }
 
 fn load_unit(ctx: &MainContext, name: &ResourceName) -> Result<UnitConfig> {

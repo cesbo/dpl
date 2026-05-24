@@ -64,6 +64,12 @@ impl fmt::Display for ResourceName {
     }
 }
 
+impl AsRef<str> for ResourceName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
 impl<'de> Deserialize<'de> for ResourceName {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
