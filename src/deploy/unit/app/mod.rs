@@ -81,9 +81,9 @@ impl<'a> AppUnit<'a> {
         }
 
         let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
-        let log_path = deploy_dir.join("log").join("build.log");
+        let build_log_path = self.build_log_path(version);
 
-        let log = match DeployLog::open(&log_path, self.name.as_str(), version) {
+        let log = match DeployLog::open(&build_log_path, self.name.as_str(), version) {
             Ok(log) => log,
             Err(source) => {
                 state.set_error(format!("open deploy log: {source}"));
@@ -100,22 +100,21 @@ impl<'a> AppUnit<'a> {
     }
 
     fn prepare<R: Read>(&self, version: u32, archive: R) -> Result<(), DeployError> {
-        let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
+        let build_log = self.build_log_path(version);
+        if let Some(parent) = build_log.parent() {
+            fs::create_dir_all(parent).map_err(|source| DeployError::UnitError {
+                info: "failed to create log directory".to_string(),
+                source,
+            })?;
+        }
+        fs::File::create(&build_log).map_err(|source| DeployError::UnitError {
+            info: "failed to create build log".to_string(),
+            source,
+        })?;
 
+        let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
         fs::create_dir(&deploy_dir).map_err(|source| DeployError::UnitError {
             info: "failed to create deploy directory".to_string(),
-            source,
-        })?;
-
-        let log_dir = deploy_dir.join("log");
-        fs::create_dir(&log_dir).map_err(|source| DeployError::UnitError {
-            info: "failed to create log directory".to_string(),
-            source,
-        })?;
-
-        let build_log = log_dir.join("build.log");
-        fs::File::create(&build_log).map_err(|source| DeployError::UnitError {
-            info: "failed to create build.log".to_string(),
             source,
         })?;
 
@@ -289,6 +288,26 @@ impl<'a> AppUnit<'a> {
         let podman_ctx = PodmanContext::new(self.name.as_str(), version);
         podman_ctx.remove_exports(log);
         podman_ctx.remove(log);
+
+        self.remove_build_log(version, log);
+    }
+
+    fn build_log_path(&self, version: u32) -> PathBuf {
+        self.unit_dir
+            .join("log")
+            .join(format!("build-{version}.log"))
+    }
+
+    fn remove_build_log(&self, version: u32, log: &DeployLog) {
+        let path = self.build_log_path(version);
+        match fs::remove_file(&path) {
+            Ok(()) => log.detail(&format!("removed build log {}", path.display())),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => log.warn(&format!(
+                "failed to remove build log {}: {err}",
+                path.display()
+            )),
+        }
     }
 }
 
