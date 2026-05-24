@@ -47,8 +47,8 @@ pub struct Args {
 enum Cmd {
     /// Create and store a new secret
     Create {
-        /// Secret name: `name` or `group/name` (lowercase letters, digits, `-`)
-        name: String,
+        /// Secret name (`name` or `group/name`); omit for an interactive prompt
+        name: Option<String>,
         /// Source: omit for an interactive prompt, "-" to read stdin, or a path to a file.
         /// On an empty interactive prompt a random secret is generated and printed.
         source: Option<String>,
@@ -69,29 +69,35 @@ enum Cmd {
 
 pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
     match args.cmd {
-        Cmd::Create { name, source } => create(ctx, &name, source.as_deref()),
+        Cmd::Create { name, source } => create(ctx, name, source.as_deref()),
         Cmd::Cat { name } => cat(ctx, &name),
         Cmd::Rm { name } => rm(ctx, &name),
         Cmd::Ls => ls(ctx),
     }
 }
 
-fn create(ctx: &MainContext, name: &str, source: Option<&str>) -> Result<()> {
-    let name = &SecretName::new(name)?;
-    match ctx.check_secret(name) {
-        Ok(_) => bail!(SecretError::AlreadyExists {
-            name: name.to_string(),
-        }),
-        Err(SecretError::NotFound { .. }) => {}
-        Err(err) => bail!(err),
-    }
+fn create(ctx: &MainContext, name: Option<String>, source: Option<&str>) -> Result<()> {
+    let name = match name {
+        Some(value) => {
+            let name = SecretName::new(value)?;
+            match ctx.check_secret(&name) {
+                Ok(_) => bail!(SecretError::AlreadyExists {
+                    name: name.to_string(),
+                }),
+                Err(SecretError::NotFound { .. }) => {}
+                Err(err) => bail!(err),
+            }
+            name
+        }
+        None => prompt_name(ctx)?,
+    };
 
     let key = load_or_create_key(ctx)?;
     let text = match source {
         Some(source) => read_external(source)?,
         None => prompt_value_or_random()?,
     };
-    key.encrypt_to_file(name, &text)
+    key.encrypt_to_file(&name, &text)
         .with_context(|| format!("save new secret '{name}' to file"))?;
 
     Ok(())
@@ -171,6 +177,37 @@ pub fn prompt_value_or_random() -> Result<String> {
         Ok(value)
     } else {
         Ok(value)
+    }
+}
+
+/// Prompt for a new secret name, validating format and uniqueness.
+fn prompt_name(ctx: &MainContext) -> Result<SecretName> {
+    loop {
+        let raw: String = Input::with_theme(&ColorfulTheme::default())
+            .with_prompt("Secret name")
+            .interact_text()?;
+
+        let name = match SecretName::new(raw) {
+            Ok(name) => name,
+            Err(err) => {
+                eprintln!("{err}");
+                continue;
+            }
+        };
+
+        match ctx.check_secret(&name) {
+            Ok(_) => {
+                eprintln!("{}", SecretError::AlreadyExists {
+                    name: name.to_string(),
+                });
+                continue;
+            }
+            Err(SecretError::NotFound { .. }) => return Ok(name),
+            Err(err) => {
+                eprintln!("{err}");
+                continue;
+            }
+        }
     }
 }
 
