@@ -344,7 +344,7 @@ fn prompt_db_server(ctx: &MainContext) -> Result<(ResourceName, DbServerConfig)>
             })
             .collect();
 
-    ensure!(servers.is_empty(), "no db-server units");
+    ensure!(!servers.is_empty(), "no db-server units");
 
     let labels: Vec<String> = servers
         .iter()
