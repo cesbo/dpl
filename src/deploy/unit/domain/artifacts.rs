@@ -22,6 +22,7 @@ use crate::{
         render_template,
     },
     error::RefError,
+    podman::NGINX_WWW_MOUNT,
 };
 
 const NGINX_CONFIG_TEMPLATE: &str = "nginx-config";
@@ -67,7 +68,7 @@ pub fn create_nginx_service(systemd_dir: &Path) -> Result<(), ArtifactError> {
     let content = render_template(
         &TEMPLATES,
         NGINX_SERVICE_TEMPLATE,
-        context! { image => NGINX_IMAGE },
+        context! { image => NGINX_IMAGE, www_mount => NGINX_WWW_MOUNT },
     )?;
     let path = systemd_dir.join("dpl-nginx.service");
     fs::write(&path, content).map_err(ArtifactError::Write)

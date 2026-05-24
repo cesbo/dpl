@@ -9,9 +9,12 @@ use std::{
 
 use serde::Deserialize;
 
-/// Podman volume for app static exports; mounts to `/var/www` in the nginx
-/// container. Holds `<name>_<version>/…` directories at its root.
+/// Podman volume for app static exports; mounts to [`NGINX_WWW_MOUNT`] in the
+/// nginx container. Holds `<name>_<version>/…` directories at its root.
 pub const NGINX_WWW_VOLUME: &str = "dpl-nginx-www";
+
+/// Mount base of [`NGINX_WWW_VOLUME`] inside the nginx container.
+pub const NGINX_WWW_MOUNT: &str = "/var/www";
 
 /// Podman volume for nginx configs; mounts to `/etc/nginx/conf.d` in the nginx
 /// container. Holds `<domain>.conf` files at its root.

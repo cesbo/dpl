@@ -17,6 +17,7 @@ use crate::{
         Location,
         RefError,
     },
+    podman::NGINX_WWW_MOUNT,
 };
 
 /// Name of the podman container backing an app unit.
@@ -164,13 +165,12 @@ impl AppConfig {
                 container_name(unit_name),
                 self.port
             )),
-            // Static export directory inside the nginx www volume. The nginx
-            // container prepends its own mount base to this in-volume path.
+            // Absolute path of this app's static export inside the nginx container.
             "export" => {
                 let unit_dir = unit_name.unit_dir(ctx);
                 let version = DeployState::get_active_version(&unit_dir)
                     .map_err(|_| RefError::not_deployed(unit_name.as_str()))?;
-                Ok(format!("/{unit_name}_{version}"))
+                Ok(format!("{NGINX_WWW_MOUNT}/{unit_name}_{version}"))
             }
             _ => Err(RefError::unknown_export(key)),
         }
@@ -298,7 +298,7 @@ mod tests {
             sample_config()
                 .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "export")
                 .unwrap(),
-            "/web_3"
+            "/var/www/web_3"
         );
     }
 

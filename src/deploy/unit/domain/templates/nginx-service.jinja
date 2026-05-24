@@ -21,7 +21,7 @@ ExecStart=/usr/bin/podman run \
   --network=dpl \
   -p 80:80 \
   -p 443:443 \
-  -v dpl-nginx-www:/var/www \
+  -v dpl-nginx-www:{{ www_mount }} \
   -v dpl-nginx-conf:/etc/nginx/conf.d \
   --log-driver=k8s-file --log-opt=path=/var/log/podman/dpl-nginx.log \
   {{ image }}
