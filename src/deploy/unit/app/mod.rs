@@ -19,6 +19,7 @@ use std::{
 
 use podman::PodmanContext;
 use systemd::SystemdContext;
+use tempfile::TempDir;
 
 use self::artifacts::ArtifactsContext;
 pub use self::model::AppConfig;
@@ -72,15 +73,17 @@ impl<'a> AppUnit<'a> {
         let version = state.bump_version()?;
         state.save(&self.unit_dir)?;
 
-        if let Err(err) = self.prepare(version, archive) {
-            let chain = format_error_chain(&err);
-            eprintln!("prepare failed: {chain}");
-            state.set_error(format!("prepare app deploy failed: {chain}"));
-            let _ = state.save(&self.unit_dir);
-            return Err(err);
-        }
+        let temp_dir = match self.prepare(version, archive) {
+            Ok(dir) => dir,
+            Err(err) => {
+                let chain = format_error_chain(&err);
+                eprintln!("prepare failed: {chain}");
+                state.set_error(format!("prepare app deploy failed: {chain}"));
+                let _ = state.save(&self.unit_dir);
+                return Err(err);
+            }
+        };
 
-        let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
         let build_log_path = self.build_log_path(version);
 
         let log = match DeployLog::open(&build_log_path, self.name.as_str(), version) {
@@ -95,11 +98,11 @@ impl<'a> AppUnit<'a> {
             }
         };
 
-        self.deploy_worker(&deploy_dir, &mut state, &log);
+        self.deploy_worker(temp_dir.path(), &mut state, &log);
         Ok((state, log))
     }
 
-    fn prepare<R: Read>(&self, version: u32, archive: R) -> Result<(), DeployError> {
+    fn prepare<R: Read>(&self, version: u32, archive: R) -> Result<TempDir, DeployError> {
         let build_log = self.build_log_path(version);
         if let Some(parent) = build_log.parent() {
             fs::create_dir_all(parent).map_err(|source| DeployError::UnitError {
@@ -112,11 +115,13 @@ impl<'a> AppUnit<'a> {
             source,
         })?;
 
-        let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
-        fs::create_dir(&deploy_dir).map_err(|source| DeployError::UnitError {
-            info: "failed to create deploy directory".to_string(),
-            source,
+        let temp_dir = tempfile::tempdir_in(&self.unit_dir).map_err(|source| {
+            DeployError::UnitError {
+                info: "failed to create temporary build directory".to_string(),
+                source,
+            }
         })?;
+        let deploy_dir = temp_dir.path();
 
         let archive_path = deploy_dir.join("app.tar.gz");
         save_archive(archive, &archive_path).map_err(|source| DeployError::UnitError {
@@ -130,9 +135,9 @@ impl<'a> AppUnit<'a> {
             config: &self.config,
             version,
         };
-        artifacts.save(&deploy_dir)?;
+        artifacts.save(deploy_dir)?;
 
-        Ok(())
+        Ok(temp_dir)
     }
 
     fn deploy_worker(&self, deploy_dir: &Path, state: &mut DeployState, log: &DeployLog) {
@@ -152,7 +157,7 @@ impl<'a> AppUnit<'a> {
             self.uninstall_inner(active_version, log);
         }
 
-        if let Err(err) = self.install_inner(version, log) {
+        if let Err(err) = self.install_inner(deploy_dir, version, log) {
             let chain = format_error_chain(&err);
             log.error(&format!("failed to install app: {chain}"));
             self.uninstall_inner(version, log);
@@ -238,7 +243,12 @@ impl<'a> AppUnit<'a> {
         Ok(())
     }
 
-    fn install_inner(&self, version: u32, log: &DeployLog) -> Result<(), DeployError> {
+    fn install_inner(
+        &self,
+        deploy_dir: &Path,
+        version: u32,
+        log: &DeployLog,
+    ) -> Result<(), DeployError> {
         if !self.config.exports.is_empty() {
             log.phase("exporting files");
             PodmanContext::new(self.name.as_str(), version)
@@ -249,12 +259,11 @@ impl<'a> AppUnit<'a> {
                 })?;
         }
 
-        let deploy_dir = self.unit_dir.join(format!("deploy_{version}"));
         let systemd_ctx = SystemdContext::new(self.name.as_str());
 
         log.phase("installing service");
         systemd_ctx
-            .install_app(&deploy_dir, log)
+            .install_app(deploy_dir, log)
             .map_err(|source| DeployError::UnitError {
                 info: "install app service".to_string(),
                 source,
@@ -275,7 +284,7 @@ impl<'a> AppUnit<'a> {
             })?;
 
         log.phase("installing timers");
-        systemd_ctx.install_timers(&deploy_dir, log);
+        systemd_ctx.install_timers(deploy_dir, log);
 
         Ok(())
     }
