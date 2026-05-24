@@ -7,6 +7,7 @@ mod error;
 mod log;
 mod podman;
 mod secret;
+mod spinner;
 mod systemd;
 
 use std::path::PathBuf;

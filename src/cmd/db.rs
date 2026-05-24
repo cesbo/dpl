@@ -174,8 +174,15 @@ fn init(
     .with_context(|| format!("create serivce file for db-server '{unit_name}'"))?;
 
     crate::systemd::reload().context("reload systemd")?;
-    crate::systemd::enable_service(&service_name)
-        .with_context(|| format!("start service for db-server '{unit_name}'"))?;
+    crate::spinner::with_spinner(
+        format!(
+            "starting db-server '{unit_name}' ({} {})",
+            config.engine.as_str(),
+            &config.version
+        ),
+        || crate::systemd::enable_service(&service_name),
+    )
+    .with_context(|| format!("start service for db-server '{unit_name}'"))?;
 
     scopeguard::ScopeGuard::into_inner(unit_dir);
 

@@ -20,7 +20,6 @@ use std::{
 use indicatif::{
     ProgressBar,
     ProgressDrawTarget,
-    ProgressStyle,
 };
 
 #[derive(Clone)]
@@ -48,10 +47,7 @@ impl DeployLog {
         };
 
         let bar = ProgressBar::with_draw_target(None, target);
-        let style = ProgressStyle::with_template("{spinner:.cyan} {wide_msg} ({elapsed_precise})")
-            .expect("static spinner template")
-            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "✔"]);
-        bar.set_style(style);
+        bar.set_style(crate::spinner::spinner_style());
         bar.set_message(format!("{unit} v{version}: starting"));
         if is_tty {
             bar.enable_steady_tick(Duration::from_millis(100));
@@ -138,7 +134,11 @@ impl DeployLog {
 
     fn write_log(&self, msg: &str) {
         let stamped = self.stamped(msg);
-        let mut file = self.inner.file.lock().expect("deploy log file mutex poisoned");
+        let mut file = self
+            .inner
+            .file
+            .lock()
+            .expect("deploy log file mutex poisoned");
         let _ = writeln!(file, "{stamped}");
         let _ = file.flush();
     }
