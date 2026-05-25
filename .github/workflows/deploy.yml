@@ -6,13 +6,20 @@ on:
     tags:
       - v[0-9]+.[0-9]+.[0-9]+
 
+permissions:
+  contents: write
+
 jobs:
-  deploy:
+  build-binaries:
+    name: 🛠️ Build binaries
     runs-on: ubuntu-latest
 
+    outputs:
+      release-tag: ${{ steps.create-release-tag.outputs.RELEASE_TAG }}
+  
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Install Musl
         run: |
@@ -24,17 +31,47 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl
 
-      - name: Set version from tag
+      - name: Create release tag
+        id: create-release-tag
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           sed -i -E "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+          echo "RELEASE_TAG=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build (release, musl)
         run: |
           cargo build --release --target x86_64-unknown-linux-musl
-          cp target/x86_64-unknown-linux-musl/release/dpl dpl-linux-x86_64
-          strip -s dpl-linux-x86_64 || true
+          mkdir -p ../bin
+          cp target/x86_64-unknown-linux-musl/release/dpl ../bin/dpl-linux-x86_64
+          strip -s ../bin/dpl-linux-x86_64 || true
+
+      - name: Make checksum
+        run: |
           sha256sum dpl-linux-x86_64 > dpl-linux-x86_64.sha256
+
+      - name: Store built artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: dpl-binaries
+          retention-days: 1
+          compression-level: 9
+          path: bin
+          if-no-files-found: error
+
+  pack-release:
+    name: 🎁 Prepare release
+    runs-on: ubuntu-latest
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+
+    needs:
+      - build-binaries
+
+    steps:
+      - name: Get binaries
+        uses: actions/download-artifact@v8
+        with:
+          name: dpl-binaries
+          path: .
 
       - name: Release
         uses: softprops/action-gh-release@v2
@@ -44,3 +81,37 @@ jobs:
           files: |
             dpl-linux-x86_64
             dpl-linux-x86_64.sha256
+
+  upload-to-cdn:
+    name: ☁️ Upload to CDN
+    runs-on: ubuntu-latest
+
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    needs:
+      - build-binaries
+
+    steps:
+      - name: Get binaries
+        uses: actions/download-artifact@v8
+        with:
+          name: dpl-binaries
+          path: .
+
+      - name: Upload to Bunny Storage (versioned)
+        uses: ayeressian/bunnycdn-storage-deploy@v2.4.5
+        with:
+          storagePassword: ${{ secrets.BUNNY_STORAGE_FTP_KEY }}
+          storageZoneName: cesbo
+          source: .
+          destination: /dpl/builds/${{ needs.build-binaries.outputs.release-tag }}
+          upload: "true"
+
+      - name: Upload to Bunny Storage (latest)
+        uses: ayeressian/bunnycdn-storage-deploy@v2.4.5
+        with:
+          storagePassword: ${{ secrets.BUNNY_STORAGE_FTP_KEY }}
+          storageZoneName: cesbo
+          source: .
+          destination: /dpl/builds/latest
+          remove: "true"
+          upload: "true"
