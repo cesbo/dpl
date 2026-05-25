@@ -224,7 +224,8 @@ fn init(
     scopeguard::ScopeGuard::into_inner(unit_dir);
 
     println!(
-        "started db server '{unit_name}' ({engine} {version})",
+        "{} Started db server '{unit_name}' ({engine} {version})",
+        console::style("✔").green(),
         engine = config.engine.as_str(),
         version = &config.version
     );
@@ -290,7 +291,8 @@ fn create(
     scopeguard::ScopeGuard::into_inner(unit_dir);
 
     println!(
-        "created database '{db_name}' in '{server}' (user '{user}')",
+        "{} Created database '{db_name}' in '{server}' (user '{user}')",
+        console::style("✔").green(),
         server = &config.server,
         user = &config.user,
     );

@@ -15,9 +15,15 @@ use indicatif::{
 
 /// The cyan braille spinner style shared by `DeployLog` and `with_spinner`.
 pub fn spinner_style() -> ProgressStyle {
-    ProgressStyle::with_template("{spinner:.cyan} {wide_msg} ({elapsed_precise})")
+    ProgressStyle::with_template("{spinner:.cyan}{wide_msg} ({elapsed_precise})")
         .expect("static spinner template")
-        .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "✔"])
+        .tick_strings(&[
+            "⢀⠀", "⡀⠀", "⠄⠀", "⢂⠀", "⡂⠀", "⠅⠀", "⢃⠀", "⡃⠀", "⠍⠀", "⢋⠀", "⡋⠀", "⠍⠁", "⢋⠁", "⡋⠁",
+            "⠍⠉", "⠋⠉", "⠋⠉", "⠉⠙", "⠉⠙", "⠉⠩", "⠈⢙", "⠈⡙", "⢈⠩", "⡀⢙", "⠄⡙", "⢂⠩", "⡂⢘", "⠅⡘",
+            "⢃⠨", "⡃⢐", "⠍⡐", "⢋⠠", "⡋⢀", "⠍⡁", "⢋⠁", "⡋⠁", "⠍⠉", "⠋⠉", "⠋⠉", "⠉⠙", "⠉⠙", "⠉⠩",
+            "⠈⢙", "⠈⡙", "⠈⠩", "⠀⢙", "⠀⡙", "⠀⠩", "⠀⢘", "⠀⡘", "⠀⠨", "⠀⢐", "⠀⡐", "⠀⠠", "⠀⢀", "⠀⡀",
+            "+",
+        ])
 }
 
 /// Show a spinner with `msg` on stderr while `op` runs, then clear it.
