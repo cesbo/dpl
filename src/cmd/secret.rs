@@ -14,7 +14,6 @@ use anyhow::{
 };
 use clap::Subcommand;
 use dialoguer::{
-    Confirm,
     FuzzySelect,
     Input,
     Password,
@@ -232,41 +231,11 @@ pub fn prompt_secret(ctx: &MainContext) -> Result<SecretName> {
 }
 
 fn create_new_secret(ctx: &MainContext) -> Result<SecretName> {
-    loop {
-        let raw: String = Input::with_theme(&ColorfulTheme::default())
-            .with_prompt("Secret name")
-            .interact_text()?;
+    let name = prompt_name(ctx)?;
 
-        let name = match SecretName::new(raw) {
-            Ok(name) => name,
-            Err(err) => {
-                eprintln!("{err}");
-                continue;
-            }
-        };
+    let key = load_or_create_key(ctx)?;
+    let value = prompt_value_or_random()?;
+    key.encrypt_to_file(&name, &value)?;
 
-        match ctx.check_secret(&name) {
-            Ok(_) => return Ok(name),
-            Err(SecretError::NotFound { .. }) => {}
-            Err(err) => {
-                eprintln!("{}", err);
-                continue;
-            }
-        }
-
-        let create = Confirm::with_theme(&ColorfulTheme::default())
-            .with_prompt(format!("secret '{name}' does not exist - create it now?"))
-            .default(true)
-            .interact()?;
-
-        if !create {
-            continue;
-        }
-
-        let key = load_or_create_key(ctx)?;
-        let value = prompt_value_or_random()?;
-        key.encrypt_to_file(&name, &value)?;
-
-        return Ok(name);
-    }
+    Ok(name)
 }
