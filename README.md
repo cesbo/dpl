@@ -33,7 +33,7 @@ dpl --base /opt/dpl <group> <command> [args]
 | Group | Purpose |
 |-------|---------|
 | `dpl unit`   | Validate, deploy, and inspect units (`check`, `deploy`, `state`) |
-| `dpl db`     | Bring up DB-server units and create databases (`init`, `create`, `wait`) |
+| `dpl db`     | Bring up DB-server units, create databases, back them up (`init`, `create`, `wait`, `console`, `backup`, `restore`) |
 | `dpl secret` | Manage encrypted runtime secrets (`create`, `cat`, `rm`, `ls`) |
 
 Run any command with `--help` for the full flag list.
@@ -214,6 +214,17 @@ dpl db create app1 --db-server db-main --user app1 --secret app1-db-password
 
 # Block until the db answers a ping (default 60s timeout).
 dpl db wait app1 --timeout 60
+
+# Open an interactive SQL console as the db's login user (use --root for the superuser).
+dpl db console app1
+
+# Dump a database to a SQL file, or stdout when the path is omitted.
+dpl db backup app1 app1.sql
+dpl db backup app1 - | gzip > app1.sql.gz
+
+# Replay a SQL dump into the database from a file, or stdin.
+dpl db restore app1 app1.sql
+gunzip -c app1.sql.gz | dpl db restore app1
 ```
 
 `dpl db init` writes `{base_dir}/{name}/config.yaml`, renders a systemd
@@ -222,6 +233,15 @@ reloads systemd, and runs `systemctl enable --now`.
 
 `dpl db create` executes the engine-specific SQL to create the user and the
 database inside the running `db-server` via `podman exec`.
+
+`dpl db backup` and `dpl db restore` run the engine's dump/restore client
+(`pg_dump`/`psql` or `mariadb-dump`/`mariadb`) inside the running `db-server`
+via `podman exec`. They connect as the `db` unit's own login user, not the
+superuser, and stream plain SQL with no compression. The `path` argument
+defaults to `-`, which means stdout for `backup` and stdin for `restore`, so
+you can pipe through `gzip` or any other tool. `restore` replays the dump into
+the existing database; it does not drop or create the database (use
+`dpl db create` for that), so it adds to whatever is already there.
 
 ## Secrets
 

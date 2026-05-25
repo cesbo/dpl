@@ -68,6 +68,11 @@ Keep this split when adding functionality.
 - `dpl db init` installs and starts the generated systemd unit; `dpl unit
   deploy` does the same for app units. Other unit types render artifacts but
   don't yet install services.
+- `dpl db backup`/`dpl db restore` stream plain SQL through `podman exec` as
+  the `db` unit's login user (engine `dump`/`restore` methods in
+  `deploy/unit/db/backup.rs`, mirroring `create_database` in `sql.rs`). The
+  `path` arg defaults to `-` (stdout/stdin); no compression, no managed backup
+  directory, no DROP/CREATE — restore replays into the existing database.
 
 ## Coding Style
 

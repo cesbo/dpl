@@ -1,5 +1,15 @@
 use std::{
-    fs,
+    fs::{
+        self,
+        File,
+    },
+    io::{
+        self,
+        BufReader,
+        BufWriter,
+        Read,
+        Write,
+    },
     path::Path,
     process::{
         Command,
@@ -104,6 +114,22 @@ enum Cmd {
         #[arg(long)]
         root: bool,
     },
+    /// Dump a database to a SQL file (or stdout) as its own login user
+    Backup {
+        /// Database (and unit) name
+        name: String,
+        /// Destination file, or `-` for stdout
+        #[arg(default_value = "-")]
+        path: String,
+    },
+    /// Replay a SQL dump into a database from a file (or stdin) as its login user
+    Restore {
+        /// Database (and unit) name
+        name: String,
+        /// Source file, or `-` for stdin
+        #[arg(default_value = "-")]
+        path: String,
+    },
 }
 
 pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
@@ -122,6 +148,8 @@ pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
         } => create(ctx, name, db_server, user, secret),
         Cmd::Wait { name, timeout } => wait(ctx, &name, timeout),
         Cmd::Console { name, root } => console(ctx, &name, root),
+        Cmd::Backup { name, path } => backup(ctx, &name, &path),
+        Cmd::Restore { name, path } => restore(ctx, &name, &path),
     }
 }
 
@@ -324,6 +352,68 @@ fn console(ctx: &MainContext, name: &str, root: bool) -> Result<()> {
     let status = cmd.status().context("failed to run podman exec")?;
 
     ensure!(status.success(), "console exited with {status}");
+    Ok(())
+}
+
+fn backup(ctx: &MainContext, name: &str, path: &str) -> Result<()> {
+    let (db_name, db_config) = load_db(ctx, name)?;
+    let (_, server_config) = load_db_server(ctx, db_config.server.as_str())?;
+    let password = resolve_secret(ctx, &db_config.secret)?;
+
+    let mut out: Box<dyn Write> = if path == "-" {
+        Box::new(io::stdout().lock())
+    } else {
+        let file = File::create(path).with_context(|| format!("create backup file '{path}'"))?;
+        Box::new(BufWriter::new(file))
+    };
+
+    crate::spinner::with_spinner(format!("backing up '{db_name}'"), || {
+        server_config.engine.dump(
+            db_config.server.as_str(),
+            &db_config.user,
+            &password,
+            db_name.as_str(),
+            &mut out,
+        )
+    })
+    .with_context(|| format!("back up database '{db_name}'"))?;
+
+    out.flush().context("flush backup output")?;
+
+    // Progress goes to stderr so a `-` dump keeps stdout clean for piping.
+    if path != "-" {
+        eprintln!("backed up '{db_name}' to {path}");
+    }
+
+    Ok(())
+}
+
+fn restore(ctx: &MainContext, name: &str, path: &str) -> Result<()> {
+    let (db_name, db_config) = load_db(ctx, name)?;
+    let (_, server_config) = load_db_server(ctx, db_config.server.as_str())?;
+    let password = resolve_secret(ctx, &db_config.secret)?;
+
+    let mut input: Box<dyn Read> = if path == "-" {
+        Box::new(io::stdin().lock())
+    } else {
+        let file = File::open(path).with_context(|| format!("open backup file '{path}'"))?;
+        Box::new(BufReader::new(file))
+    };
+
+    crate::spinner::with_spinner(format!("restoring '{db_name}'"), || {
+        server_config.engine.restore(
+            db_config.server.as_str(),
+            &db_config.user,
+            &password,
+            db_name.as_str(),
+            &mut input,
+        )
+    })
+    .with_context(|| format!("restore database '{db_name}'"))?;
+
+    let source = if path == "-" { "stdin" } else { path };
+    eprintln!("restored '{db_name}' from {source}");
+
     Ok(())
 }
 
