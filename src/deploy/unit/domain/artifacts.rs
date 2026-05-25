@@ -144,6 +144,10 @@ enum RenderRoute<'a> {
         location: &'a str,
         target: String,
     },
+    Uwsgi {
+        location: &'a str,
+        target: String,
+    },
     ServeFiles {
         location: &'a str,
         root: String,
@@ -156,6 +160,13 @@ impl<'a> RenderRoute<'a> {
         match &route {
             RouteConfig::ReverseProxy { location, target } => {
                 let render_route = RenderRoute::ReverseProxy {
+                    location: location.as_str(),
+                    target: target.render(ctx)?,
+                };
+                Ok(render_route)
+            }
+            RouteConfig::Uwsgi { location, target } => {
+                let render_route = RenderRoute::Uwsgi {
                     location: location.as_str(),
                     target: target.render(ctx)?,
                 };

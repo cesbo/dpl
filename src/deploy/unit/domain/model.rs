@@ -51,6 +51,12 @@ pub enum RouteConfig {
         /// Upstream URL (e.g. "http://127.0.0.1:8000")
         target: Value,
     },
+    Uwsgi {
+        /// URL location prefix (e.g. "/app")
+        location: RouteLocation,
+        /// uwsgi upstream (e.g. "unix:/run/app.sock" or "127.0.0.1:3031")
+        target: Value,
+    },
     ServeFiles {
         /// URL location prefix (e.g. "/billing/static")
         location: RouteLocation,
@@ -72,6 +78,7 @@ impl DomainConfig {
         for route in &self.routes {
             let value = match route {
                 RouteConfig::ReverseProxy { target, .. } => target,
+                RouteConfig::Uwsgi { target, .. } => target,
                 RouteConfig::ServeFiles { root, .. } => root,
             };
             deps.extend(value.unit_refs().cloned());
@@ -83,6 +90,7 @@ impl DomainConfig {
         for (index, route) in self.routes.iter().enumerate() {
             let (value, leaf) = match &route {
                 RouteConfig::ReverseProxy { target, .. } => (target, "target"),
+                RouteConfig::Uwsgi { target, .. } => (target, "target"),
                 RouteConfig::ServeFiles { root, .. } => (root, "root"),
             };
             value
@@ -100,13 +108,13 @@ mod tests {
     #[test]
     fn domain_unit_deps_from_routes() {
         let config: DomainConfig = serde_yaml::from_str(
-            "hosts:\n  - example.com\nroutes:\n  - location: /api\n    kind: reverse_proxy\n    target: \"${backend:url}\"\n  - location: /static\n    kind: serve_files\n    root: \"${assets:export}\"\n  - location: /lit\n    kind: serve_files\n    root: \"/var/www/site\"\n",
+            "hosts:\n  - example.com\nroutes:\n  - location: /api\n    kind: reverse_proxy\n    target: \"${backend:url}\"\n  - location: /app\n    kind: uwsgi\n    target: \"${worker:socket}\"\n  - location: /static\n    kind: serve_files\n    root: \"${assets:export}\"\n  - location: /lit\n    kind: serve_files\n    root: \"/var/www/site\"\n",
         )
         .unwrap();
         let deps = config.unit_deps();
         let names: Vec<&str> = deps.iter().map(ResourceName::as_str).collect();
         // Sorted; the literal root contributes nothing.
-        assert_eq!(names, vec!["assets", "backend"]);
+        assert_eq!(names, vec!["assets", "backend", "worker"]);
     }
 
     #[test]
