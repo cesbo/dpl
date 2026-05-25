@@ -182,6 +182,27 @@ impl DbServerEngine {
             DbServerEngine::Mariadb => "MYSQL_PWD",
         }
     }
+
+    /// The engine's built-in superuser login name.
+    pub fn superuser(&self) -> &'static str {
+        match self {
+            DbServerEngine::Postgresql => "postgres",
+            DbServerEngine::Mariadb => "root",
+        }
+    }
+
+    /// Args to open an interactive client session as `user` against `db_name`.
+    pub fn console_args(&self, user: &str, db_name: &str) -> Vec<String> {
+        let args = match self {
+            DbServerEngine::Postgresql => {
+                vec!["psql", "-U", user, "-d", db_name]
+            }
+            DbServerEngine::Mariadb => {
+                vec!["mariadb", "-u", user, db_name]
+            }
+        };
+        args.into_iter().map(String::from).collect()
+    }
 }
 
 impl DbServerConfig {
@@ -422,5 +443,23 @@ secret: app1-pass
         assert_eq!(engine.default_version(), "12");
         assert_eq!(engine.default_port(), 3306);
         assert_eq!(engine.url_scheme(), "mysql");
+    }
+
+    #[test]
+    fn superuser() {
+        assert_eq!(DbServerEngine::Postgresql.superuser(), "postgres");
+        assert_eq!(DbServerEngine::Mariadb.superuser(), "root");
+    }
+
+    #[test]
+    fn console_args() {
+        assert_eq!(
+            DbServerEngine::Postgresql.console_args("app1", "app-db"),
+            ["psql", "-U", "app1", "-d", "app-db"]
+        );
+        assert_eq!(
+            DbServerEngine::Mariadb.console_args("app1", "app-db"),
+            ["mariadb", "-u", "app1", "app-db"]
+        );
     }
 }

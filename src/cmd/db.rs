@@ -96,6 +96,14 @@ enum Cmd {
         #[arg(long, default_value_t = 60)]
         timeout: u64,
     },
+    /// Open an interactive SQL console to a database as its own login user
+    Console {
+        /// Database (and unit) name
+        name: String,
+        /// Connect as the engine superuser with the db-server's root password
+        #[arg(long)]
+        root: bool,
+    },
 }
 
 pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
@@ -113,6 +121,7 @@ pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
             secret,
         } => create(ctx, name, db_server, user, secret),
         Cmd::Wait { name, timeout } => wait(ctx, &name, timeout),
+        Cmd::Console { name, root } => console(ctx, &name, root),
     }
 }
 
@@ -286,6 +295,36 @@ fn wait(ctx: &MainContext, name: &str, timeout_secs: u64) -> Result<()> {
 
         sleep(interval);
     }
+}
+
+fn console(ctx: &MainContext, name: &str, root: bool) -> Result<()> {
+    let (db_name, db_config) = load_db(ctx, name)?;
+    let (_, server_config) = load_db_server(ctx, db_config.server.as_str())?;
+
+    let (user, password) = if root {
+        (
+            server_config.engine.superuser().to_string(),
+            resolve_secret(ctx, &server_config.secret)?,
+        )
+    } else {
+        (
+            db_config.user.clone(),
+            resolve_secret(ctx, &db_config.secret)?,
+        )
+    };
+    let password_env = server_config.engine.client_password_env();
+
+    let mut cmd = Command::new("podman");
+    cmd.env(password_env, &password);
+    cmd.args(["exec", "-it", "-e", password_env, db_config.server.as_str()]);
+    cmd.args(server_config.engine.console_args(&user, db_name.as_str()));
+
+    // stdin/stdout/stderr inherit the parent terminal (the default), so the
+    // interactive client gets a real TTY via `-it`.
+    let status = cmd.status().context("failed to run podman exec")?;
+
+    ensure!(status.success(), "console exited with {status}");
+    Ok(())
 }
 
 fn resolve_secret(ctx: &MainContext, name: &SecretName) -> Result<String> {
