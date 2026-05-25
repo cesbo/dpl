@@ -41,21 +41,20 @@ jobs:
       - name: Build (release, musl)
         run: |
           cargo build --release --target x86_64-unknown-linux-musl
-          mkdir -p ../bin
-          cp target/x86_64-unknown-linux-musl/release/dpl ../bin/dpl-linux-x86_64
-          strip -s ../bin/dpl-linux-x86_64 || true
+          mkdir -p out
+          cp target/x86_64-unknown-linux-musl/release/dpl out/dpl-linux-x86_64
+          strip -s out/dpl-linux-x86_64 || true
 
       - name: Make checksum
         run: |
-          sha256sum ../bin/dpl-linux-x86_64 > ../bin/dpl-linux-x86_64.sha256
+          sha256sum out/dpl-linux-x86_64 > out/dpl-linux-x86_64.sha256
 
       - name: Store built artifacts
         uses: actions/upload-artifact@v6
         with:
           name: dpl-binaries
           retention-days: 1
-          compression-level: 9
-          path: bin
+          path: out
           if-no-files-found: error
 
   pack-release:
