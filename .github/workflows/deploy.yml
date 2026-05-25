@@ -47,7 +47,7 @@ jobs:
 
       - name: Make checksum
         run: |
-          sha256sum dpl-linux-x86_64 > dpl-linux-x86_64.sha256
+          sha256sum ../bin/dpl-linux-x86_64 > ../bin/dpl-linux-x86_64.sha256
 
       - name: Store built artifacts
         uses: actions/upload-artifact@v6
