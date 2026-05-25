@@ -27,7 +27,11 @@ cargo run -- --base /path/to/base <group> <command> ...
   layer.
 - **Unit implementations** (`deploy/unit/app/`, `deploy/unit/db/`,
   `deploy/unit/domain/`) — "what does a deploy / install of this kind actually
-  do". All build, render, and systemd logic lives here.
+  do". All build, render, and systemd logic lives here. For db units,
+  `DbServerEngine` owns every `podman exec` invocation — `ping`/`create_database`
+  (`sql.rs`), `dump`/`restore` (`backup.rs`), `console` (`console.rs`); `cmd/db.rs`
+  only resolves config/secrets and picks the login (e.g. `--root`), never spawns
+  the client itself.
 - **Deploy state** (`deploy/state.rs`) — on-disk `state.json` and the
   `.deploy.lock` advisory `flock`. Acquired before any unit deploy runs.
 
@@ -72,7 +76,12 @@ Keep this split when adding functionality.
   the `db` unit's login user (engine `dump`/`restore` methods in
   `deploy/unit/db/backup.rs`, mirroring `create_database` in `sql.rs`). The
   `path` arg defaults to `-` (stdout/stdin); no compression, no managed backup
-  directory, no DROP/CREATE — restore replays into the existing database.
+  directory, no DROP/CREATE — restore replays into the existing database. The
+  child's stderr is drained on a separate thread and streamed live above the
+  spinner (the `on_stderr` callback wired to `spinner::stderr_sink`); this also
+  prevents a chatty client from deadlocking by filling its stderr pipe while
+  the data pipe is busy. On a non-zero exit the streamed output is the detail,
+  so the returned error only carries the exit status.
 
 ## Coding Style
 

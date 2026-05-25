@@ -116,7 +116,7 @@ impl<'a> DomainUnit<'a> {
             info: "reload systemd".to_string(),
             source,
         })?;
-        crate::spinner::with_spinner("starting nginx", || systemd::enable_service(NGINX_SERVICE))
+        crate::spinner::with_spinner("starting nginx", |_| systemd::enable_service(NGINX_SERVICE))
             .map_err(|source| DeployError::UnitError {
                 info: format!("enable service '{NGINX_SERVICE}'"),
                 source,

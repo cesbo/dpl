@@ -1,5 +1,6 @@
 mod artifacts;
 mod backup;
+mod console;
 mod model;
 mod sql;
 

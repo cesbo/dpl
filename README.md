@@ -13,28 +13,28 @@ generated systemd service.
 - linux - recommended Fedora 42
 - systemd
 - podman
-- nginx
 
 ### Directory Structure
 
 - `{base_dir}` - base directory for all `dpl` files (default: `/opt/dpl`), set via `--base`
 - `{unit_dir}` - unit directory: `{base_dir}/{unit_name}/`
-- `{deploy_dir}` - deploy directory for one version of an app: `{unit_dir}/deploy_{version}/`
 
 ## CLI
 
-`dpl` exposes three subcommand groups. The `--base` flag is global and
-defaults to `/opt/dpl`:
+`dpl` exposes two top-level commands plus three subcommand groups. The
+`--base` flag is global and defaults to `/opt/dpl`:
 
 ```bash
-dpl --base /opt/dpl <group> <command> [args]
+dpl --base /opt/dpl <command> [args]
 ```
 
-| Group | Purpose |
-|-------|---------|
-| `dpl unit`   | Validate, deploy, and inspect units (`check`, `deploy`, `state`) |
-| `dpl db`     | Bring up DB-server units, create databases, back them up (`init`, `create`, `wait`, `console`, `backup`, `restore`) |
-| `dpl secret` | Manage encrypted runtime secrets (`create`, `cat`, `rm`, `ls`) |
+| Command | Purpose |
+|---------|---------|
+| `dpl check <name>`   | Validate a unit's config and reference graph |
+| `dpl inspect <name>` | Show a unit's runtime state as JSON |
+| `dpl unit`           | Deploy units (`deploy`) |
+| `dpl db`             | Bring up DB-server units, create databases, back them up (`init`, `create`, `wait`, `console`, `backup`, `restore`) |
+| `dpl secret`         | Manage encrypted runtime secrets (`create`, `cat`, `rm`, `ls`) |
 
 Run any command with `--help` for the full flag list.
 
@@ -115,7 +115,8 @@ Fields:
 - `runtime` - runtime configuration (see below)
 - `volumes` - persistent storage mounted into the container. Data in volumes
   survives redeploys
-- `exports` - copies files from the built image into `{deploy_dir}/exports/`
+- `exports` - copies files from the built image into the shared nginx web
+  volume so domain units can serve them
 - `timers` - periodic scripts to run in the container
 
 Runtime fields:
@@ -146,23 +147,6 @@ Build layer fields:
   its reference chain is validated recursively (no separate `databases:` list)
 
 References are validated by `dpl check`.
-
-### Files
-
-App-specific files in `{unit_dir}`:
-
-- `{unit_dir}/port.txt` - persisted host port for the unit
-- `{unit_dir}/deploy_{version}/` - versioned deploy directory. Referred to as
-  `{deploy_dir}`
-
-`{deploy_dir}` layout:
-
-- `{deploy_dir}/app.tar.gz` - uploaded archive
-- `{deploy_dir}/app/` - extracted archive
-- `{deploy_dir}/artifacts/` - generated deploy files such as `containerfile`,
-  `run.sh`, `build-N.sh`, and systemd service files
-- `{deploy_dir}/exports/` - static files exported from the built image
-- `{deploy_dir}/log/build.log` - build log with podman build output
 
 ## Database Units
 
@@ -234,6 +218,10 @@ reloads systemd, and runs `systemctl enable --now`.
 `dpl db create` executes the engine-specific SQL to create the user and the
 database inside the running `db-server` via `podman exec`.
 
+`dpl db console` opens the engine's interactive client (`psql` or `mariadb`)
+inside the running `db-server` via `podman exec -it`, connected to the
+database as its login user (or the superuser with `--root`).
+
 `dpl db backup` and `dpl db restore` run the engine's dump/restore client
 (`pg_dump`/`psql` or `mariadb-dump`/`mariadb`) inside the running `db-server`
 via `podman exec`. They connect as the `db` unit's own login user, not the
@@ -242,6 +230,11 @@ defaults to `-`, which means stdout for `backup` and stdin for `restore`, so
 you can pipe through `gzip` or any other tool. `restore` replays the dump into
 the existing database; it does not drop or create the database (use
 `dpl db create` for that), so it adds to whatever is already there.
+
+Progress and the client's own messages (for example PostgreSQL `NOTICE` lines
+or restore errors) go to stderr, so stdout stays clean for piping. On failure
+those messages are already on screen and the final error only adds the exit
+status.
 
 ## Secrets
 
@@ -331,34 +324,54 @@ elapsed time. The command exits non-zero if any step fails.
 ### Inspect deploy state
 
 ```bash
-dpl unit state myapp
+dpl inspect myapp
 ```
 
-Output:
+Prints a structured JSON report grouped into sections. App units report a
+`deploy` section (on-disk deploy state) and a `container` section (live
+`podman container inspect` data). Each field carries a `health` signal
+(`ok`, `warn`, `down`, or `unknown`) for machine consumers:
 
-```text
-version: 3
-status:  ready
-active:  3
+```json
+{
+  "name": "myapp",
+  "kind": "app",
+  "sections": [
+    {
+      "title": "deploy",
+      "fields": [
+        { "label": "version", "value": "3", "health": "ok" },
+        { "label": "status", "value": "ready", "health": "ok" },
+        { "label": "active", "value": "3", "health": "unknown" }
+      ]
+    },
+    {
+      "title": "container",
+      "fields": [
+        { "label": "state", "value": "running", "health": "ok" },
+        { "label": "started", "value": "2026-05-25T08:00:00Z", "health": "unknown" },
+        { "label": "restarts", "value": "0", "health": "unknown" },
+        { "label": "image", "value": "localhost/myapp:3", "health": "unknown" }
+      ]
+    }
+  ]
+}
 ```
 
-Possible `status` values:
+Possible deploy `status` values:
 
 - `idle`
 - `building`
 - `ready`
 - `failed`
 
-When `status` is `failed`, an `error:` line shows the failure message.
+When `status` is `failed`, an `error` field in the `deploy` section carries
+the failure message. Non-app units report only `name` and `kind`.
 
-The full build log is at `{deploy_dir}/log/build.log`.
+The full build log is at `{unit_dir}/log/build-{version}.log`.
 
 ## Notes
 
-- The unit config is read fresh on each `dpl` invocation.
-- Deploy state is stored on disk in `{unit_dir}/state.json`.
-- The busy lock at `{unit_dir}/.deploy.lock` is held via `flock(2)` for the
-  duration of a deploy; the kernel releases it if `dpl` crashes.
 - If the archive has a single top-level folder, `dpl` flattens it after
   extraction.
 

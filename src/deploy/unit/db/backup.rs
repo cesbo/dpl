@@ -1,20 +1,27 @@
 use std::{
     io::{
         self,
+        BufRead,
+        BufReader,
         Read,
         Write,
     },
     process::{
         Command,
+        ExitStatus,
         Stdio,
     },
+    thread,
 };
 
 use super::model::DbServerEngine;
 
 impl DbServerEngine {
     /// Stream a logical SQL dump of `db_name` to `out`, running the engine's
-    /// dump tool inside the running db-server container as `user`.
+    /// dump tool inside the running db-server container as `user`. The child's
+    /// stderr is drained on a separate thread and handed to `on_stderr`
+    /// line-by-line as it arrives, so a chatty tool can't fill the stderr pipe
+    /// and stall the dump.
     pub fn dump<W: Write>(
         self,
         server: &str,
@@ -22,6 +29,7 @@ impl DbServerEngine {
         password: &str,
         db_name: &str,
         out: &mut W,
+        on_stderr: &mut (dyn FnMut(&[u8]) + Send),
     ) -> io::Result<()> {
         let password_env = self.client_password_env();
 
@@ -36,25 +44,32 @@ impl DbServerEngine {
             .stderr(Stdio::piped())
             .spawn()?;
 
-        // Drain stdout into the destination while the child runs, so the pipe
-        // never fills up and stalls the dump.
         let mut stdout = child
             .stdout
             .take()
             .ok_or_else(|| io::Error::other("failed to capture podman exec stdout"))?;
-        io::copy(&mut stdout, out)?;
 
-        // `stdout` was taken, so `wait_with_output` only collects stderr.
-        let output = child.wait_with_output()?;
-        if output.status.success() {
-            return Ok(());
-        }
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| io::Error::other("failed to capture podman exec stderr"))?;
 
-        Err(io::Error::other(exec_error(&output.stderr, output.status)))
+        // Pump stdout in this thread while a second thread drains stderr; both
+        // pipes are read concurrently, so neither can block the other.
+        let (copy_res, drain_res) = thread::scope(|scope| {
+            let drainer = scope.spawn(|| drain_stderr(stderr, on_stderr));
+            let copy_res = io::copy(&mut stdout, out);
+            let drain_res = drainer.join().expect("stderr drain thread panicked");
+            (copy_res, drain_res)
+        });
+
+        finish(child.wait()?, copy_res, drain_res)
     }
 
     /// Replay a logical SQL dump read from `input` into `db_name`, piping it to
     /// the engine's client inside the running db-server container as `user`.
+    /// The client's stdout is discarded (command tags are noise) and its stderr
+    /// is streamed to `on_stderr` on a separate thread.
     pub fn restore<R: Read>(
         self,
         server: &str,
@@ -62,6 +77,7 @@ impl DbServerEngine {
         password: &str,
         db_name: &str,
         input: &mut R,
+        on_stderr: &mut (dyn FnMut(&[u8]) + Send),
     ) -> io::Result<()> {
         let password_env = self.client_password_env();
 
@@ -72,25 +88,31 @@ impl DbServerEngine {
 
         let mut child = cmd
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
+            .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()?;
 
-        {
-            let stdin = child
-                .stdin
-                .as_mut()
-                .ok_or_else(|| io::Error::other("failed to capture podman exec stdin"))?;
-            io::copy(input, stdin)?;
-        }
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| io::Error::other("failed to capture podman exec stdin"))?;
 
-        // `wait_with_output` closes stdin (signalling EOF) before collecting output.
-        let output = child.wait_with_output()?;
-        if output.status.success() {
-            return Ok(());
-        }
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| io::Error::other("failed to capture podman exec stderr"))?;
 
-        Err(io::Error::other(exec_error(&output.stderr, output.status)))
+        let (copy_res, drain_res) = thread::scope(|scope| {
+            let drainer = scope.spawn(|| drain_stderr(stderr, on_stderr));
+            let copy_res = io::copy(input, &mut stdin);
+            // Close stdin so the client sees EOF, exits, and lets the drain
+            // thread reach end-of-stderr; only then can the join below return.
+            drop(stdin);
+            let drain_res = drainer.join().expect("stderr drain thread panicked");
+            (copy_res, drain_res)
+        });
+
+        finish(child.wait()?, copy_res, drain_res)
     }
 
     /// Args to dump `db_name` to stdout as `user`.
@@ -114,14 +136,46 @@ impl DbServerEngine {
     }
 }
 
-fn exec_error(stderr: &[u8], status: std::process::ExitStatus) -> String {
-    let trimmed = String::from_utf8_lossy(stderr);
-    let trimmed = trimmed.trim();
-    if trimmed.is_empty() {
-        format!("podman exec exited with {status}")
-    } else {
-        trimmed.to_string()
+/// Read `stderr` to EOF, calling `on_line` with each line (newline trimmed).
+fn drain_stderr<R: Read>(stderr: R, on_line: &mut (dyn FnMut(&[u8]) + Send)) -> io::Result<()> {
+    let mut reader = BufReader::new(stderr);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line)? == 0 {
+            return Ok(());
+        }
+        on_line(trim_newline(&line));
     }
+}
+
+/// Build the final result. The dump/restore stderr has already been streamed,
+/// so a failed exit only needs the status; copy/drain errors surface only when
+/// the child itself succeeded (otherwise the broken pipe is just a symptom).
+fn finish(
+    status: ExitStatus,
+    copy_res: io::Result<u64>,
+    drain_res: io::Result<()>,
+) -> io::Result<()> {
+    if !status.success() {
+        return Err(io::Error::other(format!(
+            "podman exec exited with {status}"
+        )));
+    }
+    copy_res?;
+    drain_res?;
+    Ok(())
+}
+
+fn trim_newline(line: &[u8]) -> &[u8] {
+    let mut end = line.len();
+    if end > 0 && line[end - 1] == b'\n' {
+        end -= 1;
+    }
+    if end > 0 && line[end - 1] == b'\r' {
+        end -= 1;
+    }
+    &line[.. end]
 }
 
 #[cfg(test)]
@@ -148,7 +202,15 @@ mod tests {
     fn restore_args_postgres() {
         assert_eq!(
             DbServerEngine::Postgresql.restore_args("app1", "app-db"),
-            ["psql", "-v", "ON_ERROR_STOP=1", "-U", "app1", "-d", "app-db"]
+            [
+                "psql",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-U",
+                "app1",
+                "-d",
+                "app-db"
+            ]
         );
     }
 
@@ -158,5 +220,13 @@ mod tests {
             DbServerEngine::Mariadb.restore_args("app1", "app-db"),
             ["mariadb", "-u", "app1", "app-db"]
         );
+    }
+
+    #[test]
+    fn trim_newline_variants() {
+        assert_eq!(trim_newline(b"hello\n"), b"hello");
+        assert_eq!(trim_newline(b"hello\r\n"), b"hello");
+        assert_eq!(trim_newline(b"hello"), b"hello");
+        assert_eq!(trim_newline(b""), b"");
     }
 }

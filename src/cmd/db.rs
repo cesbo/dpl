@@ -217,7 +217,7 @@ fn init(
             config.engine.as_str(),
             &config.version
         ),
-        || crate::systemd::enable_service(&service_name),
+        |_| crate::systemd::enable_service(&service_name),
     )
     .with_context(|| format!("start service for db-server '{unit_name}'"))?;
 
@@ -340,19 +340,11 @@ fn console(ctx: &MainContext, name: &str, root: bool) -> Result<()> {
             resolve_secret(ctx, &db_config.secret)?,
         )
     };
-    let password_env = server_config.engine.client_password_env();
 
-    let mut cmd = Command::new("podman");
-    cmd.env(password_env, &password);
-    cmd.args(["exec", "-it", "-e", password_env, db_config.server.as_str()]);
-    cmd.args(server_config.engine.console_args(&user, db_name.as_str()));
-
-    // stdin/stdout/stderr inherit the parent terminal (the default), so the
-    // interactive client gets a real TTY via `-it`.
-    let status = cmd.status().context("failed to run podman exec")?;
-
-    ensure!(status.success(), "console exited with {status}");
-    Ok(())
+    server_config
+        .engine
+        .console(db_config.server.as_str(), &user, &password, db_name.as_str())
+        .with_context(|| format!("open console to '{db_name}'"))
 }
 
 fn backup(ctx: &MainContext, name: &str, path: &str) -> Result<()> {
@@ -367,13 +359,15 @@ fn backup(ctx: &MainContext, name: &str, path: &str) -> Result<()> {
         Box::new(BufWriter::new(file))
     };
 
-    crate::spinner::with_spinner(format!("backing up '{db_name}'"), || {
+    crate::spinner::with_spinner(format!("backing up '{db_name}'"), |bar| {
+        let mut on_stderr = crate::spinner::stderr_sink(bar);
         server_config.engine.dump(
             db_config.server.as_str(),
             &db_config.user,
             &password,
             db_name.as_str(),
             &mut out,
+            &mut on_stderr,
         )
     })
     .with_context(|| format!("back up database '{db_name}'"))?;
@@ -400,13 +394,15 @@ fn restore(ctx: &MainContext, name: &str, path: &str) -> Result<()> {
         Box::new(BufReader::new(file))
     };
 
-    crate::spinner::with_spinner(format!("restoring '{db_name}'"), || {
+    crate::spinner::with_spinner(format!("restoring '{db_name}'"), |bar| {
+        let mut on_stderr = crate::spinner::stderr_sink(bar);
         server_config.engine.restore(
             db_config.server.as_str(),
             &db_config.user,
             &password,
             db_name.as_str(),
             &mut input,
+            &mut on_stderr,
         )
     })
     .with_context(|| format!("restore database '{db_name}'"))?;
