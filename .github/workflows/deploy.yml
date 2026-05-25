@@ -111,6 +111,6 @@ jobs:
           storagePassword: ${{ secrets.BUNNY_STORAGE_FTP_KEY }}
           storageZoneName: cesbo
           source: .
-          destination: /dpl/builds/latest
+          destination: /dpl/latest
           remove: "true"
           upload: "true"
