@@ -145,8 +145,8 @@ impl<'a> PodmanContext<'a> {
             }
             std::fs::create_dir_all(&dst)?;
 
-            let source = export.source.trim_end_matches('/');
-            let src = format!("{container}:{source}/.");
+            let source = export.source.trim_matches('/');
+            let src = format!("{container}:/app/{source}/.");
 
             match run_podman(&["cp", "-a", "--overwrite", &src, &dst.to_string_lossy()]) {
                 Ok(_) => {
