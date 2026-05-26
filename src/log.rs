@@ -110,8 +110,7 @@ impl DeployLog {
         tracing::dispatcher::with_default(&self.dispatch, f);
     }
 
-    /// Stop the spinner and print the success summary on stderr (where the
-    /// spinner lived), with a colored ✔ when the terminal supports it.
+    /// Stop the spinner and print the success summary.
     pub fn finish_ok(&self) -> Duration {
         let elapsed = self.elapsed();
         self.emit(|| tracing::debug!("finished in {}", fmt_elapsed(elapsed)));
@@ -125,21 +124,19 @@ impl DeployLog {
         elapsed
     }
 
-    /// Stop the spinner and print the failure summary: the phase that was
-    /// running when it failed, plus the build log to read for the cause. The
-    /// detailed error chain stays in that log, not on the console.
+    /// Stop the spinner and print the failure summary.
     pub fn finish_err(&self) -> Duration {
         let elapsed = self.elapsed();
         let phase = self.spinner.bar().message();
         self.emit(|| tracing::debug!("failed after {}", fmt_elapsed(elapsed)));
         self.spinner.finish();
         eprintln!(
-            "{} {} failed at '{phase}' after {} — {}",
+            "{} {} failed at '{phase}' after {}\n",
             console::style("✗").red(),
             self.label,
             fmt_elapsed(elapsed),
-            self.log_path.display(),
         );
+        eprintln!("Details: {}", self.log_path.display());
         elapsed
     }
 }
