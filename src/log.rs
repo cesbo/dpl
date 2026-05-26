@@ -144,12 +144,12 @@ impl DeployLog {
         self.emit(|| tracing::debug!("failed after {}", fmt_elapsed(elapsed)));
         self.spinner.finish();
         eprintln!(
-            "{} {} failed at '{phase}' after {}\n",
+            "{} {} failed at '{phase}' after {}",
             console::style("✗").red(),
             self.label,
             fmt_elapsed(elapsed),
         );
-        eprintln!("Details: {}", self.path.display());
+        eprintln!("  Details: {}", self.path.display());
         elapsed
     }
 }
