@@ -7,7 +7,6 @@ use std::{
     io::{
         self,
         BufWriter,
-        IsTerminal,
         Write,
     },
     path::{
@@ -24,10 +23,7 @@ use std::{
     },
 };
 
-use indicatif::{
-    ProgressBar,
-    ProgressDrawTarget,
-};
+use indicatif::ProgressBar;
 use tracing::{
     Dispatch,
     Event,
@@ -47,11 +43,13 @@ use tracing_subscriber::{
     },
 };
 
+use crate::spinner::Spinner;
+
 /// Child-process (podman) output: file only. `debug!(target: CHILD_TARGET, …)`.
-pub(crate) const CHILD_TARGET: &str = "dpl::child";
+pub const CHILD_TARGET: &str = "dpl::child";
 /// Phase transitions: echoed to console, drive the spinner message.
 /// `info!(target: PHASE_TARGET, …)`.
-pub(crate) const PHASE_TARGET: &str = "dpl::phase";
+pub const PHASE_TARGET: &str = "dpl::phase";
 
 /// Owns a per-deploy `tracing` subscriber and the deploy spinner. Install it as
 /// the thread-default dispatcher via [`set_default`](Self::set_default); logging
@@ -64,7 +62,7 @@ pub struct DeployLog {
 struct Inner {
     dispatch: Dispatch,
     started: Instant,
-    bar: ProgressBar,
+    spinner: Spinner,
     log_path: PathBuf,
 }
 
@@ -78,26 +76,14 @@ impl DeployLog {
             .append(true)
             .open(log_path)?;
 
-        let is_tty = io::stderr().is_terminal();
-        let target = if is_tty {
-            ProgressDrawTarget::stderr()
-        } else {
-            ProgressDrawTarget::hidden()
-        };
-
-        let bar = ProgressBar::with_draw_target(None, target);
-        bar.set_style(crate::spinner::spinner_style());
-        bar.set_message(format!("{unit} v{version}: starting"));
-        if is_tty {
-            bar.enable_steady_tick(Duration::from_millis(100));
-        }
+        let spinner = Spinner::new(format!("{unit} v{version}: starting"));
 
         let started = Instant::now();
         let layer = DeployLayer {
             file: Mutex::new(BufWriter::new(file)),
-            bar: bar.clone(),
+            bar: spinner.bar().clone(),
             started,
-            is_tty,
+            is_tty: spinner.is_tty(),
         };
         let dispatch = Dispatch::new(Registry::default().with(layer));
 
@@ -105,7 +91,7 @@ impl DeployLog {
             inner: Arc::new(Inner {
                 dispatch,
                 started,
-                bar,
+                spinner,
                 log_path: log_path.to_path_buf(),
             }),
         };
@@ -134,7 +120,7 @@ impl DeployLog {
     pub fn finish_ok(&self) -> Duration {
         let elapsed = self.elapsed();
         self.emit(|| tracing::debug!("finished in {}", fmt_elapsed(elapsed)));
-        self.inner.bar.finish_and_clear();
+        self.inner.spinner.finish();
         elapsed
     }
 
@@ -144,7 +130,7 @@ impl DeployLog {
     pub fn finish_err(&self) -> Duration {
         let elapsed = self.elapsed();
         self.emit(|| tracing::debug!("failed after {}", fmt_elapsed(elapsed)));
-        self.inner.bar.finish_and_clear();
+        self.inner.spinner.finish();
         eprintln!("Details: {}", self.inner.log_path.display());
         elapsed
     }

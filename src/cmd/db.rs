@@ -211,7 +211,7 @@ fn init(
     .with_context(|| format!("create serivce file for db-server '{unit_name}'"))?;
 
     crate::systemd::reload().context("reload systemd")?;
-    crate::spinner::with_spinner(
+    crate::spinner::Spinner::run(
         format!(
             "starting db-server '{unit_name}' ({} {})",
             config.engine.as_str(),
@@ -361,7 +361,7 @@ fn backup(ctx: &MainContext, name: &str, path: &str) -> Result<()> {
         Box::new(BufWriter::new(file))
     };
 
-    crate::spinner::with_spinner(format!("backing up '{db_name}'"), |bar| {
+    crate::spinner::Spinner::run(format!("backing up '{db_name}'"), |bar| {
         let mut on_stderr = crate::spinner::stderr_sink(bar);
         server_config.engine.dump(
             db_config.server.as_str(),
@@ -396,7 +396,7 @@ fn restore(ctx: &MainContext, name: &str, path: &str) -> Result<()> {
         Box::new(BufReader::new(file))
     };
 
-    crate::spinner::with_spinner(format!("restoring '{db_name}'"), |bar| {
+    crate::spinner::Spinner::run(format!("restoring '{db_name}'"), |bar| {
         let mut on_stderr = crate::spinner::stderr_sink(bar);
         server_config.engine.restore(
             db_config.server.as_str(),
