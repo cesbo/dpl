@@ -106,6 +106,8 @@ impl<'a> PodmanContext<'a> {
 
         let status = child.wait()?;
         if !status.success() {
+            // Drops the partially-built layers (dangling `<none>` image)
+            let _ = run_podman(&["image", "prune", "-f"]);
             return Err(io::Error::other(format!(
                 "podman build exited with {status}"
             )));
