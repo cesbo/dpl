@@ -100,6 +100,12 @@ impl<'a> AppUnit<'a> {
     /// Run the full deploy synchronously: bump version, extract archive,
     /// render artifacts, build image, install service.
     pub fn deploy<R: Read>(self, mut state: DeployState, archive: R) -> Result<(), DeployError> {
+        // Remove previous build log
+        let prev_build = state.latest_build.version;
+        if prev_build != 0 {
+            self.remove_build_log(prev_build);
+        }
+
         let version = state.bump_version()?;
 
         let build_log_path = self.build_log_path(version);
@@ -276,8 +282,6 @@ impl<'a> AppUnit<'a> {
         let podman_ctx = PodmanContext::new(self.name.as_str(), version);
         podman_ctx.remove_exports();
         podman_ctx.remove();
-
-        self.remove_build_log(version);
     }
 
     fn build_log_path(&self, version: u32) -> PathBuf {
