@@ -246,7 +246,7 @@ impl<'a> AppUnit<'a> {
 
         let systemd_ctx = SystemdContext::new(self.name.as_str());
 
-        info!(target: PHASE_TARGET, "installing service");
+        info!(target: PHASE_TARGET, "installing app service");
         systemd_ctx
             .install_app(deploy_dir)
             .map_err(|source| DeployError::UnitError {

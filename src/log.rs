@@ -262,14 +262,14 @@ fn hms(d: Duration) -> (u64, u64, u64) {
     (secs / 3600, (secs % 3600) / 60, secs % 60)
 }
 
-/// Print a `✓ [mm:ss] <name>` line for a completed phase above the spinner,
+/// Print a `[mm:ss] ✓ <name>` line for a completed phase above the spinner,
 /// leaving it in the terminal while the spinner continues on its own line below.
 /// The stamp is cumulative elapsed since deploy start, matching [`fmt_stamp`].
 fn echo_phase_done(bar: &ProgressBar, started: Instant, name: &str) {
     let line = format!(
-        "{} [{}] {name}",
-        console::style("✓").green(),
+        "[{}] {} {name}",
         fmt_stamp(started.elapsed()),
+        console::style("✓").green(),
     );
     crate::spinner::print_above(bar, line.as_bytes());
 }
