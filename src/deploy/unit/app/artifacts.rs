@@ -113,7 +113,7 @@ impl<'a> ArtifactsContext<'a> {
                 env => self.config.runtime.env.resolve(self.ctx, "runtime.env")?,
                 init => &self.config.runtime.init,
                 cmd => &self.config.runtime.cmd,
-                timers => &self.config.timers,
+                timers => self.config.timers.iter().filter(|t| !t.disabled).collect::<Vec<_>>(),
             },
         )?;
 
@@ -152,6 +152,10 @@ impl<'a> ArtifactsContext<'a> {
         )?;
 
         for timer in &self.config.timers {
+            if timer.disabled {
+                continue;
+            }
+
             let file_name = format!("dpl--{}--{}.service", &self.name, &timer.name);
             let path = artifacts_dir.join(&file_name);
             write_artifact(
@@ -249,12 +253,22 @@ mod tests {
                     description: None,
                     schedule: "*-*-* 03:00:00".into(),
                     script: "echo cleanup".into(),
+                    disabled: false,
                 },
                 TimerConfig {
                     name: "sync".into(),
                     description: None,
                     schedule: "hourly".into(),
                     script: "echo sync".into(),
+                    disabled: false,
+                },
+                // disabled timers are configured but never rendered
+                TimerConfig {
+                    name: "purge".into(),
+                    description: None,
+                    schedule: "weekly".into(),
+                    script: "echo purge".into(),
+                    disabled: true,
                 },
             ],
         };
@@ -303,6 +317,9 @@ mod tests {
         assert!(artifacts_dir.join("dpl--my-app--cleanup.timer").exists());
         assert!(artifacts_dir.join("dpl--my-app--sync.service").exists());
         assert!(artifacts_dir.join("dpl--my-app--sync.timer").exists());
+        // disabled timer is skipped entirely
+        assert!(!artifacts_dir.join("dpl--my-app--purge.service").exists());
+        assert!(!artifacts_dir.join("dpl--my-app--purge.timer").exists());
 
         let service = fs::read_to_string(artifacts_dir.join("dpl--my-app.service")).unwrap();
         assert!(

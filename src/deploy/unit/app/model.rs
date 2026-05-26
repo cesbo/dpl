@@ -106,6 +106,9 @@ pub struct TimerConfig {
     pub schedule: String,
     /// Script to run
     pub script: String,
+    /// When true, the timer is not rendered or installed
+    #[serde(default)]
+    pub disabled: bool,
 }
 
 impl AppConfig {
