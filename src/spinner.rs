@@ -15,7 +15,7 @@ use indicatif::{
 
 /// The cyan braille spinner style shared by `DeployLog` and `with_spinner`.
 pub fn spinner_style() -> ProgressStyle {
-    ProgressStyle::with_template("{spinner:.cyan}{msg} ({elapsed:.grey})")
+    ProgressStyle::with_template("{spinner:.cyan}{msg} ({elapsed:.dim})")
         .expect("static spinner template")
         .tick_strings(&[
             "⢀⠀", "⡀⠀", "⠄⠀", "⢂⠀", "⡂⠀", "⠅⠀", "⢃⠀", "⡃⠀", "⠍⠀", "⢋⠀", "⡋⠀", "⠍⠁", "⢋⠁", "⡋⠁",
