@@ -56,8 +56,6 @@ pub enum DeployStatus {
 pub struct BuildResult {
     pub version: u32,
     pub status: DeployStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
 }
 
 #[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -130,18 +128,15 @@ impl DeployState {
             .ok_or(DeployStateError::VersionOverflow)?;
         self.latest_build.version = next;
         self.latest_build.status = DeployStatus::Building;
-        self.latest_build.error = None;
         Ok(next)
     }
 
-    pub fn set_error<T: ToString>(&mut self, error: T) {
+    pub fn set_error(&mut self) {
         self.latest_build.status = DeployStatus::Failed;
-        self.latest_build.error = Some(error.to_string());
     }
 
     pub fn set_ready(&mut self) {
         self.latest_build.status = DeployStatus::Ready;
-        self.latest_build.error = None;
     }
 }
 

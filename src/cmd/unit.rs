@@ -87,8 +87,8 @@ fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Result
     let elapsed = fmt_elapsed(log.elapsed());
     let version = final_state.latest_build.version;
 
-    if let Some(err) = &final_state.latest_build.error {
-        bail!("deploy failed (version {version}) after {elapsed}: {err}");
+    if final_state.active_version.is_none() {
+        bail!("deploy failed (version {version}) after {elapsed}");
     }
 
     println!("deploy ok (version {version}) in {elapsed}");

@@ -41,9 +41,6 @@ impl AppUnit<'_> {
         if let Some(active) = state.active_version {
             section.push(Field::new("active", active.to_string()));
         }
-        if let Some(err) = &build.error {
-            section.push(Field::new("error", err.clone()).health(Health::Down));
-        }
 
         Ok(section)
     }

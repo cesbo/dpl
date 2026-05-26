@@ -56,7 +56,7 @@ impl<'a> DomainUnit<'a> {
         if let Err(err) = self.install_inner() {
             let chain = format_error_chain(&err);
             eprintln!("install nginx failed for {}: {chain}", self.name);
-            state.set_error(format!("install nginx failed: {chain}"));
+            state.set_error();
             let _ = state.save(&self.unit_dir);
             return Err(err);
         }

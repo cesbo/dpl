@@ -62,46 +62,6 @@ impl<'a> AppUnit<'a> {
         }
     }
 
-    /// Run the full deploy synchronously: bump version, extract archive,
-    /// render artifacts, build image, install service. The caller holds the
-    /// busy lock and provides freshly loaded state.
-    pub fn deploy<R: Read>(
-        self,
-        mut state: DeployState,
-        archive: R,
-    ) -> Result<(DeployState, DeployLog), DeployError> {
-        let version = state.bump_version()?;
-        state.save(&self.unit_dir)?;
-
-        let temp_dir = match self.prepare(version, archive) {
-            Ok(dir) => dir,
-            Err(err) => {
-                let chain = format_error_chain(&err);
-                eprintln!("prepare failed: {chain}");
-                state.set_error(format!("prepare app deploy failed: {chain}"));
-                let _ = state.save(&self.unit_dir);
-                return Err(err);
-            }
-        };
-
-        let build_log_path = self.build_log_path(version);
-
-        let log = match DeployLog::open(&build_log_path, self.name.as_str(), version) {
-            Ok(log) => log,
-            Err(source) => {
-                state.set_error(format!("open deploy log: {source}"));
-                let _ = state.save(&self.unit_dir);
-                return Err(DeployError::UnitError {
-                    info: "open deploy log".to_string(),
-                    source,
-                });
-            }
-        };
-
-        self.deploy_worker(temp_dir.path(), &mut state, &log);
-        Ok((state, log))
-    }
-
     fn prepare<R: Read>(&self, version: u32, archive: R) -> Result<TempDir, DeployError> {
         let build_log = self.build_log_path(version);
         if let Some(parent) = build_log.parent() {
@@ -115,12 +75,11 @@ impl<'a> AppUnit<'a> {
             source,
         })?;
 
-        let temp_dir = tempfile::tempdir_in(&self.unit_dir).map_err(|source| {
-            DeployError::UnitError {
+        let temp_dir =
+            tempfile::tempdir_in(&self.unit_dir).map_err(|source| DeployError::UnitError {
                 info: "failed to create temporary build directory".to_string(),
                 source,
-            }
-        })?;
+            })?;
         let deploy_dir = temp_dir.path();
 
         let archive_path = deploy_dir.join("app.tar.gz");
@@ -140,13 +99,53 @@ impl<'a> AppUnit<'a> {
         Ok(temp_dir)
     }
 
+    /// Run the full deploy synchronously: bump version, extract archive,
+    /// render artifacts, build image, install service. The caller holds the
+    /// busy lock and provides freshly loaded state.
+    pub fn deploy<R: Read>(
+        self,
+        mut state: DeployState,
+        archive: R,
+    ) -> Result<(DeployState, DeployLog), DeployError> {
+        let version = state.bump_version()?;
+        state.save(&self.unit_dir)?;
+
+        let temp_dir = match self.prepare(version, archive) {
+            Ok(dir) => dir,
+            Err(err) => {
+                let chain = format_error_chain(&err);
+                eprintln!("prepare failed: {chain}");
+                state.set_error();
+                let _ = state.save(&self.unit_dir);
+                return Err(err);
+            }
+        };
+
+        let build_log_path = self.build_log_path(version);
+
+        let log = match DeployLog::open(&build_log_path, self.name.as_str(), version) {
+            Ok(log) => log,
+            Err(source) => {
+                state.set_error();
+                let _ = state.save(&self.unit_dir);
+                return Err(DeployError::UnitError {
+                    info: "open deploy log".to_string(),
+                    source,
+                });
+            }
+        };
+
+        self.deploy_worker(temp_dir.path(), &mut state, &log);
+        Ok((state, log))
+    }
+
     fn deploy_worker(&self, deploy_dir: &Path, state: &mut DeployState, log: &DeployLog) {
         let version = state.latest_build.version;
 
         if let Err(err) = self.build_inner(deploy_dir, version, log) {
             let chain = format_error_chain(&err);
             log.error(&format!("failed to build app image: {chain}"));
-            state.set_error(format!("failed to build app image: {chain}"));
+            state.set_error();
             let _ = state.save(&self.unit_dir);
             log.finish_err(&chain);
             return;
@@ -162,7 +161,7 @@ impl<'a> AppUnit<'a> {
             log.error(&format!("failed to install app: {chain}"));
             self.uninstall_inner(version, log);
             state.active_version = None;
-            state.set_error(format!("failed to install app: {chain}"));
+            state.set_error();
             let _ = state.save(&self.unit_dir);
             log.finish_err(&chain);
             return;
