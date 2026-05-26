@@ -62,18 +62,13 @@ impl<'a> AppUnit<'a> {
         }
     }
 
-    fn prepare<R: Read>(&self, version: u32, archive: R) -> Result<TempDir, DeployError> {
-        let build_log = self.build_log_path(version);
-        if let Some(parent) = build_log.parent() {
-            fs::create_dir_all(parent).map_err(|source| DeployError::UnitError {
-                info: "failed to create log directory".to_string(),
-                source,
-            })?;
-        }
-        fs::File::create(&build_log).map_err(|source| DeployError::UnitError {
-            info: "failed to create build log".to_string(),
-            source,
-        })?;
+    fn prepare<R: Read>(
+        &self,
+        version: u32,
+        archive: R,
+        log: &DeployLog,
+    ) -> Result<TempDir, DeployError> {
+        log.phase("preparing");
 
         let temp_dir =
             tempfile::tempdir_in(&self.unit_dir).map_err(|source| DeployError::UnitError {
@@ -104,18 +99,7 @@ impl<'a> AppUnit<'a> {
     pub fn deploy<R: Read>(self, mut state: DeployState, archive: R) -> Result<(), DeployError> {
         let version = state.bump_version()?;
 
-        let temp_dir = match self.prepare(version, archive) {
-            Ok(dir) => dir,
-            Err(err) => {
-                let chain = format_error_chain(&err);
-                eprintln!("prepare failed: {chain}");
-                state.set_error();
-                return Err(err);
-            }
-        };
-
         let build_log_path = self.build_log_path(version);
-
         let log = match DeployLog::open(&build_log_path, self.name.as_str(), version) {
             Ok(log) => log,
             Err(source) => {
@@ -127,7 +111,7 @@ impl<'a> AppUnit<'a> {
             }
         };
 
-        match self.deploy_worker(temp_dir.path(), version, &mut state, &log) {
+        match self.deploy_worker(version, archive, &mut state, &log) {
             Ok(()) => {
                 state.set_ready();
 
@@ -148,13 +132,16 @@ impl<'a> AppUnit<'a> {
         }
     }
 
-    fn deploy_worker(
+    fn deploy_worker<R: Read>(
         &self,
-        deploy_dir: &Path,
         version: u32,
+        archive: R,
         state: &mut DeployState,
         log: &DeployLog,
     ) -> Result<(), DeployError> {
+        let temp_dir = self.prepare(version, archive, log)?;
+        let deploy_dir = temp_dir.path();
+
         self.build_inner(deploy_dir, version, log)?;
 
         if let Some(active_version) = state.take_active_version() {

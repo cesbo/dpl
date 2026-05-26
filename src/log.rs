@@ -36,7 +36,10 @@ struct Inner {
 
 impl DeployLog {
     pub fn open(log_path: &Path, unit: &str, version: u32) -> io::Result<Self> {
-        let file = OpenOptions::new().append(true).open(log_path)?;
+        if let Some(parent) = log_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let file = OpenOptions::new().create(true).append(true).open(log_path)?;
         let file = Mutex::new(BufWriter::new(file));
 
         let is_tty = io::stderr().is_terminal();
