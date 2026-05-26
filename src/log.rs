@@ -13,7 +13,10 @@ use std::{
         Path,
         PathBuf,
     },
-    sync::Mutex,
+    sync::{
+        Arc,
+        Mutex,
+    },
     time::{
         Duration,
         Instant,
@@ -55,29 +58,30 @@ pub struct DeployLog {
     dispatch: Dispatch,
     started: Instant,
     spinner: Spinner,
-    log_path: PathBuf,
+    path: PathBuf,
     /// `"{unit} v{version}"`, for the trailing summary line.
     label: String,
+    /// Name of the current phase to print before next phase start.
+    phase: Arc<Mutex<Option<String>>>,
 }
 
 impl DeployLog {
-    pub fn open(log_path: &Path, unit: &str, version: u32) -> io::Result<Self> {
-        if let Some(parent) = log_path.parent() {
+    pub fn open(path: &Path, unit: &str, version: u32) -> io::Result<Self> {
+        if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(log_path)?;
+        let file = OpenOptions::new().create(true).append(true).open(path)?;
 
         let label = format!("{unit} v{version}");
         let spinner = Spinner::new(format!("{label}: starting"));
 
         let started = Instant::now();
+        let phase = Arc::new(Mutex::new(None));
         let layer = DeployLayer {
             file: Mutex::new(BufWriter::new(file)),
             bar: spinner.bar().clone(),
             started,
+            phase: Arc::clone(&phase),
         };
         let dispatch = Dispatch::new(Registry::default().with(layer));
 
@@ -85,8 +89,9 @@ impl DeployLog {
             dispatch,
             started,
             spinner,
-            log_path: log_path.to_path_buf(),
+            path: path.to_path_buf(),
             label,
+            phase,
         };
         log.emit(|| tracing::debug!("deploy started: {unit} v{version}"));
 
@@ -113,6 +118,9 @@ impl DeployLog {
     /// Stop the spinner and print the success summary.
     pub fn finish_ok(&self) -> Duration {
         let elapsed = self.elapsed();
+        if let Some(prev) = self.phase.lock().expect("phase mutex poisoned").take() {
+            echo_phase_done(self.spinner.bar(), self.started, &prev);
+        }
         self.emit(|| tracing::debug!("finished in {}", fmt_elapsed(elapsed)));
         self.spinner.finish();
         eprintln!(
@@ -127,7 +135,12 @@ impl DeployLog {
     /// Stop the spinner and print the failure summary.
     pub fn finish_err(&self) -> Duration {
         let elapsed = self.elapsed();
-        let phase = self.spinner.bar().message();
+        let phase = self
+            .phase
+            .lock()
+            .expect("phase mutex poisoned")
+            .take()
+            .unwrap_or_else(|| self.spinner.bar().message());
         self.emit(|| tracing::debug!("failed after {}", fmt_elapsed(elapsed)));
         self.spinner.finish();
         eprintln!(
@@ -136,7 +149,7 @@ impl DeployLog {
             self.label,
             fmt_elapsed(elapsed),
         );
-        eprintln!("Details: {}", self.log_path.display());
+        eprintln!("Details: {}", self.path.display());
         elapsed
     }
 }
@@ -148,6 +161,8 @@ struct DeployLayer {
     file: Mutex<BufWriter<std::fs::File>>,
     bar: ProgressBar,
     started: Instant,
+    /// Current, not-yet-finished phase name. Shared with [`DeployLog`].
+    phase: Arc<Mutex<Option<String>>>,
 }
 
 impl DeployLayer {
@@ -172,9 +187,19 @@ impl<S: Subscriber> Layer<S> for DeployLayer {
         let (prefix, to_console) = match meta.target() {
             CHILD_TARGET => ("", false),
             PHASE_TARGET => {
-                // On a TTY the live spinner carries the phase.
+                // Leave a completed-phase line for the phase that just ended,
+                // then carry the new one on the live spinner. The build-log file
+                // still records each phase's start stamp below.
+                let prev = self
+                    .phase
+                    .lock()
+                    .expect("phase mutex poisoned")
+                    .replace(message.clone());
                 self.bar.set_message(message.clone());
-                ("", self.bar.is_hidden())
+                if let Some(prev) = prev {
+                    echo_phase_done(&self.bar, self.started, &prev);
+                }
+                ("", false)
             }
             _ => match *meta.level() {
                 Level::ERROR => ("ERROR: ", true),
@@ -235,6 +260,18 @@ impl Visit for MessageVisitor {
 fn hms(d: Duration) -> (u64, u64, u64) {
     let secs = d.as_secs();
     (secs / 3600, (secs % 3600) / 60, secs % 60)
+}
+
+/// Print a `✓ [mm:ss] <name>` line for a completed phase above the spinner,
+/// leaving it in the terminal while the spinner continues on its own line below.
+/// The stamp is cumulative elapsed since deploy start, matching [`fmt_stamp`].
+fn echo_phase_done(bar: &ProgressBar, started: Instant, name: &str) {
+    let line = format!(
+        "{} [{}] {name}",
+        console::style("✓").green(),
+        fmt_stamp(started.elapsed()),
+    );
+    crate::spinner::print_above(bar, line.as_bytes());
 }
 
 fn fmt_stamp(d: Duration) -> String {
