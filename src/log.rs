@@ -56,6 +56,8 @@ pub struct DeployLog {
     started: Instant,
     spinner: Spinner,
     log_path: PathBuf,
+    /// `"{unit} v{version}"`, for the trailing summary line.
+    label: String,
 }
 
 impl DeployLog {
@@ -68,7 +70,8 @@ impl DeployLog {
             .append(true)
             .open(log_path)?;
 
-        let spinner = Spinner::new(format!("{unit} v{version}: starting"));
+        let label = format!("{unit} v{version}");
+        let spinner = Spinner::new(format!("{label}: starting"));
 
         let started = Instant::now();
         let layer = DeployLayer {
@@ -83,6 +86,7 @@ impl DeployLog {
             started,
             spinner,
             log_path: log_path.to_path_buf(),
+            label,
         };
         log.emit(|| tracing::debug!("deploy started: {unit} v{version}"));
 
@@ -106,22 +110,36 @@ impl DeployLog {
         tracing::dispatcher::with_default(&self.dispatch, f);
     }
 
-    /// Stop the spinner, write the trailing "finished" line.
+    /// Stop the spinner and print the success summary on stderr (where the
+    /// spinner lived), with a colored ✔ when the terminal supports it.
     pub fn finish_ok(&self) -> Duration {
         let elapsed = self.elapsed();
         self.emit(|| tracing::debug!("finished in {}", fmt_elapsed(elapsed)));
         self.spinner.finish();
+        eprintln!(
+            "{} {} deployed in {}",
+            console::style("✔").green(),
+            self.label,
+            fmt_elapsed(elapsed),
+        );
         elapsed
     }
 
-    /// Stop the spinner, write the trailing "failed" line, and point the user at
-    /// the build log on the console (the error chain itself is reported by the
-    /// caller via anyhow).
+    /// Stop the spinner and print the failure summary: the phase that was
+    /// running when it failed, plus the build log to read for the cause. The
+    /// detailed error chain stays in that log, not on the console.
     pub fn finish_err(&self) -> Duration {
         let elapsed = self.elapsed();
+        let phase = self.spinner.bar().message();
         self.emit(|| tracing::debug!("failed after {}", fmt_elapsed(elapsed)));
         self.spinner.finish();
-        eprintln!("Details: {}", self.log_path.display());
+        eprintln!(
+            "{} {} failed at '{phase}' after {} — {}",
+            console::style("✗").red(),
+            self.label,
+            fmt_elapsed(elapsed),
+            self.log_path.display(),
+        );
         elapsed
     }
 }

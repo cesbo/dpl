@@ -25,4 +25,10 @@ pub enum DeployError {
         #[source]
         source: io::Error,
     },
+
+    /// A deploy failed after its build log was opened: the cause is in that log
+    /// and `DeployLog::finish_err` already printed a one-line summary. Carries
+    /// no detail so the top level can exit non-zero without repeating anything.
+    #[error("deploy failed")]
+    Reported,
 }

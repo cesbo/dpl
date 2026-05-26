@@ -115,10 +115,17 @@ impl<'a> AppUnit<'a> {
         };
 
         // Route the `tracing` macros below (and on the podman worker threads)
-        // to this deploy's subscriber for the rest of the function.
+        // to this deploy's subscriber for the rest of the function. From here on
+        // failures are rendered by `finish_err` and reported via the build log,
+        // so they collapse to `DeployError::Reported` instead of bubbling up.
         let _default = log.set_default();
 
-        match self.deploy_worker(version, archive, &mut state) {
+        let temp_dir = match self.prepare(version, archive) {
+            Ok(temp_dir) => temp_dir,
+            Err(err) => return Err(self.fail(&log, &mut state, err)),
+        };
+
+        match self.deploy_worker(version, temp_dir.path(), &mut state) {
             Ok(()) => {
                 state.set_ready();
 
@@ -127,25 +134,25 @@ impl<'a> AppUnit<'a> {
 
                 Ok(())
             }
-            Err(err) => {
-                state.set_error();
-
-                log.finish_err();
-
-                Err(err)
-            }
+            Err(err) => Err(self.fail(&log, &mut state, err)),
         }
     }
 
-    fn deploy_worker<R: Read>(
+    /// Mark the deploy failed: record the cause in the build log (file only),
+    /// print the one-line summary, and collapse to [`DeployError::Reported`].
+    fn fail(&self, log: &DeployLog, state: &mut DeployState, err: DeployError) -> DeployError {
+        state.set_error();
+        debug!("deploy failed: {:#}", anyhow::Error::new(err));
+        log.finish_err();
+        DeployError::Reported
+    }
+
+    fn deploy_worker(
         &self,
         version: u32,
-        archive: R,
+        deploy_dir: &Path,
         state: &mut DeployState,
     ) -> Result<(), DeployError> {
-        let temp_dir = self.prepare(version, archive)?;
-        let deploy_dir = temp_dir.path();
-
         self.build_inner(deploy_dir, version)?;
 
         if let Some(active_version) = state.take_active_version() {

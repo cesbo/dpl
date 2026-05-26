@@ -18,6 +18,7 @@ use crate::{
     MainContext,
     config::ResourceName,
     deploy::{
+        DeployError,
         DeployState,
         UnitConfig,
         UnitReport,
@@ -71,7 +72,7 @@ fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Result
 
     let app = AppUnit::new(ctx, name, app_config);
 
-    match path {
+    let result = match path {
         Some(path) => {
             let file = fs::File::open(path).context("open archive")?;
             app.deploy(state, file)
@@ -80,10 +81,15 @@ fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Result
             let stdin = io::stdin().lock();
             app.deploy(state, stdin)
         }
-    }
-    .with_context(|| format!("deploy unit '{name}'"))?;
+    };
 
-    Ok(())
+    match result {
+        Ok(()) => Ok(()),
+        // The deploy already printed its own summary and logged the cause; let
+        // it set the exit code without a redundant context chain on top.
+        Err(err @ DeployError::Reported) => Err(err.into()),
+        Err(err) => Err(anyhow::Error::new(err).context(format!("deploy unit '{name}'"))),
+    }
 }
 
 pub fn inspect(ctx: &MainContext, name: &str) -> Result<()> {

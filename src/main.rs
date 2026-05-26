@@ -10,7 +10,10 @@ mod secret;
 mod spinner;
 mod systemd;
 
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    process::ExitCode,
+};
 
 use anyhow::{
     Context,
@@ -22,6 +25,7 @@ use clap::{
 };
 
 pub use self::context::MainContext;
+use crate::deploy::DeployError;
 
 #[derive(Parser)]
 #[command(version)]
@@ -53,9 +57,23 @@ enum Command {
     Unit(cmd::unit::Args),
 }
 
-fn main() -> Result<()> {
+fn main() -> ExitCode {
     log::init();
 
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        // A reported deploy failure already showed its summary on the console;
+        // everything else gets the full anyhow report here.
+        Err(err) => {
+            if !matches!(err.downcast_ref::<DeployError>(), Some(DeployError::Reported)) {
+                eprintln!("Error: {err:?}");
+            }
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
 
     let ctx = MainContext::load(&cli.base).context("load main context")?;
