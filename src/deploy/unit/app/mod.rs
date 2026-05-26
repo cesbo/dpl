@@ -220,7 +220,7 @@ impl<'a> AppUnit<'a> {
         PodmanContext::new(self.name.as_str(), version)
             .build(deploy_dir)
             .map_err(|source| DeployError::UnitError {
-                info: "failed to build image".to_string(),
+                info: "build image".to_string(),
                 source,
             })?;
 
