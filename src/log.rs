@@ -157,8 +157,9 @@ impl<S: Subscriber> Layer<S> for DeployLayer {
         let (prefix, to_console) = match meta.target() {
             CHILD_TARGET => ("", false),
             PHASE_TARGET => {
+                // On a TTY the live spinner carries the phase.
                 self.bar.set_message(message.clone());
-                ("", true)
+                ("", self.bar.is_hidden())
             }
             _ => match *meta.level() {
                 Level::ERROR => ("ERROR: ", true),
@@ -270,13 +271,9 @@ mod tests {
 
         // Every event lands in the file (the leading `[mm:ss]` stamp varies).
         assert!(lines.iter().any(|l| l.ends_with("deploy started: web v3")));
-        assert!(lines.iter().any(|l| l.ends_with("phase: building image")));
+        assert!(lines.iter().any(|l| l.ends_with("building image")));
         assert!(lines.iter().any(|l| l.ends_with("running: podman build")));
-        assert!(
-            lines
-                .iter()
-                .any(|l| l.ends_with("podman: STEP 1/4: FROM alpine"))
-        );
+        assert!(lines.iter().any(|l| l.ends_with("STEP 1/4: FROM alpine")));
         assert!(lines.iter().any(|l| l.ends_with("WARN: export skipped")));
         assert!(
             lines
