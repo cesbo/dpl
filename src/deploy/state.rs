@@ -209,7 +209,7 @@ impl Drop for DeployStateGuard {
         if let Err(err) = std::fs::remove_file(&self.path)
             && err.kind() != io::ErrorKind::NotFound
         {
-            eprintln!("remove deploy lock file {}: {err}", self.path.display());
+            tracing::warn!("remove deploy lock file {}: {err}", self.path.display());
         }
     }
 }

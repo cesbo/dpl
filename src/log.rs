@@ -45,16 +45,18 @@ use tracing_subscriber::{
 };
 
 /// Captured child-process (podman) output: written to the build-log file only,
-/// never echoed to the console.
-const CHILD_TARGET: &str = "dpl::child";
+/// never echoed to the console. Emit with `tracing::debug!(target: CHILD_TARGET, …)`.
+pub(crate) const CHILD_TARGET: &str = "dpl::child";
 /// Phase transitions: echoed to the console and used to drive the spinner
-/// message.
-const PHASE_TARGET: &str = "dpl::phase";
+/// message. Emit with `tracing::info!(target: PHASE_TARGET, …)`.
+pub(crate) const PHASE_TARGET: &str = "dpl::phase";
 
-/// Façade over a per-deploy `tracing` subscriber. Each method emits an event
-/// routed to the subscriber owned by this log, regardless of the calling thread
-/// (podman output is logged from worker threads). The actual file/console
-/// writing lives in [`DeployLayer`].
+/// Owns a per-deploy `tracing` subscriber and the deploy spinner. Install it as
+/// the thread-default dispatcher for the duration of a deploy with
+/// [`set_default`](Self::set_default); all logging then flows through the
+/// `tracing` macros (phases via `target: PHASE_TARGET`, child output via
+/// `target: CHILD_TARGET`). The actual file/console writing lives in
+/// [`DeployLayer`].
 #[derive(Clone)]
 pub struct DeployLog {
     inner: Arc<Inner>,
@@ -103,7 +105,7 @@ impl DeployLog {
                 bar,
             }),
         };
-        log.detail(&format!("deploy started: {unit} v{version}"));
+        log.emit(|| tracing::debug!("deploy started: {unit} v{version}"));
         Ok(log)
     }
 
@@ -111,42 +113,25 @@ impl DeployLog {
         self.inner.started.elapsed()
     }
 
-    /// Route `f` to this deploy's subscriber. Used so the `tracing` macros below
-    /// reach the right subscriber even when called from a podman worker thread.
+    /// Install this deploy's subscriber as the current thread's default
+    /// dispatcher. The returned guard restores the previous default on drop;
+    /// hold it for the lifetime of the deploy so the `tracing` macros route here.
+    #[must_use]
+    pub fn set_default(&self) -> tracing::dispatcher::DefaultGuard {
+        tracing::dispatcher::set_default(&self.inner.dispatch)
+    }
+
+    /// Route `f` to this deploy's subscriber regardless of the current thread
+    /// default. Used for the terminal lines below, which must always land in the
+    /// build log.
     fn emit(&self, f: impl FnOnce()) {
         tracing::dispatcher::with_default(&self.inner.dispatch, f);
-    }
-
-    /// Move to a new phase. Updates the spinner message and echoes the phase
-    /// line to the console and the log file.
-    pub fn phase(&self, phase: &str) {
-        self.emit(|| tracing::info!(target: PHASE_TARGET, "{phase}"));
-    }
-
-    /// Diagnostic line written to the log file only (e.g. command lines).
-    pub fn detail(&self, msg: &str) {
-        self.emit(|| tracing::debug!("{msg}"));
-    }
-
-    /// Captured podman stdout/stderr line. Log file only.
-    pub fn podman_line(&self, line: &str) {
-        self.emit(|| tracing::debug!(target: CHILD_TARGET, "{line}"));
-    }
-
-    /// Recoverable warning. Echoed to console and log file.
-    pub fn warn(&self, msg: &str) {
-        self.emit(|| tracing::warn!("{msg}"));
-    }
-
-    /// Error. Echoed to console and log file.
-    pub fn error(&self, msg: &str) {
-        self.emit(|| tracing::error!("{msg}"));
     }
 
     /// Stop the spinner, write the trailing "finished" line.
     pub fn finish_ok(&self) -> Duration {
         let elapsed = self.elapsed();
-        self.detail(&format!("finished in {}", fmt_elapsed(elapsed)));
+        self.emit(|| tracing::debug!("finished in {}", fmt_elapsed(elapsed)));
         self.inner.bar.finish_and_clear();
         elapsed
     }
@@ -154,7 +139,7 @@ impl DeployLog {
     /// Stop the spinner, write the trailing "failed" line.
     pub fn finish_err(&self) -> Duration {
         let elapsed = self.elapsed();
-        self.detail(&format!("failed after {}", fmt_elapsed(elapsed)));
+        self.emit(|| tracing::debug!("failed after {}", fmt_elapsed(elapsed)));
         self.inner.bar.finish_and_clear();
         elapsed
     }
@@ -214,6 +199,35 @@ impl<S: Subscriber> Layer<S> for DeployLayer {
     }
 }
 
+/// Process-wide fallback subscriber: prints `WARN`/`ERROR` events to stderr and
+/// ignores everything else. A running deploy installs its own [`DeployLog`] as
+/// the thread-default dispatcher ([`DeployLog::set_default`]), which overrides
+/// this layer on that thread, so this only surfaces diagnostics emitted outside
+/// a deploy scope (e.g. lock-file cleanup in `DeployStateGuard::drop`).
+///
+/// It deliberately does not override `max_level_hint`, leaving the global level
+/// filter permissive so a deploy's `debug!` events still reach its file layer.
+struct StderrLayer;
+
+impl<S: Subscriber> Layer<S> for StderrLayer {
+    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        let prefix = match *event.metadata().level() {
+            Level::ERROR => "error",
+            Level::WARN => "warning",
+            _ => return,
+        };
+        let mut visitor = MessageVisitor::default();
+        event.record(&mut visitor);
+        eprintln!("{prefix}: {}", visitor.message);
+    }
+}
+
+/// Install the process-wide fallback subscriber. Call once at startup; a second
+/// call is a no-op.
+pub fn init() {
+    let _ = tracing::subscriber::set_global_default(Registry::default().with(StderrLayer));
+}
+
 /// Captures an event's implicit `message` field (the format-string body).
 #[derive(Default)]
 struct MessageVisitor {
@@ -261,15 +275,23 @@ mod tests {
 
     #[test]
     fn events_are_written_to_the_log_file() {
+        // Install the global fallback subscriber too: a deploy's scoped
+        // subscriber must still receive `debug!` events, i.e. the global layer
+        // must not cap the level filter.
+        init();
+
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("log").join("build-3.log");
 
         let log = DeployLog::open(&path, "web", 3).unwrap();
-        log.phase("building image");
-        log.detail("running: podman build");
-        log.podman_line("STEP 1/4: FROM alpine");
-        log.warn("export skipped");
-        log.error("health check failed");
+        {
+            let _default = log.set_default();
+            tracing::info!(target: PHASE_TARGET, "building image");
+            tracing::debug!("running: podman build");
+            tracing::debug!(target: CHILD_TARGET, "STEP 1/4: FROM alpine");
+            tracing::warn!("export skipped");
+            tracing::error!("health check failed");
+        }
         log.finish_err();
 
         let body = std::fs::read_to_string(&path).unwrap();

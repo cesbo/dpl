@@ -20,6 +20,12 @@ use std::{
 use podman::PodmanContext;
 use systemd::SystemdContext;
 use tempfile::TempDir;
+use tracing::{
+    debug,
+    error,
+    info,
+    warn,
+};
 
 use self::artifacts::ArtifactsContext;
 pub use self::model::AppConfig;
@@ -39,7 +45,10 @@ use crate::{
         state::DeployState,
     },
     error::format_error_chain,
-    log::DeployLog,
+    log::{
+        DeployLog,
+        PHASE_TARGET,
+    },
 };
 
 #[derive(Debug)]
@@ -62,13 +71,8 @@ impl<'a> AppUnit<'a> {
         }
     }
 
-    fn prepare<R: Read>(
-        &self,
-        version: u32,
-        archive: R,
-        log: &DeployLog,
-    ) -> Result<TempDir, DeployError> {
-        log.phase("preparing");
+    fn prepare<R: Read>(&self, version: u32, archive: R) -> Result<TempDir, DeployError> {
+        info!(target: PHASE_TARGET, "preparing");
 
         let temp_dir =
             tempfile::tempdir_in(&self.unit_dir).map_err(|source| DeployError::UnitError {
@@ -111,11 +115,15 @@ impl<'a> AppUnit<'a> {
             }
         };
 
-        match self.deploy_worker(version, archive, &mut state, &log) {
+        // Route the `tracing` macros below (and on the podman worker threads)
+        // to this deploy's subscriber for the rest of the function.
+        let _default = log.set_default();
+
+        match self.deploy_worker(version, archive, &mut state) {
             Ok(()) => {
                 state.set_ready();
 
-                self.redeploy_dependent_domains(&log);
+                self.redeploy_dependent_domains();
                 log.finish_ok();
 
                 Ok(())
@@ -123,8 +131,7 @@ impl<'a> AppUnit<'a> {
             Err(err) => {
                 state.set_error();
 
-                let chain = format_error_chain(&err);
-                log.error(&chain);
+                error!("{}", format_error_chain(&err));
                 log.finish_err();
 
                 Err(err)
@@ -137,20 +144,19 @@ impl<'a> AppUnit<'a> {
         version: u32,
         archive: R,
         state: &mut DeployState,
-        log: &DeployLog,
     ) -> Result<(), DeployError> {
-        let temp_dir = self.prepare(version, archive, log)?;
+        let temp_dir = self.prepare(version, archive)?;
         let deploy_dir = temp_dir.path();
 
-        self.build_inner(deploy_dir, version, log)?;
+        self.build_inner(deploy_dir, version)?;
 
         if let Some(active_version) = state.take_active_version() {
-            log.phase(&format!("uninstalling v{active_version}"));
-            self.uninstall_inner(active_version, log);
+            info!(target: PHASE_TARGET, "uninstalling v{active_version}");
+            self.uninstall_inner(active_version);
         }
 
-        if let Err(err) = self.install_inner(deploy_dir, version, log) {
-            self.uninstall_inner(version, log);
+        if let Err(err) = self.install_inner(deploy_dir, version) {
+            self.uninstall_inner(version);
             return Err(err);
         }
 
@@ -170,49 +176,41 @@ impl<'a> AppUnit<'a> {
 
     /// Re-render and reload every domain that depends on this app.
     /// Should be called after state saved.
-    fn redeploy_dependent_domains(&self, log: &DeployLog) {
+    fn redeploy_dependent_domains(&self) {
         let domains = self.dependent_domains();
         if domains.is_empty() {
             return;
         }
 
-        log.phase("updating dependent domains");
+        info!(target: PHASE_TARGET, "updating dependent domains");
         for (name, config) in domains {
             let unit_dir = name.unit_dir(self.ctx);
             let (_guard, state) = match DeployState::acquire(&unit_dir) {
                 Ok(v) => v,
                 Err(err) => {
-                    log.error(&format!("skip domain '{name}': {err}"));
+                    error!("skip domain '{name}': {err}");
                     continue;
                 }
             };
 
             let domain = DomainUnit::new(self.ctx, name.as_str(), config);
             if let Err(err) = domain.deploy(state) {
-                log.error(&format!(
-                    "domain '{name}' redeploy failed: {}",
-                    format_error_chain(&err)
-                ));
+                error!("domain '{name}' redeploy failed: {}", format_error_chain(&err));
             }
         }
     }
 
-    fn build_inner(
-        &self,
-        deploy_dir: &Path,
-        version: u32,
-        log: &DeployLog,
-    ) -> Result<(), DeployError> {
-        log.phase("extracting archive");
+    fn build_inner(&self, deploy_dir: &Path, version: u32) -> Result<(), DeployError> {
+        info!(target: PHASE_TARGET, "extracting archive");
 
         let archive_path = deploy_dir.join("app.tar.gz");
         let app_dir = deploy_dir.join("app");
 
         crate::archive::extract(&archive_path, &app_dir)?;
 
-        log.phase("building image");
+        info!(target: PHASE_TARGET, "building image");
         PodmanContext::new(self.name.as_str(), version)
-            .build(deploy_dir, log)
+            .build(deploy_dir)
             .map_err(|source| DeployError::UnitError {
                 info: "failed to build image".to_string(),
                 source,
@@ -221,16 +219,11 @@ impl<'a> AppUnit<'a> {
         Ok(())
     }
 
-    fn install_inner(
-        &self,
-        deploy_dir: &Path,
-        version: u32,
-        log: &DeployLog,
-    ) -> Result<(), DeployError> {
+    fn install_inner(&self, deploy_dir: &Path, version: u32) -> Result<(), DeployError> {
         if !self.config.exports.is_empty() {
-            log.phase("exporting files");
+            info!(target: PHASE_TARGET, "exporting files");
             PodmanContext::new(self.name.as_str(), version)
-                .export(&self.config.exports, log)
+                .export(&self.config.exports)
                 .map_err(|source| DeployError::UnitError {
                     info: "export static files".to_string(),
                     source,
@@ -239,15 +232,15 @@ impl<'a> AppUnit<'a> {
 
         let systemd_ctx = SystemdContext::new(self.name.as_str());
 
-        log.phase("installing service");
+        info!(target: PHASE_TARGET, "installing service");
         systemd_ctx
-            .install_app(deploy_dir, log)
+            .install_app(deploy_dir)
             .map_err(|source| DeployError::UnitError {
                 info: "install app service".to_string(),
                 source,
             })?;
 
-        log.phase("health check");
+        info!(target: PHASE_TARGET, "health check");
         health::check(self.name.as_str(), self.config.port).map_err(|source| {
             DeployError::UnitError {
                 info: "health check".to_string(),
@@ -261,22 +254,22 @@ impl<'a> AppUnit<'a> {
                 source,
             })?;
 
-        log.phase("installing timers");
-        systemd_ctx.install_timers(deploy_dir, log);
+        info!(target: PHASE_TARGET, "installing timers");
+        systemd_ctx.install_timers(deploy_dir);
 
         Ok(())
     }
 
-    fn uninstall_inner(&self, version: u32, log: &DeployLog) {
+    fn uninstall_inner(&self, version: u32) {
         let systemd_ctx = SystemdContext::new(self.name.as_str());
-        systemd_ctx.uninstall_timers(log);
-        systemd_ctx.uninstall_app(log);
+        systemd_ctx.uninstall_timers();
+        systemd_ctx.uninstall_app();
 
         let podman_ctx = PodmanContext::new(self.name.as_str(), version);
-        podman_ctx.remove_exports(log);
-        podman_ctx.remove(log);
+        podman_ctx.remove_exports();
+        podman_ctx.remove();
 
-        self.remove_build_log(version, log);
+        self.remove_build_log(version);
     }
 
     fn build_log_path(&self, version: u32) -> PathBuf {
@@ -285,15 +278,12 @@ impl<'a> AppUnit<'a> {
             .join(format!("build-{version}.log"))
     }
 
-    fn remove_build_log(&self, version: u32, log: &DeployLog) {
+    fn remove_build_log(&self, version: u32) {
         let path = self.build_log_path(version);
         match fs::remove_file(&path) {
-            Ok(()) => log.detail(&format!("removed build log {}", path.display())),
+            Ok(()) => debug!("removed build log {}", path.display()),
             Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-            Err(err) => log.warn(&format!(
-                "failed to remove build log {}: {err}",
-                path.display()
-            )),
+            Err(err) => warn!("failed to remove build log {}: {err}", path.display()),
         }
     }
 }

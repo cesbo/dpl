@@ -16,7 +16,6 @@ use crate::{
         DeployError,
         state::DeployState,
     },
-    error::format_error_chain,
     podman::{
         NGINX_CONF_VOLUME,
         NGINX_WWW_VOLUME,
@@ -54,8 +53,6 @@ impl<'a> DomainUnit<'a> {
         let _ = state.take_active_version();
 
         if let Err(err) = self.install_inner() {
-            let chain = format_error_chain(&err);
-            eprintln!("install nginx failed for {}: {chain}", self.name);
             state.set_error();
             Err(err)
         } else {

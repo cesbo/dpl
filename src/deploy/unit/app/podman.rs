@@ -10,9 +10,14 @@ use std::{
     },
 };
 
+use tracing::{
+    debug,
+    warn,
+};
+
 use super::model::ExportConfig;
 use crate::{
-    log::DeployLog,
+    log::CHILD_TARGET,
     podman::{
         NGINX_WWW_VOLUME,
         ensure_volume,
@@ -38,7 +43,7 @@ impl<'a> PodmanContext<'a> {
     }
 
     /// Build podman image, streams output into the build log.
-    pub fn build(&self, deploy_dir: &Path, log: &DeployLog) -> io::Result<()> {
+    pub fn build(&self, deploy_dir: &Path) -> io::Result<()> {
         let artifacts_dir = deploy_dir.join("artifacts");
         let containerfile = artifacts_dir.join("containerfile");
 
@@ -77,20 +82,23 @@ impl<'a> PodmanContext<'a> {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        log.detail(&format!("running: podman build --tag {}", &self.image_tag));
+        debug!("running: podman build --tag {}", &self.image_tag);
 
         let mut child = cmd.spawn()?;
 
+        // Worker threads don't inherit the deploy's thread-default subscriber,
+        // so capture it here and re-establish it inside each thread.
+        let dispatch = tracing::dispatcher::get_default(|d| d.clone());
+
         let stdout = child.stdout.take().unwrap();
-        let stdout_log = log.clone();
+        let stdout_dispatch = dispatch.clone();
         let stdout_handle = std::thread::spawn(move || {
-            log_podman_output(stdout, &stdout_log);
+            tracing::dispatcher::with_default(&stdout_dispatch, || log_podman_output(stdout));
         });
 
         let stderr = child.stderr.take().unwrap();
-        let stderr_log = log.clone();
         let stderr_handle = std::thread::spawn(move || {
-            log_podman_output(stderr, &stderr_log);
+            tracing::dispatcher::with_default(&dispatch, || log_podman_output(stderr));
         });
 
         let _ = stdout_handle.join();
@@ -108,7 +116,7 @@ impl<'a> PodmanContext<'a> {
 
     /// Export files from the podman image into the static volume under
     /// `<name>_<version>/<path>/` at the volume root.
-    pub fn export(&self, exports: &[ExportConfig], log: &DeployLog) -> io::Result<()> {
+    pub fn export(&self, exports: &[ExportConfig]) -> io::Result<()> {
         if exports.is_empty() {
             return Ok(());
         }
@@ -140,10 +148,10 @@ impl<'a> PodmanContext<'a> {
 
             match run_podman(&["cp", "-a", "--overwrite", &src, &dst.to_string_lossy()]) {
                 Ok(_) => {
-                    log.detail(&format!("export {src} -> {} completed", dst.display()));
+                    debug!("export {src} -> {} completed", dst.display());
                 }
                 Err(err) => {
-                    log.warn(&format!("export {src} failed: {err}"));
+                    warn!("export {src} failed: {err}");
                 }
             }
         }
@@ -154,35 +162,35 @@ impl<'a> PodmanContext<'a> {
         Ok(())
     }
 
-    pub fn remove(&self, log: &DeployLog) {
+    pub fn remove(&self) {
         let _ = run_podman(&["rmi", &self.image_tag]);
 
         // Remove dangling images from local storage
         let _ = run_podman(&["image", "prune", "-f"]);
         let _ = run_podman(&["image", "prune", "-f", "--external"]);
 
-        log.detail("removed app image");
+        debug!("removed app image");
     }
 
     /// Remove this version's exported files from the static volume.
-    pub fn remove_exports(&self, log: &DeployLog) {
+    pub fn remove_exports(&self) {
         // If the volume does not exist there is nothing to clean up.
         let Ok(exports_root) = volume_mountpoint(NGINX_WWW_VOLUME) else {
             return;
         };
 
         match remove_export_dir(&exports_root, self.name, self.version) {
-            Ok(true) => log.detail(&format!("removed exports {}_{}", self.name, self.version)),
+            Ok(true) => debug!("removed exports {}_{}", self.name, self.version),
             Ok(false) => {}
-            Err(err) => log.warn(&format!(
+            Err(err) => warn!(
                 "remove exports {}_{} failed: {err}",
                 self.name, self.version
-            )),
+            ),
         }
     }
 }
 
-fn log_podman_output<R>(reader: R, log: &DeployLog)
+fn log_podman_output<R>(reader: R)
 where
     R: io::Read,
 {
@@ -192,7 +200,7 @@ where
         let Ok(line) = line else {
             break;
         };
-        log.podman_line(&line);
+        debug!(target: CHILD_TARGET, "{line}");
     }
 }
 

@@ -54,6 +54,8 @@ enum Command {
 }
 
 fn main() -> Result<()> {
+    log::init();
+
     let cli = Cli::parse();
 
     let ctx = MainContext::load(&cli.base).context("load main context")?;
