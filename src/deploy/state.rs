@@ -8,7 +8,10 @@ use std::{
         self,
         Write,
     },
-    path::Path,
+    path::{
+        Path,
+        PathBuf,
+    },
 };
 
 use fs4::fs_std::FileExt;
@@ -141,9 +144,14 @@ impl DeployState {
 }
 
 /// Holds an OS-level exclusive `flock` on `{unit_dir}/.deploy.lock` for the
-/// lifetime of the value. The kernel releases the lock when the file
-/// descriptor is closed, including on process crash.
-pub struct DeployStateGuard(File);
+/// lifetime of the value; the kernel releases it when the fd closes, including
+/// on crash. The lock file is unlinked on drop (carrying the usual flock-unlink
+/// race, acceptable since `dpl` deploys are serialized on a single host).
+pub struct DeployStateGuard {
+    // Held for the flock; the lock is released when this is dropped.
+    file: File,
+    path: PathBuf,
+}
 
 impl DeployStateGuard {
     fn lock(unit_dir: &Path) -> Result<Self, DeployStateError> {
@@ -156,9 +164,19 @@ impl DeployStateGuard {
             .map_err(DeployStateError::Lock)?;
 
         match file.try_lock_exclusive() {
-            Ok(true) => Ok(DeployStateGuard(file)),
+            Ok(true) => Ok(DeployStateGuard { file, path }),
             Ok(false) => Err(DeployStateError::Busy),
             Err(err) => Err(DeployStateError::Lock(err)),
+        }
+    }
+}
+
+impl Drop for DeployStateGuard {
+    fn drop(&mut self) {
+        if let Err(err) = std::fs::remove_file(&self.path)
+            && err.kind() != io::ErrorKind::NotFound
+        {
+            eprintln!("remove deploy lock file {}: {err}", self.path.display());
         }
     }
 }
