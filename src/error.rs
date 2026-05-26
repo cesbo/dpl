@@ -7,17 +7,6 @@ use crate::{
     secret::SecretError,
 };
 
-pub fn format_error_chain(e: &(dyn std::error::Error + 'static)) -> String {
-    let mut out = e.to_string();
-    let mut src = e.source();
-    while let Some(s) = src {
-        out.push_str(": ");
-        out.push_str(&s.to_string());
-        src = s.source();
-    }
-    out
-}
-
 /// A reference-resolution failure: a single [`RefErrorKind`] plus the trail of
 /// [`Location`] breadcrumbs that led to it.
 #[derive(Debug)]

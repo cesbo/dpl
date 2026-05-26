@@ -44,7 +44,6 @@ use crate::{
         DeployError,
         state::DeployState,
     },
-    error::format_error_chain,
     log::{
         DeployLog,
         PHASE_TARGET,
@@ -131,7 +130,6 @@ impl<'a> AppUnit<'a> {
             Err(err) => {
                 state.set_error();
 
-                error!("{}", format_error_chain(&err));
                 log.finish_err();
 
                 Err(err)
@@ -195,7 +193,10 @@ impl<'a> AppUnit<'a> {
 
             let domain = DomainUnit::new(self.ctx, name.as_str(), config);
             if let Err(err) = domain.deploy(state) {
-                error!("domain '{name}' redeploy failed: {}", format_error_chain(&err));
+                error!(
+                    "domain '{name}' redeploy failed: {:#}",
+                    anyhow::Error::new(err)
+                );
             }
         }
     }

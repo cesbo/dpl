@@ -10,7 +10,10 @@ use std::{
         IsTerminal,
         Write,
     },
-    path::Path,
+    path::{
+        Path,
+        PathBuf,
+    },
     sync::{
         Arc,
         Mutex,
@@ -62,6 +65,7 @@ struct Inner {
     dispatch: Dispatch,
     started: Instant,
     bar: ProgressBar,
+    log_path: PathBuf,
 }
 
 impl DeployLog {
@@ -69,7 +73,10 @@ impl DeployLog {
         if let Some(parent) = log_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let file = OpenOptions::new().create(true).append(true).open(log_path)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_path)?;
 
         let is_tty = io::stderr().is_terminal();
         let target = if is_tty {
@@ -99,6 +106,7 @@ impl DeployLog {
                 dispatch,
                 started,
                 bar,
+                log_path: log_path.to_path_buf(),
             }),
         };
         log.emit(|| tracing::debug!("deploy started: {unit} v{version}"));
@@ -130,11 +138,14 @@ impl DeployLog {
         elapsed
     }
 
-    /// Stop the spinner, write the trailing "failed" line.
+    /// Stop the spinner, write the trailing "failed" line, and point the user at
+    /// the build log on the console (the error chain itself is reported by the
+    /// caller via anyhow).
     pub fn finish_err(&self) -> Duration {
         let elapsed = self.elapsed();
         self.emit(|| tracing::debug!("failed after {}", fmt_elapsed(elapsed)));
         self.inner.bar.finish_and_clear();
+        eprintln!("Details: {}", self.inner.log_path.display());
         elapsed
     }
 }
@@ -290,9 +301,17 @@ mod tests {
         assert!(lines.iter().any(|l| l.ends_with("deploy started: web v3")));
         assert!(lines.iter().any(|l| l.ends_with("phase: building image")));
         assert!(lines.iter().any(|l| l.ends_with("running: podman build")));
-        assert!(lines.iter().any(|l| l.ends_with("podman: STEP 1/4: FROM alpine")));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.ends_with("podman: STEP 1/4: FROM alpine"))
+        );
         assert!(lines.iter().any(|l| l.ends_with("WARN: export skipped")));
-        assert!(lines.iter().any(|l| l.ends_with("ERROR: health check failed")));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.ends_with("ERROR: health check failed"))
+        );
         assert!(lines.iter().any(|l| l.contains("failed after")));
     }
 
