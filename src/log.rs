@@ -13,10 +13,7 @@ use std::{
         Path,
         PathBuf,
     },
-    sync::{
-        Arc,
-        Mutex,
-    },
+    sync::Mutex,
     time::{
         Duration,
         Instant,
@@ -45,21 +42,16 @@ use tracing_subscriber::{
 
 use crate::spinner::Spinner;
 
-/// Child-process (podman) output: file only. `debug!(target: CHILD_TARGET, …)`.
+/// Child-process (podman) output: file only `debug!(target: CHILD_TARGET, …)`.
 pub const CHILD_TARGET: &str = "dpl::child";
-/// Phase transitions: echoed to console, drive the spinner message.
-/// `info!(target: PHASE_TARGET, …)`.
+
+/// Phase transitions: console with spinner `info!(target: PHASE_TARGET, …)`.
 pub const PHASE_TARGET: &str = "dpl::phase";
 
 /// Owns a per-deploy `tracing` subscriber and the deploy spinner. Install it as
 /// the thread-default dispatcher via [`set_default`](Self::set_default); logging
 /// then flows through the `tracing` macros. Writing happens in [`DeployLayer`].
-#[derive(Clone)]
 pub struct DeployLog {
-    inner: Arc<Inner>,
-}
-
-struct Inner {
     dispatch: Dispatch,
     started: Instant,
     spinner: Spinner,
@@ -83,44 +75,42 @@ impl DeployLog {
             file: Mutex::new(BufWriter::new(file)),
             bar: spinner.bar().clone(),
             started,
-            is_tty: spinner.is_tty(),
         };
         let dispatch = Dispatch::new(Registry::default().with(layer));
 
         let log = Self {
-            inner: Arc::new(Inner {
-                dispatch,
-                started,
-                spinner,
-                log_path: log_path.to_path_buf(),
-            }),
+            dispatch,
+            started,
+            spinner,
+            log_path: log_path.to_path_buf(),
         };
         log.emit(|| tracing::debug!("deploy started: {unit} v{version}"));
+
         Ok(log)
     }
 
     pub fn elapsed(&self) -> Duration {
-        self.inner.started.elapsed()
+        self.started.elapsed()
     }
 
     /// Make this deploy's subscriber the thread default. Hold the returned guard
     /// for the deploy's lifetime so the `tracing` macros route here.
     #[must_use]
     pub fn set_default(&self) -> tracing::dispatcher::DefaultGuard {
-        tracing::dispatcher::set_default(&self.inner.dispatch)
+        tracing::dispatcher::set_default(&self.dispatch)
     }
 
     /// Route `f` here regardless of the thread default, for the terminal lines
     /// below which must always reach the build log.
     fn emit(&self, f: impl FnOnce()) {
-        tracing::dispatcher::with_default(&self.inner.dispatch, f);
+        tracing::dispatcher::with_default(&self.dispatch, f);
     }
 
     /// Stop the spinner, write the trailing "finished" line.
     pub fn finish_ok(&self) -> Duration {
         let elapsed = self.elapsed();
         self.emit(|| tracing::debug!("finished in {}", fmt_elapsed(elapsed)));
-        self.inner.spinner.finish();
+        self.spinner.finish();
         elapsed
     }
 
@@ -130,8 +120,8 @@ impl DeployLog {
     pub fn finish_err(&self) -> Duration {
         let elapsed = self.elapsed();
         self.emit(|| tracing::debug!("failed after {}", fmt_elapsed(elapsed)));
-        self.inner.spinner.finish();
-        eprintln!("Details: {}", self.inner.log_path.display());
+        self.spinner.finish();
+        eprintln!("Details: {}", self.log_path.display());
         elapsed
     }
 }
@@ -143,7 +133,6 @@ struct DeployLayer {
     file: Mutex<BufWriter<std::fs::File>>,
     bar: ProgressBar,
     started: Instant,
-    is_tty: bool,
 }
 
 impl DeployLayer {
@@ -154,11 +143,7 @@ impl DeployLayer {
     }
 
     fn echo(&self, line: &str) {
-        if self.is_tty {
-            self.bar.println(line);
-        } else {
-            eprintln!("{line}");
-        }
+        crate::spinner::print_above(&self.bar, line.as_bytes());
     }
 }
 
@@ -170,10 +155,10 @@ impl<S: Subscriber> Layer<S> for DeployLayer {
 
         let meta = event.metadata();
         let (prefix, to_console) = match meta.target() {
-            CHILD_TARGET => ("podman: ", false),
+            CHILD_TARGET => ("", false),
             PHASE_TARGET => {
                 self.bar.set_message(message.clone());
-                ("phase: ", true)
+                ("", true)
             }
             _ => match *meta.level() {
                 Level::ERROR => ("ERROR: ", true),
@@ -230,11 +215,14 @@ impl Visit for MessageVisitor {
     }
 }
 
-fn fmt_stamp(d: Duration) -> String {
+/// Split a duration into whole `(hours, minutes, seconds)`.
+fn hms(d: Duration) -> (u64, u64, u64) {
     let secs = d.as_secs();
-    let h = secs / 3600;
-    let m = (secs % 3600) / 60;
-    let s = secs % 60;
+    (secs / 3600, (secs % 3600) / 60, secs % 60)
+}
+
+fn fmt_stamp(d: Duration) -> String {
+    let (h, m, s) = hms(d);
     if h > 0 {
         format!("{h:02}:{m:02}:{s:02}")
     } else {
@@ -243,10 +231,7 @@ fn fmt_stamp(d: Duration) -> String {
 }
 
 pub fn fmt_elapsed(d: Duration) -> String {
-    let secs = d.as_secs();
-    let h = secs / 3600;
-    let m = (secs % 3600) / 60;
-    let s = secs % 60;
+    let (h, m, s) = hms(d);
     if h > 0 {
         format!("{h}h{m:02}m{s:02}s")
     } else if m > 0 {

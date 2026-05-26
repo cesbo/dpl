@@ -32,7 +32,6 @@ pub fn spinner_style() -> ProgressStyle {
 /// [`DeployLog`]: crate::log::DeployLog
 pub struct Spinner {
     bar: ProgressBar,
-    is_tty: bool,
 }
 
 impl Spinner {
@@ -53,17 +52,13 @@ impl Spinner {
             bar.enable_steady_tick(Duration::from_millis(100));
         }
 
-        Self { bar, is_tty }
+        Self { bar }
     }
 
     /// The underlying bar, e.g. to wire [`stderr_sink`] for streaming child
     /// output above the spinner.
     pub fn bar(&self) -> &ProgressBar {
         &self.bar
-    }
-
-    pub fn is_tty(&self) -> bool {
-        self.is_tty
     }
 
     pub fn finish(&self) {
@@ -82,15 +77,18 @@ impl Spinner {
     }
 }
 
+/// Print `line` above the spinner, then redraw it.
+pub fn print_above(bar: &ProgressBar, line: &[u8]) {
+    bar.suspend(|| {
+        let mut err = io::stderr().lock();
+        let _ = err.write_all(line);
+        let _ = err.write_all(b"\n");
+    });
+}
+
 /// A stderr sink that prints each line above the spinner.
 pub fn stderr_sink(bar: &ProgressBar) -> impl FnMut(&[u8]) + Send + '_ {
-    move |line: &[u8]| {
-        bar.suspend(|| {
-            let mut err = io::stderr().lock();
-            let _ = err.write_all(line);
-            let _ = err.write_all(b"\n");
-        });
-    }
+    move |line: &[u8]| print_above(bar, line)
 }
 
 #[cfg(test)]
