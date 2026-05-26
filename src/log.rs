@@ -113,9 +113,9 @@ impl DeployLog {
     }
 
     /// Stop the spinner, write the trailing "failed" line.
-    pub fn finish_err(&self, err: &str) -> Duration {
+    pub fn finish_err(&self) -> Duration {
         let elapsed = self.elapsed();
-        self.write_log(&format!("failed after {}: {err}", fmt_elapsed(elapsed)));
+        self.write_log(&format!("failed after {}", fmt_elapsed(elapsed)));
         self.inner.bar.finish_and_clear();
         elapsed
     }

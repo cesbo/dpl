@@ -61,11 +61,15 @@ pub struct BuildResult {
     pub status: DeployStatus,
 }
 
-#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DeployState {
+    #[serde(skip)]
+    path: PathBuf,
+
     /// Currently running version
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_version: Option<u32>,
+
     /// Version for last attempt
     pub latest_build: BuildResult,
 }
@@ -88,37 +92,60 @@ impl DeployState {
         let content = match read_to_string(&path) {
             Ok(content) => content,
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                return Ok(DeployState::default());
+                return Ok(DeployState {
+                    path,
+                    active_version: None,
+                    latest_build: BuildResult::default(),
+                });
             }
             Err(err) => return Err(DeployStateError::Read(err)),
         };
 
-        serde_json::from_str(&content)
-            .map_err(|err| DeployStateError::Read(io::Error::new(io::ErrorKind::InvalidData, err)))
+        let mut state: DeployState = serde_json::from_str(&content).map_err(|err| {
+            DeployStateError::Read(io::Error::new(io::ErrorKind::InvalidData, err))
+        })?;
+
+        state.path = path;
+
+        Ok(state)
     }
 
-    pub fn save(&self, unit_dir: &Path) -> Result<(), DeployStateError> {
-        let path = unit_dir.join(STATE_FILE_NAME);
+    fn save(&self) -> Result<(), DeployStateError> {
         let content = serde_json::to_string_pretty(self).map_err(|err| {
             DeployStateError::Write(io::Error::new(io::ErrorKind::InvalidData, err))
         })?;
 
-        let mut tmp = tempfile::NamedTempFile::new_in(unit_dir).map_err(DeployStateError::Write)?;
+        let mut tmp = match self.path.parent() {
+            Some(parent) => tempfile::NamedTempFile::new_in(parent),
+            None => tempfile::NamedTempFile::new(),
+        }
+        .map_err(DeployStateError::Write)?;
+
         tmp.write_all(content.as_bytes())
             .map_err(DeployStateError::Write)?;
         tmp.as_file_mut()
             .sync_all()
             .map_err(DeployStateError::Write)?;
-        tmp.persist(&path)
+        tmp.persist(&self.path)
             .map_err(|err| DeployStateError::Write(err.error))?;
         Ok(())
     }
 
+    /// Returns currently running version
     pub fn get_active_version(unit_dir: &Path) -> Result<u32, DeployStateError> {
         let state = Self::load(unit_dir)?;
         state
             .active_version
             .ok_or(DeployStateError::NoActiveVersion)
+    }
+
+    /// Returns currently running version before uninstall
+    pub fn take_active_version(&mut self) -> Option<u32> {
+        let result = self.active_version.take();
+        if result.is_some() {
+            let _ = self.save();
+        }
+        result
     }
 
     /// Checked version addition.
@@ -131,15 +158,21 @@ impl DeployState {
             .ok_or(DeployStateError::VersionOverflow)?;
         self.latest_build.version = next;
         self.latest_build.status = DeployStatus::Building;
+        self.save()?;
+
         Ok(next)
     }
 
     pub fn set_error(&mut self) {
         self.latest_build.status = DeployStatus::Failed;
+        let _ = self.save();
     }
 
+    /// Sets build status to ready, sets build version as active version
     pub fn set_ready(&mut self) {
         self.latest_build.status = DeployStatus::Ready;
+        self.active_version = Some(self.latest_build.version);
+        let _ = self.save();
     }
 }
 

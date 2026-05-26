@@ -23,7 +23,6 @@ use crate::{
         UnitReport,
         unit::app::AppUnit,
     },
-    log::fmt_elapsed,
 };
 
 #[derive(clap::Args)]
@@ -72,7 +71,7 @@ fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Result
 
     let app = AppUnit::new(ctx, name, app_config);
 
-    let (final_state, log) = match path {
+    match path {
         Some(path) => {
             let file = fs::File::open(path).context("open archive")?;
             app.deploy(state, file)
@@ -84,14 +83,6 @@ fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Result
     }
     .with_context(|| format!("deploy unit '{name}'"))?;
 
-    let elapsed = fmt_elapsed(log.elapsed());
-    let version = final_state.latest_build.version;
-
-    if final_state.active_version.is_none() {
-        bail!("deploy failed (version {version}) after {elapsed}");
-    }
-
-    println!("deploy ok (version {version}) in {elapsed}");
     Ok(())
 }
 

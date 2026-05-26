@@ -100,15 +100,9 @@ impl<'a> AppUnit<'a> {
     }
 
     /// Run the full deploy synchronously: bump version, extract archive,
-    /// render artifacts, build image, install service. The caller holds the
-    /// busy lock and provides freshly loaded state.
-    pub fn deploy<R: Read>(
-        self,
-        mut state: DeployState,
-        archive: R,
-    ) -> Result<(DeployState, DeployLog), DeployError> {
+    /// render artifacts, build image, install service.
+    pub fn deploy<R: Read>(self, mut state: DeployState, archive: R) -> Result<(), DeployError> {
         let version = state.bump_version()?;
-        state.save(&self.unit_dir)?;
 
         let temp_dir = match self.prepare(version, archive) {
             Ok(dir) => dir,
@@ -116,7 +110,6 @@ impl<'a> AppUnit<'a> {
                 let chain = format_error_chain(&err);
                 eprintln!("prepare failed: {chain}");
                 state.set_error();
-                let _ = state.save(&self.unit_dir);
                 return Err(err);
             }
         };
@@ -127,7 +120,6 @@ impl<'a> AppUnit<'a> {
             Ok(log) => log,
             Err(source) => {
                 state.set_error();
-                let _ = state.save(&self.unit_dir);
                 return Err(DeployError::UnitError {
                     info: "open deploy log".to_string(),
                     source,
@@ -135,45 +127,47 @@ impl<'a> AppUnit<'a> {
             }
         };
 
-        self.deploy_worker(temp_dir.path(), &mut state, &log);
-        Ok((state, log))
+        match self.deploy_worker(temp_dir.path(), version, &mut state, &log) {
+            Ok(()) => {
+                state.set_ready();
+
+                self.redeploy_dependent_domains(&log);
+                log.finish_ok();
+
+                Ok(())
+            }
+            Err(err) => {
+                state.set_error();
+
+                let chain = format_error_chain(&err);
+                log.error(&chain);
+                log.finish_err();
+
+                Err(err)
+            }
+        }
     }
 
-    fn deploy_worker(&self, deploy_dir: &Path, state: &mut DeployState, log: &DeployLog) {
-        let version = state.latest_build.version;
+    fn deploy_worker(
+        &self,
+        deploy_dir: &Path,
+        version: u32,
+        state: &mut DeployState,
+        log: &DeployLog,
+    ) -> Result<(), DeployError> {
+        self.build_inner(deploy_dir, version, log)?;
 
-        if let Err(err) = self.build_inner(deploy_dir, version, log) {
-            let chain = format_error_chain(&err);
-            log.error(&format!("failed to build app image: {chain}"));
-            state.set_error();
-            let _ = state.save(&self.unit_dir);
-            log.finish_err(&chain);
-            return;
-        }
-
-        if let Some(active_version) = state.active_version {
+        if let Some(active_version) = state.take_active_version() {
             log.phase(&format!("uninstalling v{active_version}"));
             self.uninstall_inner(active_version, log);
         }
 
         if let Err(err) = self.install_inner(deploy_dir, version, log) {
-            let chain = format_error_chain(&err);
-            log.error(&format!("failed to install app: {chain}"));
             self.uninstall_inner(version, log);
-            state.active_version = None;
-            state.set_error();
-            let _ = state.save(&self.unit_dir);
-            log.finish_err(&chain);
-            return;
+            return Err(err);
         }
 
-        state.active_version = Some(version);
-        state.set_ready();
-        let _ = state.save(&self.unit_dir);
-
-        self.redeploy_dependent_domains(log);
-
-        log.finish_ok();
+        Ok(())
     }
 
     /// Domain units whose routes reference this app via `${<app>:export|url}`.
@@ -187,10 +181,8 @@ impl<'a> AppUnit<'a> {
             .collect()
     }
 
-    /// Re-render and reload every domain that depends on this app, so its nginx
-    /// config picks up the new active version. Best-effort: a domain that is
-    /// busy or fails to deploy is logged and skipped — it never fails the app
-    /// deploy, which is already committed by this point.
+    /// Re-render and reload every domain that depends on this app.
+    /// Should be called after state saved.
     fn redeploy_dependent_domains(&self, log: &DeployLog) {
         let domains = self.dependent_domains();
         if domains.is_empty() {

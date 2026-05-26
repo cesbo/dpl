@@ -49,23 +49,19 @@ impl<'a> DomainUnit<'a> {
         }
     }
 
-    pub fn deploy(self, mut state: DeployState) -> Result<DeployState, DeployError> {
-        let version = state.bump_version()?;
-        state.save(&self.unit_dir)?;
+    pub fn deploy(self, mut state: DeployState) -> Result<(), DeployError> {
+        let _ = state.bump_version()?;
+        let _ = state.take_active_version();
 
         if let Err(err) = self.install_inner() {
             let chain = format_error_chain(&err);
             eprintln!("install nginx failed for {}: {chain}", self.name);
             state.set_error();
-            let _ = state.save(&self.unit_dir);
-            return Err(err);
+            Err(err)
+        } else {
+            state.set_ready();
+            Ok(())
         }
-
-        state.active_version = Some(version);
-        state.set_ready();
-        state.save(&self.unit_dir)?;
-
-        Ok(state)
     }
 
     /// Render this domain's config into the `dpl-nginx-conf` volume, then make
