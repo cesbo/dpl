@@ -25,6 +25,8 @@ serde_yaml = "0.9.34"
 tar = "0.4"
 tempfile = "3"
 thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "registry"] }
 percent-encoding = "2.3.2"
 
 [profile.release]
