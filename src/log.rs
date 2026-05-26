@@ -44,19 +44,15 @@ use tracing_subscriber::{
     },
 };
 
-/// Captured child-process (podman) output: written to the build-log file only,
-/// never echoed to the console. Emit with `tracing::debug!(target: CHILD_TARGET, …)`.
+/// Child-process (podman) output: file only. `debug!(target: CHILD_TARGET, …)`.
 pub(crate) const CHILD_TARGET: &str = "dpl::child";
-/// Phase transitions: echoed to the console and used to drive the spinner
-/// message. Emit with `tracing::info!(target: PHASE_TARGET, …)`.
+/// Phase transitions: echoed to console, drive the spinner message.
+/// `info!(target: PHASE_TARGET, …)`.
 pub(crate) const PHASE_TARGET: &str = "dpl::phase";
 
 /// Owns a per-deploy `tracing` subscriber and the deploy spinner. Install it as
-/// the thread-default dispatcher for the duration of a deploy with
-/// [`set_default`](Self::set_default); all logging then flows through the
-/// `tracing` macros (phases via `target: PHASE_TARGET`, child output via
-/// `target: CHILD_TARGET`). The actual file/console writing lives in
-/// [`DeployLayer`].
+/// the thread-default dispatcher via [`set_default`](Self::set_default); logging
+/// then flows through the `tracing` macros. Writing happens in [`DeployLayer`].
 #[derive(Clone)]
 pub struct DeployLog {
     inner: Arc<Inner>,
@@ -113,17 +109,15 @@ impl DeployLog {
         self.inner.started.elapsed()
     }
 
-    /// Install this deploy's subscriber as the current thread's default
-    /// dispatcher. The returned guard restores the previous default on drop;
-    /// hold it for the lifetime of the deploy so the `tracing` macros route here.
+    /// Make this deploy's subscriber the thread default. Hold the returned guard
+    /// for the deploy's lifetime so the `tracing` macros route here.
     #[must_use]
     pub fn set_default(&self) -> tracing::dispatcher::DefaultGuard {
         tracing::dispatcher::set_default(&self.inner.dispatch)
     }
 
-    /// Route `f` to this deploy's subscriber regardless of the current thread
-    /// default. Used for the terminal lines below, which must always land in the
-    /// build log.
+    /// Route `f` here regardless of the thread default, for the terminal lines
+    /// below which must always reach the build log.
     fn emit(&self, f: impl FnOnce()) {
         tracing::dispatcher::with_default(&self.inner.dispatch, f);
     }
@@ -145,9 +139,9 @@ impl DeployLog {
     }
 }
 
-/// `tracing` layer backing a single deploy: every event is written to the
-/// build-log file; phase/warn/error events are also echoed to the console
-/// (above the spinner on a TTY), while `dpl::child` output stays file-only.
+/// Backs a single deploy: writes every event to the build-log file, and echoes
+/// phase/warn/error to the console (above the spinner on a TTY). `dpl::child`
+/// output stays file-only.
 struct DeployLayer {
     file: Mutex<BufWriter<std::fs::File>>,
     bar: ProgressBar,
@@ -199,14 +193,11 @@ impl<S: Subscriber> Layer<S> for DeployLayer {
     }
 }
 
-/// Process-wide fallback subscriber: prints `WARN`/`ERROR` events to stderr and
-/// ignores everything else. A running deploy installs its own [`DeployLog`] as
-/// the thread-default dispatcher ([`DeployLog::set_default`]), which overrides
-/// this layer on that thread, so this only surfaces diagnostics emitted outside
-/// a deploy scope (e.g. lock-file cleanup in `DeployStateGuard::drop`).
-///
-/// It deliberately does not override `max_level_hint`, leaving the global level
-/// filter permissive so a deploy's `debug!` events still reach its file layer.
+/// Process-wide fallback: prints `WARN`/`ERROR` to stderr, ignores the rest.
+/// A running deploy's [`DeployLog`] overrides it on that thread, so this only
+/// surfaces events emitted outside a deploy (e.g. `DeployStateGuard::drop`).
+/// No `max_level_hint` override, so the global level filter stays permissive and
+/// a deploy's `debug!` events still reach its file layer.
 struct StderrLayer;
 
 impl<S: Subscriber> Layer<S> for StderrLayer {
@@ -222,8 +213,7 @@ impl<S: Subscriber> Layer<S> for StderrLayer {
     }
 }
 
-/// Install the process-wide fallback subscriber. Call once at startup; a second
-/// call is a no-op.
+/// Install the fallback subscriber. Call once at startup; later calls are no-ops.
 pub fn init() {
     let _ = tracing::subscriber::set_global_default(Registry::default().with(StderrLayer));
 }
@@ -275,9 +265,8 @@ mod tests {
 
     #[test]
     fn events_are_written_to_the_log_file() {
-        // Install the global fallback subscriber too: a deploy's scoped
-        // subscriber must still receive `debug!` events, i.e. the global layer
-        // must not cap the level filter.
+        // With the global fallback installed, a deploy's scoped subscriber must
+        // still receive `debug!` events (the global layer must not cap the level).
         init();
 
         let dir = tempfile::tempdir().unwrap();
