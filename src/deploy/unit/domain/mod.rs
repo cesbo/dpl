@@ -8,6 +8,8 @@ use std::path::{
     PathBuf,
 };
 
+use tracing::info;
+
 use self::artifacts::ArtifactsContext;
 pub use self::model::DomainConfig;
 use crate::{
@@ -16,6 +18,7 @@ use crate::{
         DeployError,
         state::DeployState,
     },
+    log::PHASE_TARGET,
     podman::{
         NGINX_CONF_VOLUME,
         NGINX_WWW_VOLUME,
@@ -109,11 +112,11 @@ impl<'a> DomainUnit<'a> {
             info: "reload systemd".to_string(),
             source,
         })?;
-        crate::spinner::with_spinner("starting nginx", |_| systemd::enable_service(NGINX_SERVICE))
-            .map_err(|source| DeployError::UnitError {
-                info: format!("enable service '{NGINX_SERVICE}'"),
-                source,
-            })?;
+        info!(target: PHASE_TARGET, "starting nginx");
+        systemd::enable_service(NGINX_SERVICE).map_err(|source| DeployError::UnitError {
+            info: format!("enable service '{NGINX_SERVICE}'"),
+            source,
+        })?;
 
         Ok(())
     }
