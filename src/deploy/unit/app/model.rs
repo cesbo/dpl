@@ -168,6 +168,9 @@ impl AppConfig {
                 container_name(unit_name),
                 self.port
             )),
+            // Same address as `url` but without the scheme — the bare
+            // `host:port` that nginx's `uwsgi_pass`/`fastcgi_pass` expect.
+            "socket" => Ok(format!("{}:{}", container_name(unit_name), self.port)),
             // Absolute path of this app's static export inside the nginx container.
             "export" => {
                 let unit_dir = unit_name.unit_dir(ctx);
@@ -264,6 +267,18 @@ mod tests {
                 .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "url")
                 .unwrap(),
             "http://dpl-web:8080"
+        );
+    }
+
+    #[test]
+    fn app_resolve_export_socket() {
+        let ctx = MainContext::default();
+        let config = sample_config();
+        assert_eq!(
+            config
+                .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "socket")
+                .unwrap(),
+            "dpl-web:8080"
         );
     }
 

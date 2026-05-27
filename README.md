@@ -145,6 +145,10 @@ Build layer fields:
   exist. Every `db` unit referenced this way is automatically treated as a
   startup dependency: a `db wait` gate is added to the generated service and
   its reference chain is validated recursively (no separate `databases:` list)
+- `${<app-unit>:<key>}` - export of a referenced `app` unit. Allowed keys:
+  `url` (`http://dpl-<name>:<port>`, for `proxy_pass`), `socket`
+  (`dpl-<name>:<port>` without scheme, for `uwsgi_pass`/`fastcgi_pass`), and
+  `export` (the app's static export path inside the nginx container)
 
 References are validated by `dpl check`.
 
