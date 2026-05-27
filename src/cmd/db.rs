@@ -410,7 +410,10 @@ fn restore(ctx: &MainContext, name: &str, path: &str) -> Result<()> {
     .with_context(|| format!("restore database '{db_name}'"))?;
 
     let source = if path == "-" { "stdin" } else { path };
-    eprintln!("restored '{db_name}' from {source}");
+    eprintln!(
+        "{} restored '{db_name}' from {source}",
+        console::style("✓").green(),
+    );
 
     Ok(())
 }
