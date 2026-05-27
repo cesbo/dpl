@@ -33,6 +33,10 @@ use tracing::{
         Field,
         Visit,
     },
+    span::{
+        Attributes,
+        Id,
+    },
 };
 use tracing_subscriber::{
     Registry,
@@ -48,8 +52,17 @@ use crate::spinner::Spinner;
 /// Child-process (podman) output: file only `debug!(target: CHILD_TARGET, …)`.
 pub const CHILD_TARGET: &str = "dpl::child";
 
-/// Phase transitions: console with spinner `info!(target: PHASE_TARGET, …)`.
-pub const PHASE_TARGET: &str = "dpl::phase";
+/// Name of the spans opened by [`phase`]; how [`DeployLayer`] tells a deploy
+/// phase apart from any other span. Must match the literal in [`phase`] (span
+/// names are static metadata, so the macro can't reference this constant).
+const PHASE_SPAN: &str = "dpl::phase";
+
+/// Open and enter a deploy phase.
+/// Sets the spinner message and stamps
+/// The previous phase's `✓` line is echoed when the next phase opens.
+pub fn phase(message: impl fmt::Display) -> tracing::span::EnteredSpan {
+    tracing::info_span!("phase", message = %message).entered()
+}
 
 /// Owns a per-deploy `tracing` subscriber and the deploy spinner. Install it as
 /// the thread-default dispatcher via [`set_default`](Self::set_default); logging
@@ -178,6 +191,33 @@ impl DeployLayer {
 }
 
 impl<S: Subscriber> Layer<S> for DeployLayer {
+    fn on_new_span(&self, attrs: &Attributes<'_>, _id: &Id, _ctx: Context<'_, S>) {
+        if attrs.metadata().name() != PHASE_SPAN {
+            return;
+        }
+        let mut visitor = MessageVisitor::default();
+        attrs.record(&mut visitor);
+        let message = visitor.message;
+
+        // Record the phase's start stamp in the build-log file.
+        self.write_file(&format!(
+            "[{}] {message}",
+            fmt_stamp(self.started.elapsed())
+        ));
+
+        // Leave a completed-phase line for the phase that just ended, then carry
+        // the new one on the live spinner.
+        let prev = self
+            .phase
+            .lock()
+            .expect("phase mutex poisoned")
+            .replace(message.clone());
+        self.bar.set_message(message.clone());
+        if let Some(prev) = prev {
+            echo_phase_done(&self.bar, self.started, &prev);
+        }
+    }
+
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
         let mut visitor = MessageVisitor::default();
         event.record(&mut visitor);
@@ -186,21 +226,6 @@ impl<S: Subscriber> Layer<S> for DeployLayer {
         let meta = event.metadata();
         let (prefix, to_console) = match meta.target() {
             CHILD_TARGET => ("", false),
-            PHASE_TARGET => {
-                // Leave a completed-phase line for the phase that just ended,
-                // then carry the new one on the live spinner. The build-log file
-                // still records each phase's start stamp below.
-                let prev = self
-                    .phase
-                    .lock()
-                    .expect("phase mutex poisoned")
-                    .replace(message.clone());
-                self.bar.set_message(message.clone());
-                if let Some(prev) = prev {
-                    echo_phase_done(&self.bar, self.started, &prev);
-                }
-                ("", false)
-            }
             _ => match *meta.level() {
                 Level::ERROR => ("ERROR: ", true),
                 Level::WARN => ("WARN: ", true),
@@ -310,7 +335,7 @@ mod tests {
         let log = DeployLog::open(&path, "web", 3).unwrap();
         {
             let _default = log.set_default();
-            tracing::info!(target: PHASE_TARGET, "building image");
+            let _phase = phase("building image");
             tracing::debug!("running: podman build");
             tracing::debug!(target: CHILD_TARGET, "STEP 1/4: FROM alpine");
             tracing::warn!("export skipped");

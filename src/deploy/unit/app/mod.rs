@@ -23,7 +23,6 @@ use tempfile::TempDir;
 use tracing::{
     debug,
     error,
-    info,
     warn,
 };
 
@@ -44,10 +43,8 @@ use crate::{
         DeployError,
         state::DeployState,
     },
-    log::{
-        DeployLog,
-        PHASE_TARGET,
-    },
+    log,
+    log::DeployLog,
 };
 
 #[derive(Debug)]
@@ -71,7 +68,7 @@ impl<'a> AppUnit<'a> {
     }
 
     fn prepare<R: Read>(&self, version: u32, archive: R) -> Result<TempDir, DeployError> {
-        info!(target: PHASE_TARGET, "preparing");
+        let _phase = log::phase("preparing");
 
         let temp_dir =
             tempfile::tempdir_in(&self.unit_dir).map_err(|source| DeployError::UnitError {
@@ -162,7 +159,7 @@ impl<'a> AppUnit<'a> {
         self.build_inner(deploy_dir, version)?;
 
         if let Some(active_version) = state.take_active_version() {
-            info!(target: PHASE_TARGET, "uninstalling v{active_version}");
+            let _phase = log::phase(format_args!("uninstalling v{active_version}"));
             self.uninstall_inner(active_version);
         }
 
@@ -193,7 +190,7 @@ impl<'a> AppUnit<'a> {
             return;
         }
 
-        info!(target: PHASE_TARGET, "updating dependent domains");
+        let _phase = log::phase("updating dependent domains");
         for (name, config) in domains {
             let unit_dir = name.unit_dir(self.ctx);
             let (_guard, state) = match DeployState::acquire(&unit_dir) {
@@ -215,14 +212,14 @@ impl<'a> AppUnit<'a> {
     }
 
     fn build_inner(&self, deploy_dir: &Path, version: u32) -> Result<(), DeployError> {
-        info!(target: PHASE_TARGET, "extracting archive");
+        {
+            let _phase = log::phase("extracting archive");
+            let archive_path = deploy_dir.join("app.tar.gz");
+            let app_dir = deploy_dir.join("app");
+            crate::archive::extract(&archive_path, &app_dir)?;
+        }
 
-        let archive_path = deploy_dir.join("app.tar.gz");
-        let app_dir = deploy_dir.join("app");
-
-        crate::archive::extract(&archive_path, &app_dir)?;
-
-        info!(target: PHASE_TARGET, "building image");
+        let _phase = log::phase("building image");
         PodmanContext::new(self.name.as_str(), version)
             .build(deploy_dir)
             .map_err(|source| DeployError::UnitError {
@@ -235,7 +232,7 @@ impl<'a> AppUnit<'a> {
 
     fn install_inner(&self, deploy_dir: &Path, version: u32) -> Result<(), DeployError> {
         if !self.config.exports.is_empty() {
-            info!(target: PHASE_TARGET, "exporting files");
+            let _phase = log::phase("exporting files");
             PodmanContext::new(self.name.as_str(), version)
                 .export(&self.config.exports)
                 .map_err(|source| DeployError::UnitError {
@@ -246,29 +243,33 @@ impl<'a> AppUnit<'a> {
 
         let systemd_ctx = SystemdContext::new(self.name.as_str());
 
-        info!(target: PHASE_TARGET, "installing app service");
-        systemd_ctx
-            .install_app(deploy_dir)
-            .map_err(|source| DeployError::UnitError {
-                info: "install app service".to_string(),
-                source,
-            })?;
+        {
+            let _phase = log::phase("installing app service");
+            systemd_ctx
+                .install_app(deploy_dir)
+                .map_err(|source| DeployError::UnitError {
+                    info: "install app service".to_string(),
+                    source,
+                })?;
+        }
 
-        info!(target: PHASE_TARGET, "health check");
-        health::check(self.name.as_str(), self.config.port).map_err(|source| {
-            DeployError::UnitError {
-                info: "health check".to_string(),
-                source,
-            }
-        })?;
-        systemd_ctx
-            .set_restart_value("always")
-            .map_err(|source| DeployError::UnitError {
-                info: "set restart policy to 'always'".to_string(),
-                source,
+        {
+            let _phase = log::phase("health check");
+            health::check(self.name.as_str(), self.config.port).map_err(|source| {
+                DeployError::UnitError {
+                    info: "health check".to_string(),
+                    source,
+                }
             })?;
+            systemd_ctx
+                .set_restart_value("always")
+                .map_err(|source| DeployError::UnitError {
+                    info: "set restart policy to 'always'".to_string(),
+                    source,
+                })?;
+        }
 
-        info!(target: PHASE_TARGET, "installing timers");
+        let _phase = log::phase("installing timers");
         systemd_ctx.install_timers(deploy_dir);
 
         Ok(())
