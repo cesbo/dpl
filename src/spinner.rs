@@ -15,21 +15,13 @@ use indicatif::{
     ProgressStyle,
 };
 
-/// The cyan braille animation frames shared by both spinner styles.
-const TICK_STRINGS: &[&str] = &[
-    "⢀⠀", "⡀⠀", "⠄⠀", "⢂⠀", "⡂⠀", "⠅⠀", "⢃⠀", "⡃⠀", "⠍⠀", "⢋⠀", "⡋⠀", "⠍⠁", "⢋⠁", "⡋⠁", "⠍⠉", "⠋⠉",
-    "⠋⠉", "⠉⠙", "⠉⠙", "⠉⠩", "⠈⢙", "⠈⡙", "⢈⠩", "⡀⢙", "⠄⡙", "⢂⠩", "⡂⢘", "⠅⡘", "⢃⠨", "⡃⢐", "⠍⡐", "⢋⠠",
-    "⡋⢀", "⠍⡁", "⢋⠁", "⡋⠁", "⠍⠉", "⠋⠉", "⠋⠉", "⠉⠙", "⠉⠙", "⠉⠩", "⠈⢙", "⠈⡙", "⠈⠩", "⠀⢙", "⠀⡙", "⠀⠩",
-    "⠀⢘", "⠀⡘", "⠀⠨", "⠀⢐", "⠀⡐", "⠀⠠", "⠀⢀", "⠀⡀", "✓ ",
-];
-
-// const SIMPLE: &[&str] = &["◜", "◝", "◞", "◟", "✓"];
+const SIMPLE: &[&str] = &["◜", "◝", "◞", "◟", "✓"];
 
 /// The db spinner style (`dpl db …`): trailing elapsed, no stamp prefix.
 pub fn spinner_style() -> ProgressStyle {
-    ProgressStyle::with_template("{spinner:.cyan}{msg} ({elapsed:.dim})")
+    ProgressStyle::with_template("{spinner:.cyan} {msg} ({elapsed:.dim})")
         .expect("static spinner template")
-        .tick_strings(TICK_STRINGS)
+        .tick_strings(SIMPLE)
 }
 
 /// The deploy spinner style: an `[MM:SS]` stamp prefix matching the phase lines
@@ -37,12 +29,12 @@ pub fn spinner_style() -> ProgressStyle {
 /// [`crate::log::fmt_stamp`] so the live line aligns with the `[MM:SS] ✓ …`
 /// completed-phase lines.
 pub fn deploy_style() -> ProgressStyle {
-    ProgressStyle::with_template("[{stamp:.dim}] {spinner:.cyan}{msg}")
+    ProgressStyle::with_template("[{stamp:.dim}] {spinner:.cyan} {msg}")
         .expect("static deploy spinner template")
         .with_key("stamp", |state: &ProgressState, w: &mut dyn fmt::Write| {
             let _ = write!(w, "{}", crate::log::fmt_stamp(state.elapsed()));
         })
-        .tick_strings(TICK_STRINGS)
+        .tick_strings(SIMPLE)
 }
 
 /// Owns a styled progress spinner and its lifecycle. The single source of bar
