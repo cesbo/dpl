@@ -161,7 +161,7 @@ fn init(
 ) -> Result<()> {
     let unit_name = match name {
         Some(value) => check_unit_name(ctx, &value)?,
-        None => prompt_name(ctx)?,
+        None => prompt_name(ctx, "Server name")?,
     };
 
     let engine = match engine {
@@ -181,7 +181,7 @@ fn init(
 
     let secret_name = match secret_name {
         Some(value) => SecretName::new(value)?,
-        None => super::secret::prompt_secret(ctx)?,
+        None => super::secret::prompt_secret(ctx, "Secret for the root user")?,
     };
 
     let config = DbServerConfig {
@@ -241,7 +241,7 @@ fn create(
 ) -> Result<()> {
     let db_name = match name {
         Some(value) => check_unit_name(ctx, &value)?,
-        None => prompt_name(ctx)?,
+        None => prompt_name(ctx, "Database name")?,
     };
 
     let (server_name, server_config) = match db_server {
@@ -256,7 +256,7 @@ fn create(
 
     let secret_name = match secret_name {
         Some(value) => SecretName::new(value)?,
-        None => super::secret::prompt_secret(ctx)?,
+        None => super::secret::prompt_secret(ctx, "Secret for the database user")?,
     };
 
     let config = DbConfig {
@@ -450,10 +450,10 @@ fn load_db(ctx: &MainContext, name: &str) -> Result<(ResourceName, DbConfig)> {
     Ok((unit_name, config))
 }
 
-fn prompt_name(ctx: &MainContext) -> Result<ResourceName> {
+fn prompt_name(ctx: &MainContext, prompt: &str) -> Result<ResourceName> {
     loop {
         let value: String = Input::with_theme(&crate::cmd::prompt_theme())
-            .with_prompt("Unit name")
+            .with_prompt(prompt)
             .interact_text()?;
 
         match check_unit_name(ctx, &value) {

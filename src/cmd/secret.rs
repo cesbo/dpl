@@ -210,14 +210,14 @@ fn prompt_name(ctx: &MainContext) -> Result<SecretName> {
 }
 
 /// Pick an existing secret with a fuzzy selector, or create a new one inline.
-pub fn prompt_secret(ctx: &MainContext) -> Result<SecretName> {
+pub fn prompt_secret(ctx: &MainContext, prompt: &str) -> Result<SecretName> {
     let names = secret::list_secrets(ctx.base())?;
 
     let mut items: Vec<&str> = names.iter().map(SecretName::as_str).collect();
     items.push(CREATE_NEW_SECRET);
 
     let index = FuzzySelect::with_theme(&crate::cmd::prompt_theme())
-        .with_prompt("Secret name")
+        .with_prompt(prompt)
         .items(&items)
         .default(0)
         .interact()?;
