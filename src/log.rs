@@ -83,7 +83,10 @@ impl DeployLog {
         }
         let file = OpenOptions::new().create(true).append(true).open(path)?;
 
-        let spinner = Spinner::new(format!("{unit} v{version}: starting"));
+        let spinner = Spinner::with_style(
+            format!("{unit} v{version}: starting"),
+            crate::spinner::deploy_style(),
+        );
         let started = Instant::now();
         let phase = Arc::new(Mutex::new(None));
         let layer = DeployLayer {
@@ -129,12 +132,11 @@ impl DeployLog {
         if let Some(prev) = self.phase.lock().expect("phase mutex poisoned").take() {
             echo_phase_done(self.spinner.bar(), self.started, &prev);
         }
-        self.emit(|| tracing::debug!("finished in {}", fmt_elapsed(elapsed)));
         self.spinner.finish();
         eprintln!(
             "[{}] {} deployed.",
             fmt_stamp(elapsed),
-            console::style("✔").green(),
+            console::style("✓").green(),
         );
         elapsed
     }
@@ -148,14 +150,13 @@ impl DeployLog {
             .expect("phase mutex poisoned")
             .take()
             .unwrap_or_else(|| self.spinner.bar().message());
-        self.emit(|| tracing::debug!("failed after {}", fmt_elapsed(elapsed)));
         self.spinner.finish();
         eprintln!(
-            "[{}] {} {phase} failed.",
+            "[{}] {} {phase} failed. Log: {}",
             fmt_stamp(elapsed),
             console::style("✗").red(),
+            self.path.display()
         );
-        eprintln!("          Details: {}", self.path.display());
         elapsed
     }
 }
@@ -274,12 +275,6 @@ impl Visit for MessageVisitor {
     }
 }
 
-/// Split a duration into whole `(hours, minutes, seconds)`.
-fn hms(d: Duration) -> (u64, u64, u64) {
-    let secs = d.as_secs();
-    (secs / 3600, (secs % 3600) / 60, secs % 60)
-}
-
 /// Print a `[mm:ss] ✓ <name>` line for a completed phase above the spinner,
 /// leaving it in the terminal while the spinner continues on its own line below.
 /// The stamp is cumulative elapsed since deploy start, matching [`fmt_stamp`].
@@ -292,23 +287,13 @@ fn echo_phase_done(bar: &ProgressBar, started: Instant, name: &str) {
     crate::spinner::print_above(bar, line.as_bytes());
 }
 
-fn fmt_stamp(d: Duration) -> String {
-    let (h, m, s) = hms(d);
+pub fn fmt_stamp(d: Duration) -> String {
+    let secs = d.as_secs();
+    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
     if h > 0 {
         format!("{h:02}:{m:02}:{s:02}")
     } else {
         format!("{m:02}:{s:02}")
-    }
-}
-
-pub fn fmt_elapsed(d: Duration) -> String {
-    let (h, m, s) = hms(d);
-    if h > 0 {
-        format!("{h}h{m:02}m{s:02}s")
-    } else if m > 0 {
-        format!("{m}m{s:02}s")
-    } else {
-        format!("{s}s")
     }
 }
 
@@ -364,13 +349,5 @@ mod tests {
     fn fmt_stamp_with_hours() {
         assert_eq!(fmt_stamp(Duration::from_secs(3600)), "01:00:00");
         assert_eq!(fmt_stamp(Duration::from_secs(3725)), "01:02:05");
-    }
-
-    #[test]
-    fn fmt_elapsed_short() {
-        assert_eq!(fmt_elapsed(Duration::from_secs(0)), "0s");
-        assert_eq!(fmt_elapsed(Duration::from_secs(45)), "45s");
-        assert_eq!(fmt_elapsed(Duration::from_secs(83)), "1m23s");
-        assert_eq!(fmt_elapsed(Duration::from_secs(3725)), "1h02m05s");
     }
 }

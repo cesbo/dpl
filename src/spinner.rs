@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     io::{
         self,
         IsTerminal,
@@ -10,20 +11,38 @@ use std::{
 use indicatif::{
     ProgressBar,
     ProgressDrawTarget,
+    ProgressState,
     ProgressStyle,
 };
 
-/// The cyan braille spinner style shared by `DeployLog` and `with_spinner`.
+/// The cyan braille animation frames shared by both spinner styles.
+const TICK_STRINGS: &[&str] = &[
+    "⢀⠀", "⡀⠀", "⠄⠀", "⢂⠀", "⡂⠀", "⠅⠀", "⢃⠀", "⡃⠀", "⠍⠀", "⢋⠀", "⡋⠀", "⠍⠁", "⢋⠁", "⡋⠁", "⠍⠉", "⠋⠉",
+    "⠋⠉", "⠉⠙", "⠉⠙", "⠉⠩", "⠈⢙", "⠈⡙", "⢈⠩", "⡀⢙", "⠄⡙", "⢂⠩", "⡂⢘", "⠅⡘", "⢃⠨", "⡃⢐", "⠍⡐", "⢋⠠",
+    "⡋⢀", "⠍⡁", "⢋⠁", "⡋⠁", "⠍⠉", "⠋⠉", "⠋⠉", "⠉⠙", "⠉⠙", "⠉⠩", "⠈⢙", "⠈⡙", "⠈⠩", "⠀⢙", "⠀⡙", "⠀⠩",
+    "⠀⢘", "⠀⡘", "⠀⠨", "⠀⢐", "⠀⡐", "⠀⠠", "⠀⢀", "⠀⡀", "✓ ",
+];
+
+// const SIMPLE: &[&str] = &["◜", "◝", "◞", "◟", "✓"];
+
+/// The db spinner style (`dpl db …`): trailing elapsed, no stamp prefix.
 pub fn spinner_style() -> ProgressStyle {
     ProgressStyle::with_template("{spinner:.cyan}{msg} ({elapsed:.dim})")
         .expect("static spinner template")
-        .tick_strings(&[
-            "⢀⠀", "⡀⠀", "⠄⠀", "⢂⠀", "⡂⠀", "⠅⠀", "⢃⠀", "⡃⠀", "⠍⠀", "⢋⠀", "⡋⠀", "⠍⠁", "⢋⠁", "⡋⠁",
-            "⠍⠉", "⠋⠉", "⠋⠉", "⠉⠙", "⠉⠙", "⠉⠩", "⠈⢙", "⠈⡙", "⢈⠩", "⡀⢙", "⠄⡙", "⢂⠩", "⡂⢘", "⠅⡘",
-            "⢃⠨", "⡃⢐", "⠍⡐", "⢋⠠", "⡋⢀", "⠍⡁", "⢋⠁", "⡋⠁", "⠍⠉", "⠋⠉", "⠋⠉", "⠉⠙", "⠉⠙", "⠉⠩",
-            "⠈⢙", "⠈⡙", "⠈⠩", "⠀⢙", "⠀⡙", "⠀⠩", "⠀⢘", "⠀⡘", "⠀⠨", "⠀⢐", "⠀⡐", "⠀⠠", "⠀⢀", "⠀⡀",
-            "+",
-        ])
+        .tick_strings(TICK_STRINGS)
+}
+
+/// The deploy spinner style: an `[MM:SS]` stamp prefix matching the phase lines
+/// printed above it, and no trailing elapsed. The stamp reuses
+/// [`crate::log::fmt_stamp`] so the live line aligns with the `[MM:SS] ✓ …`
+/// completed-phase lines.
+pub fn deploy_style() -> ProgressStyle {
+    ProgressStyle::with_template("[{stamp:.dim}] {spinner:.cyan} {msg}")
+        .expect("static deploy spinner template")
+        .with_key("stamp", |state: &ProgressState, w: &mut dyn fmt::Write| {
+            let _ = write!(w, "{}", crate::log::fmt_stamp(state.elapsed()));
+        })
+        .tick_strings(TICK_STRINGS)
 }
 
 /// Owns a styled progress spinner and its lifecycle. The single source of bar
@@ -37,7 +56,16 @@ pub struct Spinner {
 impl Spinner {
     /// Create a styled spinner showing `msg` on stderr, steady-ticking on a
     /// TTY. Hidden when stderr is not a TTY (no spam in logs / piped output).
+    /// Uses the db [`spinner_style`]; [`DeployLog`] picks [`deploy_style`] via
+    /// [`with_style`](Self::with_style).
+    ///
+    /// [`DeployLog`]: crate::log::DeployLog
     pub fn new(msg: impl Into<String>) -> Self {
+        Self::with_style(msg, spinner_style())
+    }
+
+    /// Like [`new`](Self::new), but with an explicit [`ProgressStyle`].
+    pub fn with_style(msg: impl Into<String>, style: ProgressStyle) -> Self {
         let is_tty = io::stderr().is_terminal();
         let target = if is_tty {
             ProgressDrawTarget::stderr()
@@ -46,7 +74,7 @@ impl Spinner {
         };
 
         let bar = ProgressBar::with_draw_target(None, target);
-        bar.set_style(spinner_style());
+        bar.set_style(style);
         bar.set_message(msg.into());
         if is_tty {
             bar.enable_steady_tick(Duration::from_millis(100));
