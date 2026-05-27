@@ -123,6 +123,7 @@ impl DbServerEngine {
         let args = match self {
             DbServerEngine::Postgresql => vec!["pg_dump", "-U", user, db_name],
             DbServerEngine::Mariadb => vec!["mariadb-dump", "-u", user, db_name],
+            DbServerEngine::Mysql => vec!["mysqldump", "-u", user, db_name],
         };
         args.into_iter().map(String::from).collect()
     }
@@ -134,6 +135,7 @@ impl DbServerEngine {
                 vec!["psql", "-v", "ON_ERROR_STOP=1", "-U", user, "-d", db_name]
             }
             DbServerEngine::Mariadb => vec!["mariadb", "-u", user, db_name],
+            DbServerEngine::Mysql => vec!["mysql", "-u", user, db_name],
         };
         args.into_iter().map(String::from).collect()
     }
@@ -202,6 +204,14 @@ mod tests {
     }
 
     #[test]
+    fn dump_args_mysql() {
+        assert_eq!(
+            DbServerEngine::Mysql.dump_args("app1", "app-db"),
+            ["mysqldump", "-u", "app1", "app-db"]
+        );
+    }
+
+    #[test]
     fn restore_args_postgres() {
         assert_eq!(
             DbServerEngine::Postgresql.restore_args("app1", "app-db"),
@@ -222,6 +232,14 @@ mod tests {
         assert_eq!(
             DbServerEngine::Mariadb.restore_args("app1", "app-db"),
             ["mariadb", "-u", "app1", "app-db"]
+        );
+    }
+
+    #[test]
+    fn restore_args_mysql() {
+        assert_eq!(
+            DbServerEngine::Mysql.restore_args("app1", "app-db"),
+            ["mysql", "-u", "app1", "app-db"]
         );
     }
 

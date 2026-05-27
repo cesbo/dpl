@@ -109,6 +109,7 @@ impl DbConfig {
 pub enum DbServerEngine {
     Postgresql,
     Mariadb,
+    Mysql,
 }
 
 impl DbServerEngine {
@@ -116,6 +117,7 @@ impl DbServerEngine {
         match self {
             DbServerEngine::Postgresql => "postgresql",
             DbServerEngine::Mariadb => "mariadb",
+            DbServerEngine::Mysql => "mysql",
         }
     }
 
@@ -123,13 +125,14 @@ impl DbServerEngine {
         match self {
             DbServerEngine::Postgresql => format!("docker.io/library/postgres:{version}"),
             DbServerEngine::Mariadb => format!("docker.io/library/mariadb:{version}"),
+            DbServerEngine::Mysql => format!("docker.io/library/mysql:{version}"),
         }
     }
 
     pub fn data_path(&self) -> &'static str {
         match self {
             DbServerEngine::Postgresql => "/var/lib/postgresql",
-            DbServerEngine::Mariadb => "/var/lib/mysql",
+            DbServerEngine::Mariadb | DbServerEngine::Mysql => "/var/lib/mysql",
         }
     }
 
@@ -137,6 +140,7 @@ impl DbServerEngine {
         match self {
             DbServerEngine::Postgresql => "POSTGRES_PASSWORD",
             DbServerEngine::Mariadb => "MARIADB_ROOT_PASSWORD",
+            DbServerEngine::Mysql => "MYSQL_ROOT_PASSWORD",
         }
     }
 
@@ -144,20 +148,21 @@ impl DbServerEngine {
         match self {
             DbServerEngine::Postgresql => "18-alpine",
             DbServerEngine::Mariadb => "12",
+            DbServerEngine::Mysql => "8.4",
         }
     }
 
     pub fn default_port(&self) -> u16 {
         match self {
             DbServerEngine::Postgresql => 5432,
-            DbServerEngine::Mariadb => 3306,
+            DbServerEngine::Mariadb | DbServerEngine::Mysql => 3306,
         }
     }
 
     pub fn url_scheme(&self) -> &'static str {
         match self {
             DbServerEngine::Postgresql => "postgresql",
-            DbServerEngine::Mariadb => "mysql",
+            DbServerEngine::Mariadb | DbServerEngine::Mysql => "mysql",
         }
     }
 
@@ -173,13 +178,14 @@ impl DbServerEngine {
                 "postgres",
             ],
             DbServerEngine::Mariadb => &["mariadb", "-u", "root"],
+            DbServerEngine::Mysql => &["mysql", "-u", "root"],
         }
     }
 
     pub fn client_password_env(&self) -> &'static str {
         match self {
             DbServerEngine::Postgresql => "PGPASSWORD",
-            DbServerEngine::Mariadb => "MYSQL_PWD",
+            DbServerEngine::Mariadb | DbServerEngine::Mysql => "MYSQL_PWD",
         }
     }
 
@@ -187,7 +193,7 @@ impl DbServerEngine {
     pub fn superuser(&self) -> &'static str {
         match self {
             DbServerEngine::Postgresql => "postgres",
-            DbServerEngine::Mariadb => "root",
+            DbServerEngine::Mariadb | DbServerEngine::Mysql => "root",
         }
     }
 }
@@ -409,6 +415,47 @@ secret: app1-pass
     }
 
     #[test]
+    fn db_resolve_export_mysql() {
+        use std::fs;
+
+        use tempfile::TempDir;
+
+        use crate::secret::MasterKey;
+
+        let base = TempDir::new().unwrap();
+        let server_dir = base.path().join("mysql-main");
+        fs::create_dir_all(&server_dir).unwrap();
+        fs::write(
+            server_dir.join("config.yaml"),
+            "type: db-server\nengine: mysql\nversion: \"8.4\"\nsecret: mysql-pass\n",
+        )
+        .unwrap();
+
+        let key = MasterKey::generate(base.path());
+        key.save().unwrap();
+        key.encrypt_to_file(&SecretName::new("app1-pass").unwrap(), "top$ecret&")
+            .unwrap();
+
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: Some(MasterKey::load(base.path()).unwrap()),
+        };
+        let config = DbConfig {
+            server: ResourceName::new("mysql-main").unwrap(),
+            user: "app1".into(),
+            secret: SecretName::new("app1-pass").unwrap(),
+        };
+        let unit = ResourceName::new("app-db").unwrap();
+
+        assert_eq!(config.resolve_export(&ctx, &unit, "port").unwrap(), "3306");
+
+        assert_eq!(
+            config.resolve_export(&ctx, &unit, "url").unwrap(),
+            "mysql://app1:top%24ecret%26@mysql-main:3306/app-db"
+        );
+    }
+
+    #[test]
     fn metadata_postgres() {
         let engine = DbServerEngine::Postgresql;
         assert_eq!(engine.as_str(), "postgresql");
@@ -430,11 +477,21 @@ secret: app1-pass
         assert_eq!(engine.default_version(), "12");
         assert_eq!(engine.default_port(), 3306);
         assert_eq!(engine.url_scheme(), "mysql");
+
+        let engine = DbServerEngine::Mysql;
+        assert_eq!(engine.as_str(), "mysql");
+        assert_eq!(engine.image("8.4"), "docker.io/library/mysql:8.4");
+        assert_eq!(engine.data_path(), "/var/lib/mysql");
+        assert_eq!(engine.password_env(), "MYSQL_ROOT_PASSWORD");
+        assert_eq!(engine.default_version(), "8.4");
+        assert_eq!(engine.default_port(), 3306);
+        assert_eq!(engine.url_scheme(), "mysql");
     }
 
     #[test]
     fn superuser() {
         assert_eq!(DbServerEngine::Postgresql.superuser(), "postgres");
         assert_eq!(DbServerEngine::Mariadb.superuser(), "root");
+        assert_eq!(DbServerEngine::Mysql.superuser(), "root");
     }
 }

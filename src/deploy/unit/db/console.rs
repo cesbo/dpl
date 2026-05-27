@@ -42,6 +42,9 @@ impl DbServerEngine {
             DbServerEngine::Mariadb => {
                 vec!["mariadb", "-u", user, db_name]
             }
+            DbServerEngine::Mysql => {
+                vec!["mysql", "-u", user, db_name]
+            }
         };
         args.into_iter().map(String::from).collect()
     }
@@ -60,6 +63,10 @@ mod tests {
         assert_eq!(
             DbServerEngine::Mariadb.console_args("app1", "app-db"),
             ["mariadb", "-u", "app1", "app-db"]
+        );
+        assert_eq!(
+            DbServerEngine::Mysql.console_args("app1", "app-db"),
+            ["mysql", "-u", "app1", "app-db"]
         );
     }
 }

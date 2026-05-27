@@ -50,6 +50,9 @@ impl DbServerEngine {
                     "mariadb", "-u", "root", "-N", "-B", "-e", "SELECT 1", db_name,
                 ]);
             }
+            DbServerEngine::Mysql => {
+                cmd.args(["mysql", "-u", "root", "-N", "-B", "-e", "SELECT 1", db_name]);
+            }
         }
 
         let status = cmd
@@ -76,7 +79,9 @@ impl DbServerEngine {
         let server = server.scoped_unit_name();
         let sql = match self {
             DbServerEngine::Postgresql => build_postgres_sql(db_name, username, password),
-            DbServerEngine::Mariadb => build_mariadb_sql(db_name, username, password),
+            DbServerEngine::Mariadb | DbServerEngine::Mysql => {
+                build_mysql_sql(db_name, username, password)
+            }
         };
 
         let client_password_env = self.client_password_env();
@@ -131,7 +136,8 @@ fn build_postgres_sql(db_name: &str, username: &str, password: &str) -> String {
     )
 }
 
-fn build_mariadb_sql(db_name: &str, username: &str, password: &str) -> String {
+/// MySQL-dialect provisioning SQL, shared by the `mariadb` and `mysql` engines
+fn build_mysql_sql(db_name: &str, username: &str, password: &str) -> String {
     let b = MysqlQueryBuilder;
     let q = b.quote();
 
@@ -169,8 +175,8 @@ mod tests {
     }
 
     #[test]
-    fn mariadb_sql_structure_and_password_escape() {
-        let sql = build_mariadb_sql("app1", "app1", "p'ss");
+    fn mysql_sql_structure_and_password_escape() {
+        let sql = build_mysql_sql("app1", "app1", "p'ss");
         println!("{sql}");
         assert!(sql.contains("CREATE DATABASE `app1`;"));
         assert!(sql.contains("CREATE USER `app1`@'%' IDENTIFIED BY 'p\\'ss';"));

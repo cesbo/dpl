@@ -64,6 +64,7 @@ use crate::{
 const ENGINES: &[(&str, DbServerEngine)] = &[
     ("postgresql", DbServerEngine::Postgresql),
     ("mariadb", DbServerEngine::Mariadb),
+    ("mysql", DbServerEngine::Mysql),
 ];
 
 #[derive(clap::Args)]

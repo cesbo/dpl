@@ -156,7 +156,7 @@ References are validated by `dpl check`.
 
 Two unit types make up the database story:
 
-- **`db-server`** - a containerized DBMS (PostgreSQL or MariaDB) managed as a
+- **`db-server`** - a containerized DBMS (PostgreSQL, MariaDB, or MySQL) managed as a
   systemd unit. Each `db-server` runs one engine instance and holds a single
   root password
 - **`db`** - a single database + login user inside an existing `db-server`. A
@@ -167,12 +167,12 @@ Two unit types make up the database story:
 
 ```yaml
 type: db-server
-engine: postgresql      # or "mariadb"
+engine: postgresql      # or "mariadb", "mysql"
 version: 18-alpine
 secret: db-server-password
 ```
 
-- `engine` - `postgresql` or `mariadb`
+- `engine` - `postgresql`, `mariadb`, or `mysql`
 - `version` - image tag. Verified against the registry with `podman manifest inspect`
 - `secret` - name of an existing `dpl secret` holding the root password
 
@@ -222,12 +222,12 @@ reloads systemd, and runs `systemctl enable --now`.
 `dpl db create` executes the engine-specific SQL to create the user and the
 database inside the running `db-server` via `podman exec`.
 
-`dpl db console` opens the engine's interactive client (`psql` or `mariadb`)
-inside the running `db-server` via `podman exec -it`, connected to the
+`dpl db console` opens the engine's interactive client (`psql`, `mariadb`, or
+`mysql`) inside the running `db-server` via `podman exec -it`, connected to the
 database as its login user (or the superuser with `--root`).
 
 `dpl db backup` and `dpl db restore` run the engine's dump/restore client
-(`pg_dump`/`psql` or `mariadb-dump`/`mariadb`) inside the running `db-server`
+(`pg_dump`/`psql`, `mariadb-dump`/`mariadb`, or `mysqldump`/`mysql`) inside the running `db-server`
 via `podman exec`. They connect as the `db` unit's own login user, not the
 superuser, and stream plain SQL with no compression. The `path` argument
 defaults to `-`, which means stdout for `backup` and stdin for `restore`, so
