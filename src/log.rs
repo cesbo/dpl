@@ -72,8 +72,6 @@ pub struct DeployLog {
     started: Instant,
     spinner: Spinner,
     path: PathBuf,
-    /// `"{unit} v{version}"`, for the trailing summary line.
-    label: String,
     /// Name of the current phase to print before next phase start.
     phase: Arc<Mutex<Option<String>>>,
 }
@@ -85,9 +83,7 @@ impl DeployLog {
         }
         let file = OpenOptions::new().create(true).append(true).open(path)?;
 
-        let label = format!("{unit} v{version}");
-        let spinner = Spinner::new(format!("{label}: starting"));
-
+        let spinner = Spinner::new(format!("{unit} v{version}: starting"));
         let started = Instant::now();
         let phase = Arc::new(Mutex::new(None));
         let layer = DeployLayer {
@@ -103,7 +99,6 @@ impl DeployLog {
             started,
             spinner,
             path: path.to_path_buf(),
-            label,
             phase,
         };
         log.emit(|| tracing::debug!("deploy started: {unit} v{version}"));
@@ -137,10 +132,9 @@ impl DeployLog {
         self.emit(|| tracing::debug!("finished in {}", fmt_elapsed(elapsed)));
         self.spinner.finish();
         eprintln!(
-            "{} {} deployed in {}",
+            "[{}] {} deployed.",
+            fmt_stamp(elapsed),
             console::style("✔").green(),
-            self.label,
-            fmt_elapsed(elapsed),
         );
         elapsed
     }
@@ -157,12 +151,11 @@ impl DeployLog {
         self.emit(|| tracing::debug!("failed after {}", fmt_elapsed(elapsed)));
         self.spinner.finish();
         eprintln!(
-            "{} {} failed at '{phase}' after {}",
+            "[{}] {} {phase} failed.",
+            fmt_stamp(elapsed),
             console::style("✗").red(),
-            self.label,
-            fmt_elapsed(elapsed),
         );
-        eprintln!("  Details: {}", self.path.display());
+        eprintln!("          Details: {}", self.path.display());
         elapsed
     }
 }
