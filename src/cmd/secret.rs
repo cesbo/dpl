@@ -17,7 +17,6 @@ use dialoguer::{
     FuzzySelect,
     Input,
     Password,
-    theme::ColorfulTheme,
 };
 use rand::{
     Rng,
@@ -162,7 +161,7 @@ fn read_external(source: &str) -> Result<String> {
 
 /// Interactive prompt for a secret value; empty input generates a random one.
 pub fn prompt_value_or_random() -> Result<String> {
-    let value = Password::with_theme(&ColorfulTheme::default())
+    let value = Password::with_theme(&crate::cmd::prompt_theme())
         .with_prompt("Secret value (empty = generate random)")
         .allow_empty_password(true)
         .interact()?;
@@ -182,7 +181,7 @@ pub fn prompt_value_or_random() -> Result<String> {
 /// Prompt for a new secret name, validating format and uniqueness.
 fn prompt_name(ctx: &MainContext) -> Result<SecretName> {
     loop {
-        let raw: String = Input::with_theme(&ColorfulTheme::default())
+        let raw: String = Input::with_theme(&crate::cmd::prompt_theme())
             .with_prompt("Secret name")
             .interact_text()?;
 
@@ -217,7 +216,7 @@ pub fn prompt_secret(ctx: &MainContext) -> Result<SecretName> {
     let mut items: Vec<&str> = names.iter().map(SecretName::as_str).collect();
     items.push(CREATE_NEW_SECRET);
 
-    let index = FuzzySelect::with_theme(&ColorfulTheme::default())
+    let index = FuzzySelect::with_theme(&crate::cmd::prompt_theme())
         .with_prompt("Secret name")
         .items(&items)
         .default(0)

@@ -34,7 +34,6 @@ use dialoguer::{
     FuzzySelect,
     Input,
     Select,
-    theme::ColorfulTheme,
 };
 
 use crate::{
@@ -225,7 +224,7 @@ fn init(
 
     println!(
         "{} Started db server '{unit_name}' ({engine} {version})",
-        console::style("✔").green(),
+        console::style("✓").green(),
         engine = config.engine.as_str(),
         version = &config.version
     );
@@ -292,7 +291,7 @@ fn create(
 
     println!(
         "{} Created database '{db_name}' in '{server}' (user '{user}')",
-        console::style("✔").green(),
+        console::style("✓").green(),
         server = &config.server,
         user = &config.user,
     );
@@ -453,7 +452,7 @@ fn load_db(ctx: &MainContext, name: &str) -> Result<(ResourceName, DbConfig)> {
 
 fn prompt_name(ctx: &MainContext) -> Result<ResourceName> {
     loop {
-        let value: String = Input::with_theme(&ColorfulTheme::default())
+        let value: String = Input::with_theme(&crate::cmd::prompt_theme())
             .with_prompt("Unit name")
             .interact_text()?;
 
@@ -481,7 +480,7 @@ fn prompt_db_server(ctx: &MainContext) -> Result<(ResourceName, DbServerConfig)>
         .map(|(name, cfg)| format!("{name} ({} {})", cfg.engine.as_str(), cfg.version))
         .collect();
 
-    let index = FuzzySelect::with_theme(&ColorfulTheme::default())
+    let index = FuzzySelect::with_theme(&crate::cmd::prompt_theme())
         .with_prompt("Database server")
         .items(&labels)
         .default(0)
@@ -500,7 +499,7 @@ fn parse_engine(value: &str) -> Result<DbServerEngine> {
 
 fn prompt_engine() -> Result<DbServerEngine> {
     let labels: Vec<&str> = ENGINES.iter().map(|(name, _)| *name).collect();
-    let index = Select::with_theme(&ColorfulTheme::default())
+    let index = Select::with_theme(&crate::cmd::prompt_theme())
         .with_prompt("Database engine")
         .items(&labels)
         .default(0)
@@ -510,7 +509,7 @@ fn prompt_engine() -> Result<DbServerEngine> {
 
 fn prompt_version(engine: DbServerEngine) -> Result<String> {
     loop {
-        let value: String = Input::with_theme(&ColorfulTheme::default())
+        let value: String = Input::with_theme(&crate::cmd::prompt_theme())
             .with_prompt("Engine version")
             .default(engine.default_version().to_string())
             .interact_text()?
