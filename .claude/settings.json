@@ -14,7 +14,26 @@
         ],
         "deny": [
             "Read(./.env)",
-            "Bash(cargo fmt)"
+            "Bash(cargo fmt)",
+            "Bash(find /*)",
+            "Bash(find ~/*)"
         ]
+    },
+    "sandbox": {
+        "enabled": true,
+        "network": {
+            "allowedDomains": [
+                "doc.rust-lang.org",
+                "docs.rs",
+                "crates.io",
+                "static.crates.io",
+                "index.crates.io",
+                "github.com",
+                "*.githubusercontent.com",
+                "api.github.com",
+                "static.rust-lang.org",
+                "sh.rustup.rs"
+            ]
+        }
     }
 }
