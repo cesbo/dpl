@@ -9,12 +9,15 @@ use minijinja::{
     context,
 };
 
-use crate::deploy::{
-    artifacts::{
-        ArtifactError,
-        render_template,
+use crate::{
+    config::ResourceName,
+    deploy::{
+        artifacts::{
+            ArtifactError,
+            render_template,
+        },
+        unit::db::DbServerEngine,
     },
-    unit::db::DbServerEngine,
 };
 
 const DB_SERVICE_TEMPLATE: &str = "db-service";
@@ -34,22 +37,22 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
     env
 });
 
-pub fn service_file_name(name: &str) -> String {
-    format!("dpl--{name}.service")
-}
-
 pub fn create_service_file(
     dst: &Path,
-    name: &str,
+    name: &ResourceName,
     engine: DbServerEngine,
     version: &str,
     password: &str,
 ) -> Result<String, ArtifactError> {
+    let scoped_service_name = name.scoped_unit_name();
+    let file_name = format!("{}.service", scoped_service_name);
+
     let content = render_template(
         &TEMPLATES,
         DB_SERVICE_TEMPLATE,
         context! {
             name => name,
+            container_name => scoped_service_name,
             engine => engine.as_str(),
             version => version,
             image => engine.image(version),
@@ -59,11 +62,10 @@ pub fn create_service_file(
         },
     )?;
 
-    let service_name = service_file_name(name);
-    let path = dst.join(&service_name);
+    let path = dst.join(&file_name);
     fs::write(&path, content).map_err(ArtifactError::Write)?;
 
-    Ok(service_name)
+    Ok(file_name)
 }
 
 /// Escapes a value for use inside a quoted systemd `Environment="KEY=value"`
@@ -90,24 +92,24 @@ mod tests {
 
     #[test]
     fn render_db_service() {
-        let name = "pg-main";
+        let name = ResourceName::new("pg-main").unwrap();
         let temp_dir = tempdir().unwrap();
         let dst = temp_dir.path();
 
-        create_service_file(dst, name, DbServerEngine::Postgresql, "18", r#"a\b"c"#).unwrap();
+        create_service_file(dst, &name, DbServerEngine::Postgresql, "18", r#"a\b"c"#).unwrap();
 
         let service_path = dst.join("dpl--pg-main.service");
         assert!(service_path.exists());
 
         let body = fs::read_to_string(&service_path).unwrap();
-        assert!(body.contains("--name pg-main"));
+        assert!(body.contains("--name dpl--pg-main"));
         assert!(body.contains(r#"Environment="POSTGRES_PASSWORD=a\\b\"c""#));
         assert!(body.contains("-e POSTGRES_PASSWORD"));
         assert!(!body.contains("--secret"));
-        assert!(body.contains("-v pg-main-data:/var/lib/postgresql"));
+        assert!(body.contains("-v dpl--pg-main-data:/var/lib/postgresql"));
         assert!(body.contains("docker.io/library/postgres:18"));
         assert!(!body.contains("postgres:18-alpine"));
-        assert!(body.contains("/var/log/podman/pg-main.log"));
+        assert!(body.contains("/var/log/podman/dpl--pg-main.log"));
         assert!(body.contains("Description=DPL Database for pg-main (postgresql 18)"));
     }
 }

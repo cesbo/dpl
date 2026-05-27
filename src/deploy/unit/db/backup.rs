@@ -15,6 +15,7 @@ use std::{
 };
 
 use super::model::DbServerEngine;
+use crate::config::ResourceName;
 
 impl DbServerEngine {
     /// Stream a logical SQL dump of `db_name` to `out`, running the engine's
@@ -24,18 +25,19 @@ impl DbServerEngine {
     /// and stall the dump.
     pub fn dump<W: Write>(
         self,
-        server: &str,
+        server: &ResourceName,
         user: &str,
         password: &str,
         db_name: &str,
         out: &mut W,
         on_stderr: &mut (dyn FnMut(&[u8]) + Send),
     ) -> io::Result<()> {
+        let server = server.scoped_unit_name();
         let password_env = self.client_password_env();
 
         let mut cmd = Command::new("podman");
         cmd.env(password_env, password);
-        cmd.args(["exec", "-e", password_env, server]);
+        cmd.args(["exec", "-e", password_env, &server]);
         cmd.args(self.dump_args(user, db_name));
 
         let mut child = cmd
@@ -72,18 +74,19 @@ impl DbServerEngine {
     /// is streamed to `on_stderr` on a separate thread.
     pub fn restore<R: Read>(
         self,
-        server: &str,
+        server: &ResourceName,
         user: &str,
         password: &str,
         db_name: &str,
         input: &mut R,
         on_stderr: &mut (dyn FnMut(&[u8]) + Send),
     ) -> io::Result<()> {
+        let server = server.scoped_unit_name();
         let password_env = self.client_password_env();
 
         let mut cmd = Command::new("podman");
         cmd.env(password_env, password);
-        cmd.args(["exec", "-i", "-e", password_env, server]);
+        cmd.args(["exec", "-i", "-e", password_env, &server]);
         cmd.args(self.restore_args(user, db_name));
 
         let mut child = cmd

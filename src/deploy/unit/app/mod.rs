@@ -43,8 +43,10 @@ use crate::{
         DeployError,
         state::DeployState,
     },
-    log,
-    log::DeployLog,
+    log::{
+        self,
+        DeployLog,
+    },
 };
 
 #[derive(Debug)]
@@ -85,7 +87,7 @@ impl<'a> AppUnit<'a> {
 
         let artifacts = ArtifactsContext {
             ctx: self.ctx,
-            name: self.name.as_str(),
+            name: self.name,
             config: &self.config,
             version,
         };
@@ -220,7 +222,7 @@ impl<'a> AppUnit<'a> {
         }
 
         let _phase = log::phase("building image");
-        PodmanContext::new(self.name.as_str(), version)
+        PodmanContext::new(self.name, version)
             .build(deploy_dir)
             .map_err(|source| DeployError::UnitError {
                 info: "build image".to_string(),
@@ -233,7 +235,7 @@ impl<'a> AppUnit<'a> {
     fn install_inner(&self, deploy_dir: &Path, version: u32) -> Result<(), DeployError> {
         if !self.config.exports.is_empty() {
             let _phase = log::phase("exporting files");
-            PodmanContext::new(self.name.as_str(), version)
+            PodmanContext::new(self.name, version)
                 .export(&self.config.exports)
                 .map_err(|source| DeployError::UnitError {
                     info: "export static files".to_string(),
@@ -241,7 +243,7 @@ impl<'a> AppUnit<'a> {
                 })?;
         }
 
-        let systemd_ctx = SystemdContext::new(self.name.as_str());
+        let systemd_ctx = SystemdContext::new(self.name);
 
         {
             let _phase = log::phase("installing app service");
@@ -255,7 +257,7 @@ impl<'a> AppUnit<'a> {
 
         {
             let _phase = log::phase("health check");
-            health::check(self.name.as_str(), self.config.port).map_err(|source| {
+            health::check(self.name, self.config.port).map_err(|source| {
                 DeployError::UnitError {
                     info: "health check".to_string(),
                     source,
@@ -276,11 +278,11 @@ impl<'a> AppUnit<'a> {
     }
 
     fn uninstall_inner(&self, version: u32) {
-        let systemd_ctx = SystemdContext::new(self.name.as_str());
+        let systemd_ctx = SystemdContext::new(self.name);
         systemd_ctx.uninstall_timers();
         systemd_ctx.uninstall_app();
 
-        let podman_ctx = PodmanContext::new(self.name.as_str(), version);
+        let podman_ctx = PodmanContext::new(self.name, version);
         podman_ctx.remove_exports();
         podman_ctx.remove();
     }

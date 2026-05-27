@@ -202,7 +202,7 @@ fn init(
 
     let service_name = crate::deploy::unit::db::create_service_file(
         Path::new(crate::systemd::SYSTEMD_DIR),
-        unit_name.as_str(),
+        &unit_name,
         config.engine,
         &config.version,
         &root_password,
@@ -279,7 +279,7 @@ fn create(
     server_config
         .engine
         .create_database(
-            config.server.as_str(),
+            &config.server,
             &root_password,
             db_name.as_str(),
             &config.user,
@@ -311,7 +311,7 @@ fn wait(ctx: &MainContext, name: &str, timeout_secs: u64) -> Result<()> {
     loop {
         let result = server_config
             .engine
-            .ping(db_config.server.as_str(), &root_password, name);
+            .ping(&db_config.server, &root_password, name);
 
         if result.is_ok() {
             return Ok(());
@@ -344,7 +344,7 @@ fn console(ctx: &MainContext, name: &str, root: bool) -> Result<()> {
 
     server_config
         .engine
-        .console(db_config.server.as_str(), &user, &password, db_name.as_str())
+        .console(&db_config.server, &user, &password, db_name.as_str())
         .with_context(|| format!("open console to '{db_name}'"))
 }
 
@@ -363,7 +363,7 @@ fn backup(ctx: &MainContext, name: &str, path: &str) -> Result<()> {
     crate::spinner::Spinner::run(format!("backing up '{db_name}'"), |bar| {
         let mut on_stderr = crate::spinner::stderr_sink(bar);
         server_config.engine.dump(
-            db_config.server.as_str(),
+            &db_config.server,
             &db_config.user,
             &password,
             db_name.as_str(),
@@ -398,7 +398,7 @@ fn restore(ctx: &MainContext, name: &str, path: &str) -> Result<()> {
     crate::spinner::Spinner::run(format!("restoring '{db_name}'"), |bar| {
         let mut on_stderr = crate::spinner::stderr_sink(bar);
         server_config.engine.restore(
-            db_config.server.as_str(),
+            &db_config.server,
             &db_config.user,
             &password,
             db_name.as_str(),

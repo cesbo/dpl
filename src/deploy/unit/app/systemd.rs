@@ -12,20 +12,23 @@ use tracing::{
     error,
 };
 
-use crate::systemd::{
-    disable_service,
-    enable_service,
-    run_systemctl,
-    stop_service,
+use crate::{
+    config::ResourceName,
+    systemd::{
+        disable_service,
+        enable_service,
+        run_systemctl,
+        stop_service,
+    },
 };
 
 pub struct SystemdContext<'a> {
     systemd_dir: &'a Path,
-    name: &'a str,
+    name: &'a ResourceName,
 }
 
 impl<'a> SystemdContext<'a> {
-    pub fn new(name: &'a str) -> Self {
+    pub fn new(name: &'a ResourceName) -> Self {
         Self {
             systemd_dir: Path::new(crate::systemd::SYSTEMD_DIR),
             name,
@@ -33,7 +36,7 @@ impl<'a> SystemdContext<'a> {
     }
 
     pub fn install_app(&self, deploy_dir: &Path) -> io::Result<()> {
-        let service_name = format!("dpl--{}.service", self.name);
+        let service_name = format!("{}.service", self.name.scoped_unit_name());
         let src = deploy_dir.join("artifacts").join(&service_name);
         let dst = self.systemd_dir.join(&service_name);
 
@@ -51,7 +54,7 @@ impl<'a> SystemdContext<'a> {
     }
 
     pub fn uninstall_app(&self) {
-        let prefix = format!("dpl--{}", self.name);
+        let prefix = self.name.scoped_unit_name();
 
         let app_service = format!("{prefix}.service");
         let app_service_path = self.systemd_dir.join(&app_service);
@@ -73,7 +76,7 @@ impl<'a> SystemdContext<'a> {
     }
 
     pub fn install_timers(&self, deploy_dir: &Path) {
-        let prefix = format!("dpl--{}--", self.name);
+        let prefix = format!("{}--", self.name.scoped_unit_name());
         let artifacts_dir = deploy_dir.join("artifacts");
 
         let mut timers: Vec<String> = list_timers(&artifacts_dir, &prefix);
@@ -99,7 +102,7 @@ impl<'a> SystemdContext<'a> {
     }
 
     pub fn uninstall_timers(&self) {
-        let prefix = format!("dpl--{}--", self.name);
+        let prefix = format!("{}--", self.name.scoped_unit_name());
 
         let timers = list_timers(self.systemd_dir, &prefix);
         if timers.is_empty() {
@@ -114,7 +117,7 @@ impl<'a> SystemdContext<'a> {
 
     /// Rewrites the installed service file
     pub fn set_restart_value(&self, value: &str) -> io::Result<()> {
-        let service_name = format!("dpl--{}.service", self.name);
+        let service_name = format!("{}.service", self.name.scoped_unit_name());
         let path = self.systemd_dir.join(&service_name);
 
         let mut in_service = false;
@@ -255,6 +258,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::SystemdContext;
+    use crate::config::ResourceName;
 
     #[test]
     fn systemd_set_restart_value() {
@@ -265,9 +269,10 @@ mod tests {
         let source = "[Unit]\nDescription=Demo\n\n[Service]\nRestart=no\nExecStart=/usr/bin/true\n";
         fs::write(&service_path, source).expect("write source service file");
 
+        let name = ResourceName::new("demo").unwrap();
         let ctx = SystemdContext {
             systemd_dir: Path::new(tmp.path()),
-            name: "demo",
+            name: &name,
         };
 
         ctx.set_restart_value("always")

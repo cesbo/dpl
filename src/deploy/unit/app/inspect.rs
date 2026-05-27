@@ -1,7 +1,4 @@
-use super::{
-    AppUnit,
-    model::container_name,
-};
+use super::AppUnit;
 use crate::{
     deploy::{
         DeployError,
@@ -49,8 +46,7 @@ impl AppUnit<'_> {
     fn container_section(&self) -> Section {
         let mut section = Section::new("container");
 
-        let container_name = container_name(self.name);
-        match inspect_container(&container_name) {
+        match inspect_container(self.name) {
             Some(c) => {
                 let health = match c.state.status.as_str() {
                     "running" => Health::Ok,

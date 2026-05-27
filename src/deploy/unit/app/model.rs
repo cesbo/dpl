@@ -20,12 +20,6 @@ use crate::{
     podman::NGINX_WWW_MOUNT,
 };
 
-/// Name of the podman container backing an app unit.
-pub(super) fn container_name(name: impl AsRef<str>) -> String {
-    let name = name.as_ref();
-    format!("dpl-{name}")
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
@@ -165,12 +159,12 @@ impl AppConfig {
             // container network at its container name and listening port.
             "url" => Ok(format!(
                 "http://{}:{}",
-                container_name(unit_name),
+                unit_name.scoped_unit_name(),
                 self.port
             )),
             // Same address as `url` but without the scheme — the bare
             // `host:port` that nginx's `uwsgi_pass`/`fastcgi_pass` expect.
-            "socket" => Ok(format!("{}:{}", container_name(unit_name), self.port)),
+            "socket" => Ok(format!("{}:{}", unit_name.scoped_unit_name(), self.port)),
             // Absolute path of this app's static export inside the nginx container.
             "export" => {
                 let unit_dir = unit_name.unit_dir(ctx);
@@ -266,7 +260,7 @@ mod tests {
             config
                 .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "url")
                 .unwrap(),
-            "http://dpl-web:8080"
+            "http://dpl--web:8080"
         );
     }
 
@@ -278,7 +272,7 @@ mod tests {
             config
                 .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "socket")
                 .unwrap(),
-            "dpl-web:8080"
+            "dpl--web:8080"
         );
     }
 

@@ -4,6 +4,7 @@ use std::{
 };
 
 use super::model::DbServerEngine;
+use crate::config::ResourceName;
 
 impl DbServerEngine {
     /// Open an interactive SQL client against `db_name` as `user` inside the
@@ -11,16 +12,17 @@ impl DbServerEngine {
     /// terminal (the default), so the client gets a real TTY via `-it`.
     pub fn console(
         self,
-        server: &str,
+        server: &ResourceName,
         user: &str,
         password: &str,
         db_name: &str,
     ) -> io::Result<()> {
+        let server = server.scoped_unit_name();
         let password_env = self.client_password_env();
 
         let mut cmd = Command::new("podman");
         cmd.env(password_env, password);
-        cmd.args(["exec", "-it", "-e", password_env, server]);
+        cmd.args(["exec", "-it", "-e", password_env, &server]);
         cmd.args(self.console_args(user, db_name));
 
         let status = cmd.status()?;

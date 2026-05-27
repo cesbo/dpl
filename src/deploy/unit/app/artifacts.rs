@@ -16,6 +16,7 @@ use serde::Serialize;
 use super::AppConfig;
 use crate::{
     MainContext,
+    config::ResourceName,
     deploy::artifacts::{
         ArtifactError,
         render_template,
@@ -67,7 +68,7 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
 
 pub struct ArtifactsContext<'a> {
     pub ctx: &'a MainContext,
-    pub name: &'a str,
+    pub name: &'a ResourceName,
     pub config: &'a AppConfig,
     pub version: u32,
 }
@@ -136,7 +137,8 @@ impl<'a> ArtifactsContext<'a> {
 
         let dpl_bin = std::env::current_exe().map_err(ArtifactError::CurrentExe)?;
 
-        let file_name = format!("dpl--{}.service", &self.name);
+        let scoped_service_name = self.name.scoped_unit_name();
+        let file_name = format!("{}.service", scoped_service_name);
         let path = artifacts_dir.join(&file_name);
         write_artifact(
             path,
@@ -145,6 +147,7 @@ impl<'a> ArtifactsContext<'a> {
                 dpl_bin => dpl_bin.to_string_lossy(),
                 dpl_base => self.ctx.base().to_string_lossy(),
                 name => &self.name,
+                container_name => scoped_service_name,
                 version => self.version,
                 volumes => &self.config.volumes,
                 databases => self.config.database_deps(self.ctx)?,
@@ -156,7 +159,9 @@ impl<'a> ArtifactsContext<'a> {
                 continue;
             }
 
-            let file_name = format!("dpl--{}--{}.service", &self.name, &timer.name);
+            let scoped_timer_name = self.name.scoped_unit_resource(&timer.name);
+
+            let file_name = format!("{}.service", scoped_timer_name);
             let path = artifacts_dir.join(&file_name);
             write_artifact(
                 path,
@@ -167,7 +172,7 @@ impl<'a> ArtifactsContext<'a> {
                 },
             )?;
 
-            let file_name = format!("dpl--{}--{}.timer", &self.name, &timer.name);
+            let file_name = format!("{}.timer", scoped_timer_name);
             let path = artifacts_dir.join(&file_name);
             write_artifact(
                 path,
@@ -273,9 +278,9 @@ mod tests {
             ],
         };
 
-        let name = "my-app";
+        let name = ResourceName::new("my-app").unwrap();
         let temp_dir = tempdir().unwrap();
-        let deploy_dir = temp_dir.path().join(name);
+        let deploy_dir = temp_dir.path().join(name.as_str());
         fs::create_dir_all(&deploy_dir).unwrap();
 
         // `database_deps` loads each referenced unit to classify it; the two db
@@ -296,7 +301,7 @@ mod tests {
         };
         let artifacts = ArtifactsContext {
             ctx: &ctx,
-            name,
+            name: &name,
             config: &config,
             version: 1,
         };

@@ -20,15 +20,17 @@ use sea_query::{
 };
 
 use super::model::DbServerEngine;
+use crate::config::ResourceName;
 
 impl DbServerEngine {
     /// Returns `Ok` only when the container is up, the SQL server
     /// accepts the connection, and the database exists.
-    pub fn ping(self, server: &str, root_password: &str, db_name: &str) -> io::Result<()> {
+    pub fn ping(self, server: &ResourceName, root_password: &str, db_name: &str) -> io::Result<()> {
+        let server = server.scoped_unit_name();
         let password_env = self.client_password_env();
         let mut cmd = Command::new("podman");
         cmd.env(password_env, root_password);
-        cmd.args(["exec", "-e", password_env, server]);
+        cmd.args(["exec", "-e", password_env, &server]);
         match self {
             DbServerEngine::Postgresql => {
                 cmd.args([
@@ -65,12 +67,13 @@ impl DbServerEngine {
     /// Provision a new database + login user inside a running db-server container.
     pub fn create_database(
         self,
-        server: &str,
+        server: &ResourceName,
         root_password: &str,
         db_name: &str,
         username: &str,
         password: &str,
     ) -> io::Result<()> {
+        let server = server.scoped_unit_name();
         let sql = match self {
             DbServerEngine::Postgresql => build_postgres_sql(db_name, username, password),
             DbServerEngine::Mariadb => build_mariadb_sql(db_name, username, password),
@@ -81,7 +84,7 @@ impl DbServerEngine {
 
         let mut cmd = Command::new("podman");
         cmd.env(client_password_env, root_password);
-        cmd.args(["exec", "-i", "-e", client_password_env, server]);
+        cmd.args(["exec", "-i", "-e", client_password_env, &server]);
         cmd.args(client_args);
 
         let mut child = cmd

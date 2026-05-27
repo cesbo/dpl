@@ -17,6 +17,7 @@ use tracing::{
 
 use super::model::ExportConfig;
 use crate::{
+    config::ResourceName,
     log::CHILD_TARGET,
     podman::{
         NGINX_WWW_VOLUME,
@@ -27,13 +28,13 @@ use crate::{
 };
 
 pub struct PodmanContext<'a> {
-    name: &'a str,
+    name: &'a ResourceName,
     version: u32,
     image_tag: String,
 }
 
 impl<'a> PodmanContext<'a> {
-    pub fn new(name: &'a str, version: u32) -> Self {
+    pub fn new(name: &'a ResourceName, version: u32) -> Self {
         let image_tag = format!("localhost/{name}:{version}");
         Self {
             name,
@@ -181,7 +182,7 @@ impl<'a> PodmanContext<'a> {
             return;
         };
 
-        match remove_export_dir(&exports_root, self.name, self.version) {
+        match remove_export_dir(&exports_root, self.name.as_str(), self.version) {
             Ok(true) => debug!("removed exports {}_{}", self.name, self.version),
             Ok(false) => {}
             Err(err) => warn!(

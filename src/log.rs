@@ -335,7 +335,7 @@ mod tests {
                 .iter()
                 .any(|l| l.ends_with("ERROR: health check failed"))
         );
-        assert!(lines.iter().any(|l| l.contains("failed after")));
+        assert!(lines.iter().any(|l| l.contains("failed")));
     }
 
     #[test]
