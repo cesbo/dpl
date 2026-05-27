@@ -5,6 +5,7 @@ use std::{
     },
     io::{
         self,
+        BufRead,
         BufReader,
         BufWriter,
         Read,
@@ -34,6 +35,11 @@ use dialoguer::{
     FuzzySelect,
     Input,
     Select,
+};
+use flate2::{
+    Compression,
+    read::GzDecoder,
+    write::GzEncoder,
 };
 
 use crate::{
@@ -120,6 +126,9 @@ enum Cmd {
         /// Destination file, or `-` for stdout
         #[arg(default_value = "-")]
         path: String,
+        /// Compress the dump with gzip (implied when the path ends in `.gz`)
+        #[arg(short = 'z')]
+        gzip: bool,
     },
     /// Replay a SQL dump into a database from a file (or stdin) as its login user
     Restore {
@@ -147,7 +156,7 @@ pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
         } => create(ctx, name, db_server, user, secret),
         Cmd::Wait { name, timeout } => wait(ctx, &name, timeout),
         Cmd::Console { name, root } => console(ctx, &name, root),
-        Cmd::Backup { name, path } => backup(ctx, &name, &path),
+        Cmd::Backup { name, path, gzip } => backup(ctx, &name, &path, gzip),
         Cmd::Restore { name, path } => restore(ctx, &name, &path),
     }
 }
@@ -348,16 +357,23 @@ fn console(ctx: &MainContext, name: &str, root: bool) -> Result<()> {
         .with_context(|| format!("open console to '{db_name}'"))
 }
 
-fn backup(ctx: &MainContext, name: &str, path: &str) -> Result<()> {
+fn backup(ctx: &MainContext, name: &str, path: &str, gzip: bool) -> Result<()> {
     let (db_name, db_config) = load_db(ctx, name)?;
     let (_, server_config) = load_db_server(ctx, db_config.server.as_str())?;
     let password = resolve_secret(ctx, &db_config.secret)?;
 
-    let mut out: Box<dyn Write> = if path == "-" {
+    let raw: Box<dyn Write> = if path == "-" {
         Box::new(io::stdout().lock())
     } else {
         let file = File::create(path).with_context(|| format!("create backup file '{path}'"))?;
         Box::new(BufWriter::new(file))
+    };
+
+    // Compress when asked explicitly, or inferred from a `.gz` destination.
+    let mut out: Box<dyn Write> = if gzip || path.ends_with(".gz") {
+        Box::new(GzEncoder::new(raw, Compression::default()))
+    } else {
+        raw
     };
 
     crate::spinner::Spinner::run(format!("backing up '{db_name}'"), |bar| {
@@ -388,11 +404,25 @@ fn restore(ctx: &MainContext, name: &str, path: &str) -> Result<()> {
     let (_, server_config) = load_db_server(ctx, db_config.server.as_str())?;
     let password = resolve_secret(ctx, &db_config.secret)?;
 
-    let mut input: Box<dyn Read> = if path == "-" {
+    let raw: Box<dyn Read> = if path == "-" {
         Box::new(io::stdin().lock())
     } else {
         let file = File::open(path).with_context(|| format!("open backup file '{path}'"))?;
-        Box::new(BufReader::new(file))
+        Box::new(file)
+    };
+
+    // Peek the gzip magic bytes so a `.gz` (or piped gzip) source is decoded
+    // transparently; the peeked bytes stay buffered for whichever reader wraps it.
+    let mut reader = BufReader::new(raw);
+    let gzipped = reader
+        .fill_buf()
+        .with_context(|| format!("read backup source '{path}'"))?
+        .starts_with(&[0x1f, 0x8b]);
+
+    let mut input: Box<dyn Read> = if gzipped {
+        Box::new(GzDecoder::new(reader))
+    } else {
+        Box::new(reader)
     };
 
     crate::spinner::Spinner::run(format!("restoring '{db_name}'"), |bar| {
