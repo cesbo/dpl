@@ -61,7 +61,7 @@ const PHASE_SPAN: &str = "dpl::phase";
 /// Sets the spinner message and stamps
 /// The previous phase's `✓` line is echoed when the next phase opens.
 pub fn phase(message: impl fmt::Display) -> tracing::span::EnteredSpan {
-    tracing::info_span!("phase", message = %message).entered()
+    tracing::info_span!(PHASE_SPAN, message = %message).entered()
 }
 
 /// Owns a per-deploy `tracing` subscriber and the deploy spinner. Install it as
