@@ -37,7 +37,7 @@ pub fn spinner_style() -> ProgressStyle {
 /// [`crate::log::fmt_stamp`] so the live line aligns with the `[MM:SS] ✓ …`
 /// completed-phase lines.
 pub fn deploy_style() -> ProgressStyle {
-    ProgressStyle::with_template("[{stamp:.dim}] {spinner:.cyan} {msg}")
+    ProgressStyle::with_template("[{stamp:.dim}] {spinner:.cyan}{msg}")
         .expect("static deploy spinner template")
         .with_key("stamp", |state: &ProgressState, w: &mut dyn fmt::Write| {
             let _ = write!(w, "{}", crate::log::fmt_stamp(state.elapsed()));
