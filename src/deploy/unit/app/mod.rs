@@ -250,13 +250,13 @@ mod tests {
         write_unit(
             base.path(),
             "site",
-            "type: domain\nhosts: [\"example.com\"]\nroutes:\n  - location: /\n    kind: serve_files\n    root: \"${web:export}\"\n",
+            "type: domain\nserver: nginx\nhosts: [\"example.com\"]\nroutes:\n  - location: /\n    kind: serve_files\n    root: \"${web:export}\"\n",
         );
         // References a different app — should be skipped.
         write_unit(
             base.path(),
             "other-site",
-            "type: domain\nhosts: [\"other.com\"]\nroutes:\n  - location: /\n    kind: reverse_proxy\n    target: \"${api:url}\"\n",
+            "type: domain\nserver: nginx\nhosts: [\"other.com\"]\nroutes:\n  - location: /\n    kind: reverse_proxy\n    target: \"${api:url}\"\n",
         );
         // A non-domain unit — must not match the domain predicate.
         write_unit(

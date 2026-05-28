@@ -1,9 +1,9 @@
+use std::collections::BTreeSet;
+
 use serde::{
     Deserialize,
     Serialize,
 };
-
-use std::collections::BTreeSet;
 
 use super::{
     host_name::HostName,
@@ -12,7 +12,13 @@ use super::{
 use crate::{
     MainContext,
     config::ResourceName,
-    deploy::env::Value,
+    deploy::{
+        env::Value,
+        unit::{
+            UnitConfig,
+            http_server::HttpServerConfig,
+        },
+    },
     error::{
         Location,
         RefError,
@@ -22,6 +28,8 @@ use crate::{
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct DomainConfig {
+    /// Name of the `http-server` unit that serves this domain.
+    pub server: ResourceName,
     pub hosts: Vec<HostName>,
     #[serde(default)]
     pub proxy: Option<ProxyConfig>,
@@ -87,6 +95,10 @@ impl DomainConfig {
     }
 
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
+        self.resolve_server(ctx)?
+            .validate_references(ctx)
+            .map_err(|err| err.at(Location::unit(self.server.as_str())))?;
+
         for (index, route) in self.routes.iter().enumerate() {
             let (value, leaf) = match &route {
                 RouteConfig::ReverseProxy { target, .. } => (target, "target"),
@@ -99,6 +111,19 @@ impl DomainConfig {
         }
         Ok(())
     }
+
+    fn resolve_server(&self, ctx: &MainContext) -> Result<HttpServerConfig, RefError> {
+        UnitConfig::load(ctx, &self.server)
+            .map_err(RefError::from)
+            .and_then(|cfg| match cfg {
+                UnitConfig::HttpServer(server) => Ok(server),
+                _ => Err(RefError::wrong_unit_type(
+                    self.server.to_string(),
+                    "http-server",
+                )),
+            })
+            .map_err(|err| err.at(Location::field("server")))
+    }
 }
 
 #[cfg(test)]
@@ -108,7 +133,7 @@ mod tests {
     #[test]
     fn domain_unit_deps_from_routes() {
         let config: DomainConfig = serde_yaml::from_str(
-            "hosts:\n  - example.com\nroutes:\n  - location: /api\n    kind: reverse_proxy\n    target: \"${backend:url}\"\n  - location: /app\n    kind: uwsgi\n    target: \"${worker:socket}\"\n  - location: /static\n    kind: serve_files\n    root: \"${assets:export}\"\n  - location: /lit\n    kind: serve_files\n    root: \"/var/www/site\"\n",
+            "server: web\nhosts:\n  - example.com\nroutes:\n  - location: /api\n    kind: reverse_proxy\n    target: \"${backend:url}\"\n  - location: /app\n    kind: uwsgi\n    target: \"${worker:socket}\"\n  - location: /static\n    kind: serve_files\n    root: \"${assets:export}\"\n  - location: /lit\n    kind: serve_files\n    root: \"/var/www/site\"\n",
         )
         .unwrap();
         let deps = config.unit_deps();
@@ -121,6 +146,7 @@ mod tests {
     fn parse_domain_config_with_custom_proxy() {
         let config: DomainConfig = serde_yaml::from_str(
             r#"
+server: web
 hosts:
   - example.com
   - www.example.com
@@ -170,6 +196,7 @@ routes:
     fn reject_custom_proxy_without_ip() {
         let result: Result<DomainConfig, _> = serde_yaml::from_str(
             r#"
+server: web
 hosts:
   - example.com
 proxy:
@@ -187,6 +214,7 @@ proxy:
     fn reject_missing_hosts() {
         let result: Result<DomainConfig, _> = serde_yaml::from_str(
             r#"
+server: web
 routes:
   - location: /
     kind: reverse_proxy
@@ -201,6 +229,7 @@ routes:
     fn reject_empty_hosts() {
         let result: Result<DomainConfig, _> = serde_yaml::from_str(
             r#"
+server: web
 hosts: []
 routes:
   - location: /
@@ -217,6 +246,7 @@ routes:
     fn reject_route_with_no_action() {
         let result: Result<DomainConfig, _> = serde_yaml::from_str(
             r#"
+server: web
 hosts:
   - example.com
 routes:
@@ -231,6 +261,7 @@ routes:
     fn reject_route_with_unknown_kind() {
         let result: Result<DomainConfig, _> = serde_yaml::from_str(
             r#"
+server: web
 hosts:
   - example.com
 routes:
@@ -247,6 +278,7 @@ routes:
     fn reject_serve_files_without_root() {
         let result: Result<DomainConfig, _> = serde_yaml::from_str(
             r#"
+server: web
 hosts:
   - example.com
 routes:
@@ -263,6 +295,7 @@ routes:
     fn reject_unknown_field_on_serve_files() {
         let result: Result<DomainConfig, _> = serde_yaml::from_str(
             r#"
+server: web
 hosts:
   - example.com
 routes:
@@ -274,5 +307,63 @@ routes:
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_references_rejects_wrong_server_type() {
+        use std::fs;
+
+        use tempfile::TempDir;
+
+        use crate::error::RefErrorKind;
+
+        // `server: nginx` resolves to an app unit, not http-server.
+        let base = TempDir::new().unwrap();
+        let nginx_dir = base.path().join("nginx");
+        fs::create_dir_all(&nginx_dir).unwrap();
+        fs::write(
+            nginx_dir.join("config.yaml"),
+            "type: app\nimage: alpine\nport: 8080\nbuilds: []\nruntime:\n  cmd: ./run\n",
+        )
+        .unwrap();
+
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: None,
+        };
+        let config: DomainConfig =
+            serde_yaml::from_str("server: nginx\nhosts:\n  - example.com\nroutes: []\n").unwrap();
+
+        let err = config.validate_references(&ctx).unwrap_err();
+        assert!(matches!(&err.trail[0], Location::Field { path } if path == "server"));
+        assert!(
+            matches!(
+                &err.kind,
+                RefErrorKind::WrongUnitType { unit, expected }
+                    if unit == "nginx" && *expected == "http-server",
+            ),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn validate_references_accepts_http_server() {
+        use std::fs;
+
+        use tempfile::TempDir;
+
+        let base = TempDir::new().unwrap();
+        let nginx_dir = base.path().join("nginx");
+        fs::create_dir_all(&nginx_dir).unwrap();
+        fs::write(nginx_dir.join("config.yaml"), "type: http-server\n").unwrap();
+
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: None,
+        };
+        let config: DomainConfig =
+            serde_yaml::from_str("server: nginx\nhosts:\n  - example.com\nroutes: []\n").unwrap();
+
+        config.validate_references(&ctx).unwrap();
     }
 }

@@ -20,10 +20,6 @@ pub const NGINX_WWW_VOLUME: &str = "dpl-nginx-www";
 /// Mount base of [`NGINX_WWW_VOLUME`] inside the nginx container.
 pub const NGINX_WWW_MOUNT: &str = "/var/www";
 
-/// Podman volume for nginx configs; mounts to `/etc/nginx/conf.d` in the nginx
-/// container. Holds `<domain>.conf` files at its root.
-pub const NGINX_CONF_VOLUME: &str = "dpl-nginx-conf";
-
 /// Run podman and capture its trimmed stdout.
 pub fn run_podman(args: &[&str]) -> io::Result<String> {
     let output = Command::new("podman")

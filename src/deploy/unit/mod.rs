@@ -183,6 +183,7 @@ mod tests {
         let config: UnitConfig = serde_yaml::from_str(
             r#"
 type: domain
+server: nginx
 hosts:
   - example.com
 proxy:
@@ -493,7 +494,7 @@ secret: pg-pass
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join("config.yaml"),
-            "type: domain\nhosts:\n  - example.com\n",
+            "type: domain\nserver: nginx\nhosts:\n  - example.com\n",
         )
         .unwrap();
 
