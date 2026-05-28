@@ -1,8 +1,5 @@
 use std::{
-    io::{
-        self,
-        BufRead,
-    },
+    io,
     path::Path,
     process::{
         Command,
@@ -18,7 +15,7 @@ use tracing::{
 use super::model::ExportConfig;
 use crate::{
     config::ResourceName,
-    log::CHILD_TARGET,
+    log::child_output,
     podman::{
         NGINX_WWW_VOLUME,
         ensure_volume,
@@ -94,12 +91,12 @@ impl<'a> PodmanContext<'a> {
         let stdout = child.stdout.take().unwrap();
         let stdout_dispatch = dispatch.clone();
         let stdout_handle = std::thread::spawn(move || {
-            tracing::dispatcher::with_default(&stdout_dispatch, || log_podman_output(stdout));
+            tracing::dispatcher::with_default(&stdout_dispatch, || child_output(stdout));
         });
 
         let stderr = child.stderr.take().unwrap();
         let stderr_handle = std::thread::spawn(move || {
-            tracing::dispatcher::with_default(&dispatch, || log_podman_output(stderr));
+            tracing::dispatcher::with_default(&dispatch, || child_output(stderr));
         });
 
         let _ = stdout_handle.join();
@@ -190,20 +187,6 @@ impl<'a> PodmanContext<'a> {
                 self.name, self.version
             ),
         }
-    }
-}
-
-fn log_podman_output<R>(reader: R)
-where
-    R: io::Read,
-{
-    let reader = io::BufReader::new(reader);
-
-    for line in reader.lines() {
-        let Ok(line) = line else {
-            break;
-        };
-        debug!(target: CHILD_TARGET, "{line}");
     }
 }
 

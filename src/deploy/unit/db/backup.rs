@@ -15,7 +15,10 @@ use std::{
 };
 
 use super::model::DbServerEngine;
-use crate::config::ResourceName;
+use crate::{
+    config::ResourceName,
+    log::child_output,
+};
 
 impl DbServerEngine {
     /// Stream a logical SQL dump of `db_name` to `out`, running the engine's
@@ -58,20 +61,20 @@ impl DbServerEngine {
 
         // Pump stdout in this thread while a second thread drains stderr; both
         // pipes are read concurrently, so neither can block the other.
-        let (copy_res, drain_res) = thread::scope(|scope| {
+        let copy_res = thread::scope(|scope| {
             let drainer = scope.spawn(|| drain_stderr(stderr, on_stderr));
             let copy_res = io::copy(&mut stdout, out);
-            let drain_res = drainer.join().expect("stderr drain thread panicked");
-            (copy_res, drain_res)
+            drainer.join().expect("stderr drain thread panicked");
+            copy_res
         });
 
-        finish(child.wait()?, copy_res, drain_res)
+        finish(child.wait()?, copy_res)
     }
 
     /// Replay a logical SQL dump read from `input` into `db_name`, piping it to
     /// the engine's client inside the running db-server container as `user`.
     /// The client's stdout is discarded (command tags are noise) and its stderr
-    /// is streamed to `on_stderr` on a separate thread.
+    /// is streamed to the build log.
     pub fn restore<R: Read>(
         self,
         server: &ResourceName,
@@ -79,7 +82,6 @@ impl DbServerEngine {
         password: &str,
         db_name: &str,
         input: &mut R,
-        on_stderr: &mut (dyn FnMut(&[u8]) + Send),
     ) -> io::Result<()> {
         let server = server.scoped_unit_name();
         let password_env = self.client_password_env();
@@ -105,17 +107,19 @@ impl DbServerEngine {
             .take()
             .ok_or_else(|| io::Error::other("failed to capture podman exec stderr"))?;
 
-        let (copy_res, drain_res) = thread::scope(|scope| {
-            let drainer = scope.spawn(|| drain_stderr(stderr, on_stderr));
+        let dispatch = tracing::dispatcher::get_default(|d| d.clone());
+        let copy_res = thread::scope(|scope| {
+            let drainer = scope
+                .spawn(|| tracing::dispatcher::with_default(&dispatch, || child_output(stderr)));
             let copy_res = io::copy(input, &mut stdin);
             // Close stdin so the client sees EOF, exits, and lets the drain
             // thread reach end-of-stderr; only then can the join below return.
             drop(stdin);
-            let drain_res = drainer.join().expect("stderr drain thread panicked");
-            (copy_res, drain_res)
+            drainer.join().expect("stderr drain thread panicked");
+            copy_res
         });
 
-        finish(child.wait()?, copy_res, drain_res)
+        finish(child.wait()?, copy_res)
     }
 
     /// Args to dump `db_name` to stdout as `user`.
@@ -142,34 +146,16 @@ impl DbServerEngine {
 }
 
 /// Read `stderr` to EOF, calling `on_line` with each line (newline trimmed).
-fn drain_stderr<R: Read>(stderr: R, on_line: &mut (dyn FnMut(&[u8]) + Send)) -> io::Result<()> {
+fn drain_stderr<R: Read>(stderr: R, on_line: &mut (dyn FnMut(&[u8]) + Send)) {
     let mut reader = BufReader::new(stderr);
     let mut line = Vec::new();
     loop {
         line.clear();
-        if reader.read_until(b'\n', &mut line)? == 0 {
-            return Ok(());
+        match reader.read_until(b'\n', &mut line) {
+            Ok(len) if len > 0 => on_line(trim_newline(&line)),
+            _ => break,
         }
-        on_line(trim_newline(&line));
     }
-}
-
-/// Build the final result. The dump/restore stderr has already been streamed,
-/// so a failed exit only needs the status; copy/drain errors surface only when
-/// the child itself succeeded (otherwise the broken pipe is just a symptom).
-fn finish(
-    status: ExitStatus,
-    copy_res: io::Result<u64>,
-    drain_res: io::Result<()>,
-) -> io::Result<()> {
-    if !status.success() {
-        return Err(io::Error::other(format!(
-            "podman exec exited with {status}"
-        )));
-    }
-    copy_res?;
-    drain_res?;
-    Ok(())
 }
 
 fn trim_newline(line: &[u8]) -> &[u8] {
@@ -181,6 +167,18 @@ fn trim_newline(line: &[u8]) -> &[u8] {
         end -= 1;
     }
     &line[.. end]
+}
+
+fn finish(status: ExitStatus, copy_res: io::Result<u64>) -> io::Result<()> {
+    if !status.success() {
+        return Err(io::Error::other(format!(
+            "podman exec exited with {status}"
+        )));
+    }
+
+    copy_res?;
+
+    Ok(())
 }
 
 #[cfg(test)]

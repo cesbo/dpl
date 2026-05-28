@@ -6,7 +6,6 @@ use std::io::{
 };
 
 use flate2::read::GzDecoder;
-use tracing::debug;
 
 use super::{
     DbServerUnit,
@@ -20,10 +19,8 @@ use crate::{
         UnitConfig,
         state::DeployState,
     },
-    log::{
-        self,
-        CHILD_TARGET,
-    },
+    error::RefError,
+    log,
 };
 
 #[derive(Debug)]
@@ -57,17 +54,18 @@ impl<'a> DbUnit<'a> {
             _ => {
                 return Err(DeployError::unit(
                     format!("load db-server '{}' config", &self.config.server),
-                    io::Error::other(format!(
-                        "unit '{}' is not a db-server",
-                        &self.config.server
-                    )),
+                    RefError::wrong_unit_type(self.config.server.to_string(), "db-server"),
                 ));
             }
         };
 
-        let root_password = self.ctx.resolve_secret(&server_config.secret).map_err(|e| {
-            DeployError::unit(format!("resolve secret '{}'", &server_config.secret), e)
-        })?;
+        let root_password = self
+            .ctx
+            .resolve_secret(&server_config.secret)
+            .map_err(|e| {
+                DeployError::unit(format!("resolve secret '{}'", &server_config.secret), e)
+            })?;
+
         let user_password = self.ctx.resolve_secret(&self.config.secret).map_err(|e| {
             DeployError::unit(format!("resolve secret '{}'", &self.config.secret), e)
         })?;
@@ -115,9 +113,6 @@ impl<'a> DbUnit<'a> {
             let _phase = log::phase(format!("restoring database '{}'", &self.name));
             let mut input = open_backup(backup)
                 .map_err(|e| DeployError::unit(format!("restore database '{}'", &self.name), e))?;
-            let mut on_stderr = |line: &[u8]| {
-                debug!(target: CHILD_TARGET, "{}", String::from_utf8_lossy(line));
-            };
             server_config
                 .engine
                 .restore(
@@ -126,7 +121,6 @@ impl<'a> DbUnit<'a> {
                     &user_password,
                     self.name.as_str(),
                     &mut input,
-                    &mut on_stderr,
                 )
                 .map_err(|e| DeployError::unit(format!("restore database '{}'", &self.name), e))?;
         }

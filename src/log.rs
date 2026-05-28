@@ -6,6 +6,7 @@ use std::{
     fs::OpenOptions,
     io::{
         self,
+        BufRead,
         BufWriter,
         Write,
     },
@@ -51,6 +52,23 @@ use crate::spinner::Spinner;
 
 /// Child-process (podman) output: file only `debug!(target: CHILD_TARGET, …)`.
 pub const CHILD_TARGET: &str = "dpl::child";
+
+/// Drain a child process's output stream to EOF, emitting each line to the
+/// build log as a [`CHILD_TARGET`] event (file-only).
+///
+/// Streams are usually drained on a worker thread that does not inherit the
+/// deploy's thread-default subscriber, so capture it with
+/// `tracing::dispatcher::get_default` and wrap this call in `with_default` for
+/// the lines to reach the log (see `app::podman` and `db::backup`).
+pub fn child_output<R: io::Read>(reader: R) {
+    let reader = io::BufReader::new(reader);
+    for line in reader.lines() {
+        let Ok(line) = line else {
+            break;
+        };
+        tracing::debug!(target: CHILD_TARGET, "{line}");
+    }
+}
 
 /// Name of the spans opened by [`phase`]; how [`DeployLayer`] tells a deploy
 /// phase apart from any other span. Must match the literal in [`phase`] (span
@@ -336,6 +354,39 @@ mod tests {
                 .any(|l| l.ends_with("ERROR: health check failed"))
         );
         assert!(lines.iter().any(|l| l.contains("failed")));
+    }
+
+    #[test]
+    fn child_output_from_a_spawned_thread_reaches_the_file() {
+        // The db restore drains the client's stderr on a separate thread, which
+        // does not inherit the deploy's thread-local subscriber. Callers must
+        // propagate the dispatcher (as `database.rs` does) for those lines to
+        // land in the build log; this guards that the propagation works.
+        init();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("log").join("build-7.log");
+
+        let log = DeployLog::open(&path, "db-sezam", 7).unwrap();
+        {
+            let _default = log.set_default();
+            let _phase = phase("restoring database");
+
+            let dispatch = tracing::dispatcher::get_default(|d| d.clone());
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    let stream = b"ERROR 1064 (42000): syntax error\n".as_slice();
+                    tracing::dispatcher::with_default(&dispatch, || child_output(stream));
+                });
+            });
+        }
+        log.finish_err();
+
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            body.lines().any(|l| l.ends_with("ERROR 1064 (42000): syntax error")),
+            "child stderr emitted from a spawned thread must reach the build log; got:\n{body}"
+        );
     }
 
     #[test]
