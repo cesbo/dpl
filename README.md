@@ -1,28 +1,31 @@
 # dpl
 
-`dpl` is a CLI deploy tool. It manages local units (apps, database servers,
-databases, domains), keeps encrypted secrets on disk, and performs one-shot
-deploys: extract a `.tar.gz`, render build artifacts from MiniJinja templates,
-run `podman build`, optionally export static files, and (re)install the
-generated systemd service.
+`dpl` is a single-binary deploy CLI. It manages local units (apps, database
+servers, databases, domains), keeps encrypted secrets on disk, and performs
+one-shot deploys: extract a `.tar.gz`, render artifacts from MiniJinja
+templates, run `podman build`, and (re)install the generated systemd service.
 
-`dpl` is not a daemon — every command runs to completion in the foreground.
+`dpl` is not a daemon. Every command runs to completion in the foreground.
 
 ## Requirements
 
-- linux - recommended Fedora 42
-- systemd
+- Linux with systemd
 - podman
 
-### Directory Structure
+## Layout
 
-- `{base_dir}` - base directory for all `dpl` files (default: `/opt/dpl`), set via `--base`
-- `{unit_dir}` - unit directory: `{base_dir}/{unit_name}/`
+- `{base_dir}` - base directory, default `/opt/dpl`, override with `--base`
+- `{unit_dir}` - one per unit, at `{base_dir}/{name}/`
+- `{base_dir}/.secrets/` - encrypted secrets
+
+Each unit directory holds:
+
+- `config.yaml` - unit config (`type:` selects the variant)
+- `state.json` - deploy state (app units only)
+- `.deploy.lock` - advisory `flock(2)` held during a deploy
+- `log/build-{version}.log` - last build log
 
 ## CLI
-
-`dpl` exposes two top-level commands plus three subcommand groups. The
-`--base` flag is global and defaults to `/opt/dpl`:
 
 ```bash
 dpl --base /opt/dpl <command> [args]
@@ -30,41 +33,15 @@ dpl --base /opt/dpl <command> [args]
 
 | Command | Purpose |
 |---------|---------|
-| `dpl check <name>`   | Validate a unit's config and reference graph |
-| `dpl inspect <name>` | Show a unit's runtime state as JSON |
-| `dpl unit`           | Deploy units (`deploy`) |
-| `dpl db`             | Inspect and back up databases (`wait`, `console`, `backup`) |
-| `dpl secret`         | Manage encrypted runtime secrets (`create`, `cat`, `rm`, `ls`) |
+| `dpl check <name>`   | Validate config and reference graph |
+| `dpl deploy <name> [path]` | Deploy a unit. App: `.tar.gz` (or `-`). Db: optional SQL dump to restore |
+| `dpl inspect <name>` | Print runtime state as JSON |
+| `dpl db wait\|console\|backup` | Database operations |
+| `dpl secret create\|cat\|ls\|rm` | Manage encrypted secrets |
 
-Run any command with `--help` for the full flag list.
+Append `--help` to any command for the full flag list.
 
-## Unit Config
-
-Each unit lives in its own directory `{unit_dir}` and has:
-
-- `config.yaml` - unit config. The `type` field selects the variant: `app`,
-  `db-server`, `db`, or `domain`
-- `state.json` - serialized deploy state (`active_version` and `latest_build`).
-  Only app deploys update this file
-- `.deploy.lock` - advisory `flock(2)` held for the duration of a deploy so
-  two `dpl deploy` invocations against the same unit can't race
-
-## App Unit
-
-An app unit represents a containerized application. `dpl deploy` accepts a
-`.tar.gz` archive with the source code, generates a `containerfile` from the
-config, builds a podman image, and optionally exports static files from the
-built image.
-
-### Configuration file
-
-File:
-
-```text
-{unit_dir}/config.yaml
-```
-
-Example:
+## App unit
 
 ```yaml
 type: app
@@ -73,23 +50,18 @@ port: 3000
 
 builds:
   - files: ["package.json", "package-lock.json"]
-    script: |
-      npm ci
-
+    script: npm ci
   - files: ["*"]
     env:
       NODE_ENV: production
       NPM_TOKEN: ${secret:npm-token}
-    script: |
-      npm run build
+    script: npm run build
 
 runtime:
   env:
-    NODE_ENV: production
     DB_URL: ${app-db:url}
     API_TOKEN: ${secret:api-token}
-  init: |
-    test -d /app/dist
+  init: test -d /app/dist
   cmd: node server.js
 
 volumes:
@@ -106,298 +78,134 @@ timers:
     script: node cleanup.js
 ```
 
-Fields:
-
-- `type` - must be `app`
-- `image` - base image for the generated `containerfile`
-- `port` - port the application listens on
-- `build` - list of build layers (see below)
-- `runtime` - runtime configuration (see below)
-- `volumes` - persistent storage mounted into the container. Data in volumes
-  survives redeploys
+- `builds` - ordered build layers. `files` lists archive paths copied into
+  `/app` (`"*"` = all). `script` is optional
+- `runtime.init` - optional pre-start script
+- `volumes` - persistent storage (survives redeploys)
 - `exports` - copies files from the built image into the shared nginx web
   volume so domain units can serve them
-- `timers` - periodic scripts to run in the container
-
-Runtime fields:
-
-- `env` - environment variables. Values may be plain strings or template
-  expressions (see [Env templates](#env-templates))
-- `init` - optional shell script that runs before `cmd`
-- `cmd` - main start command
-
-Build layer fields:
-
-- `files` - paths copied from the extracted archive into `/app`. Use `"*"` to
-  copy all files
-- `env` - build-time environment variables for the layer script. Supports the
-  same templates as `runtime.env`
-- `script` - shell script for the layer. If missing, the layer only copies files
+- `timers` - periodic in-container scripts
 
 ### Env templates
 
-`env` values support two template forms:
+`env` values may be plain strings or templates:
 
-- `${secret:<name>}` - inlined plaintext of an encrypted secret. See
-  [Secrets](#secrets)
-- `${<db-unit>:<key>}` - export of a referenced `db` unit. Allowed keys:
-  `name`, `user`, `password`, `host`, `port`, `url`. The `db` unit must already
-  exist. Every `db` unit referenced this way is automatically treated as a
-  startup dependency: a `db wait` gate is added to the generated service and
-  its reference chain is validated recursively (no separate `databases:` list)
-- `${<app-unit>:<key>}` - export of a referenced `app` unit. Allowed keys:
-  `url` (`http://dpl-<name>:<port>`, for `proxy_pass`), `socket`
-  (`dpl-<name>:<port>` without scheme, for `uwsgi_pass`/`fastcgi_pass`), and
-  `export` (the app's static export path inside the nginx container)
+- `${secret:<name>}` - decrypted plaintext of a secret (see [Secrets](#secrets))
+- `${<db-unit>:<key>}` - export from a `db` unit. Keys: `name`, `user`,
+  `password`, `host`, `port`, `url`. The referenced db is added as a startup
+  dependency automatically (no separate `databases:` list)
+- `${<app-unit>:<key>}` - export from an `app` unit. Keys: `url`
+  (`http://dpl-<name>:<port>`), `socket` (without scheme), `export` (static
+  export path inside the nginx container)
 
 References are validated by `dpl check`.
 
-## Database Units
+## Database units
 
-Two unit types make up the database story:
-
-- **`db-server`** - a containerized DBMS (PostgreSQL, MariaDB, or MySQL) managed as a
-  systemd unit. Each `db-server` runs one engine instance and holds a single
-  root password
-- **`db`** - a single database + login user inside an existing `db-server`. A
-  `db` unit is referenced by app units and exposes connection values
-  (`name`, `user`, `password`, `host`, `port`, `url`)
-
-### `db-server` config
+- **`db-server`** - containerized DBMS (PostgreSQL, MariaDB, or MySQL). One
+  engine instance, one root password
+- **`db`** - a single database + login user inside an existing `db-server`
 
 ```yaml
+# db-server
 type: db-server
-engine: postgresql      # or "mariadb", "mysql"
+engine: postgresql      # or "mariadb" / "mysql"
 version: 18-alpine
 secret: db-server-password
 ```
 
-- `engine` - `postgresql`, `mariadb`, or `mysql`
-- `version` - image tag. Verified against the registry with `podman manifest inspect`
-- `secret` - name of an existing `dpl secret` holding the root password
-
-### `db` config
-
 ```yaml
+# db
 type: db
-server: db-main         # name of an existing db-server unit
-user: app1
+server: db-main         # parent db-server unit name
+user: app1              # defaults to the db unit name
 secret: app1-db-password
 ```
 
-- `server` - name of the parent `db-server` unit
-- `user` - SQL login that owns the database (defaults to the db unit name)
-- `secret` - name of an existing `dpl secret` holding the user's password
-
-The database name is the unit name itself.
+The database name is the unit name.
 
 ### Commands
 
-Write the unit's `config.yaml` under `{base_dir}/{name}/` (see the schemas
-above), then provision it with `dpl deploy`. Passing a backup path to
-`dpl deploy <db>` restores the dump in the same step — useful for bringing a
-fresh host up from an existing backup.
-
 ```bash
-# Bring up a containerized DBMS from {base_dir}/db-main/config.yaml.
+# Provision a DBMS / database. Pass a backup to restore in the same step.
 dpl deploy db-main
-
-# Create the database + login user inside the running db-server.
 dpl deploy app1
-
-# Same, but also restore a dump (the database must not exist yet).
 dpl deploy app1 app1.sql.gz
 gunzip -c app1.sql.gz | dpl deploy app1 -
 
-# Block until the db answers a ping (default 60s timeout).
-dpl db wait app1 --timeout 60
-
-# Open an interactive SQL console as the db's login user (use --root for the superuser).
-dpl db console app1
-
-# Dump a database to a SQL file, or stdout when the path is omitted.
-dpl db backup app1 app1.sql
-dpl db backup app1 app1.sql.gz       # .gz suffix → gzip
-dpl db backup app1 - | gzip > app1.sql.gz
+dpl db wait app1 --timeout 60         # block until reachable
+dpl db console app1                   # interactive client (--root for superuser)
+dpl db backup app1 app1.sql           # dump to file
+dpl db backup app1 app1.sql.gz        # .gz → gzip
+dpl db backup app1 - | gzip > out.gz  # stdout when path is omitted/`-`
 ```
 
-`dpl db console` opens the engine's interactive client (`psql`, `mariadb`, or
-`mysql`) inside the running `db-server` via `podman exec -it`, connected to the
-database as its login user (or the superuser with `--root`).
+`dpl db console` runs `psql` / `mariadb` / `mysql` inside the running
+`db-server` via `podman exec -it`.
 
-`dpl db backup` runs the engine's dump client (`pg_dump`, `mariadb-dump`, or
-`mysqldump`) inside the running `db-server` via `podman exec`, as the `db`
-unit's login user. The `path` defaults to `-` (stdout) so you can pipe
-through any tool; a `.gz` destination (or `-z`) compresses on the way out.
-Client messages (e.g. PostgreSQL `NOTICE` lines) go to stderr above the
-spinner so stdout stays clean for piping; on failure those messages are
-already on screen and the final error only adds the exit status.
+`dpl db backup` runs the engine's dump client as the db's login user. Client
+messages go to stderr so stdout stays clean for piping.
 
-`dpl deploy <db> <backup>` replays a dump via the engine's restore client
-(`psql`, `mariadb`, or `mysql`) after creating the database. The reader is
-auto-decoded if it starts with the gzip magic bytes, so `.sql` and `.sql.gz`
-both work. Use `-` as the path to read the dump from stdin. The deploy
-refuses if the database already exists — delete it manually to re-import.
-Restore output goes to the unit's build log (`{base_dir}/{name}/log/`)
-alongside the rest of the deploy.
+`dpl deploy <db> <backup>` refuses if the database already exists (delete it
+manually to re-import). The reader is gzip-detected by magic bytes, so `.sql`
+and `.sql.gz` both work.
 
 ## Secrets
 
-Runtime values that should not live in `config.yaml` (DB passwords, API keys,
-signing secrets) are stored as encrypted files under `{base_dir}/.secrets/`
-and inlined into generated artifacts at deploy time.
-
-Storage layout:
-
-- `{base_dir}/.secrets/master.key` - 32-byte AES-256-GCM master key, mode `0600`
-- `{base_dir}/.secrets/<name>.bin` - encrypted secret, mode `0600`.
-  Subdirectories are allowed (`db/prod-password.bin`)
-
-Reference a secret from a unit config with the `${secret:<name>}` template:
-
-```yaml
-runtime:
-  env:
-    ALLOWED_HOSTS: app.example.com
-    SECRET_KEY: ${secret:secret_name}
-    DB_PASSWORD: ${secret:db/prod-password}
-```
-
-The tag value is the secret name (matching the `<name>` used with
-`dpl secret create`). Plain strings and tagged secrets can be mixed freely in
-the same `env` map. At deploy time `dpl` decrypts each tagged value and
-inlines the plaintext into the generated `run.sh` (or `build-N.sh` for
-build-layer envs). For `db-server` units, the root password is inlined into
-the generated systemd unit at `dpl deploy` time.
-
-### CLI
+Secrets are encrypted files under `{base_dir}/.secrets/`, decrypted and
+inlined into generated artifacts (`run.sh`, `build-N.sh`, db `Environment=`)
+at deploy time.
 
 ```bash
-dpl secret create db/prod-password                          # interactive prompt; Enter to generate
-echo -n 'topsecret' | dpl secret create db/prod-password -  # read from stdin
-dpl secret create db/prod-password ./payload.txt            # read from a file
-
-dpl secret cat db/prod-password                          # print plaintext to stdout
-dpl secret ls                                            # print secret names
-dpl secret rm db/prod-password                           # delete
+dpl secret create db/prod-password                  # interactive; empty input generates a random 32-char value
+echo -n 'topsecret' | dpl secret create foo -       # read stdin
+dpl secret create foo ./payload.txt                 # read file
+dpl secret cat foo                                  # print plaintext
+dpl secret ls
+dpl secret rm foo
 ```
 
-`secret create` takes an optional source:
-
-- omitted - prompts for the value (terminal echo off). An empty input generates
-  a random 32-character alphanumeric secret and prints it once
-- `-` - reads stdin to EOF; a single trailing `\n` is stripped
-- any other value - treated as a file path
-
-The first `dpl secret create` creates `{base_dir}/.secrets/master.key`
-automatically.
+Reference a secret from any `env` map with `${secret:<name>}`. The first
+`dpl secret create` creates `{base_dir}/.secrets/master.key` automatically.
 
 ### Threat model
 
-The encryption keeps plaintext out of `config.yaml`, source control, and
-ad-hoc backups of just the unit directory. It does not protect against an
-attacker with root on the deploy host: the master key sits next to the
-encrypted files, and decrypted values are inlined into the generated `run.sh`,
-systemd units, and the built image.
+Encryption keeps plaintext out of `config.yaml`, source control, and ad-hoc
+backups of just the unit directory. It does not protect against an attacker
+with root on the deploy host: the master key sits next to the encrypted
+files, and decrypted values end up inlined into the generated artifacts.
 
 ## Deploy
 
-### Validate a unit
-
 ```bash
-dpl check myapp
-```
-
-Parses `{unit_dir}/config.yaml` and resolves every reference: each
-`${secret:...}` must exist and each `${<db>:<key>}` must use a known export.
-Referenced `db` units are validated recursively through their db-server and
-secret. Exits non-zero on the first problem.
-
-### Trigger a deploy
-
-```bash
+dpl check myapp                                     # validate config + references
 git archive --format=tar.gz HEAD | dpl deploy myapp -
-# or, from a file:
 dpl deploy myapp ./build.tar.gz
+dpl inspect myapp                                   # JSON status
 ```
 
-The archive path is required: pass a file, or `-` to read from stdin.
+A deploy acquires `.deploy.lock`, bumps the version, renders artifacts, runs
+`podman build`, exports configured files, (re)installs the systemd service,
+runs the health check, and prints the elapsed time. Non-zero exit on any
+failure.
 
-`dpl deploy` acquires `{unit_dir}/.deploy.lock`, bumps the version,
-renders artifacts, runs `podman build`, exports any configured files,
-(re)installs the systemd service, runs the health check, and prints the
-elapsed time. The command exits non-zero if any step fails.
-
-### Inspect deploy state
-
-```bash
-dpl inspect myapp
-```
-
-Prints a structured JSON report grouped into sections. App units report a
-`deploy` section (on-disk deploy state) and a `container` section (live
-`podman container inspect` data). Each field carries a `health` signal
-(`ok`, `warn`, `down`, or `unknown`) for machine consumers:
-
-```json
-{
-  "name": "myapp",
-  "kind": "app",
-  "sections": [
-    {
-      "title": "deploy",
-      "fields": [
-        { "label": "version", "value": "3", "health": "ok" },
-        { "label": "status", "value": "ready", "health": "ok" },
-        { "label": "active", "value": "3", "health": "unknown" }
-      ]
-    },
-    {
-      "title": "container",
-      "fields": [
-        { "label": "state", "value": "running", "health": "ok" },
-        { "label": "started", "value": "2026-05-25T08:00:00Z", "health": "unknown" },
-        { "label": "restarts", "value": "0", "health": "unknown" },
-        { "label": "image", "value": "localhost/myapp:3", "health": "unknown" }
-      ]
-    }
-  ]
-}
-```
-
-Possible deploy `status` values:
-
-- `idle`
-- `building`
-- `ready`
-- `failed`
-
-When `status` is `failed`, an `error` field in the `deploy` section carries
-the failure message. Non-app units report only `name` and `kind`.
-
-The full build log is at `{unit_dir}/log/build-{version}.log`.
+`dpl inspect` prints sections (`deploy`, `container` for app units). Each
+field carries a `health` signal (`ok`, `warn`, `down`, `unknown`). Deploy
+`status` is one of `idle`, `building`, `ready`, `failed`. On `failed`, an
+`error` field carries the message.
 
 ## Notes
 
-- If the archive has a single top-level folder, `dpl` flattens it after
-  extraction.
+- If the archive has a single top-level folder, `dpl` flattens it after extraction.
 
 ## Development
 
-Build:
-
 ```bash
 cargo build
-```
-
-Run tests:
-
-```bash
 cargo test
-```
-
-Run a deploy from the source tree:
-
-```bash
+cargo clippy
 cargo run -- --base /opt/dpl deploy myapp ./build.tar.gz
 ```
+
+Never run `cargo fmt` - the project uses custom rustfmt rules. Rust edition
+is `2024`.
