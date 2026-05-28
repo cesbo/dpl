@@ -15,13 +15,13 @@ use indicatif::{
     ProgressStyle,
 };
 
-const SIMPLE: &[&str] = &["◜", "◝", "◞", "◟", "✓"];
+const SPINNER: &[&str] = &["◩", "⬒", "⬔", "◨", "◪", "⬓", "⬕", "◧", "✓"];
 
 /// The db spinner style (`dpl db …`): trailing elapsed, no stamp prefix.
 pub fn spinner_style() -> ProgressStyle {
     ProgressStyle::with_template("{spinner:.cyan} {msg} ({elapsed:.dim})")
         .expect("static spinner template")
-        .tick_strings(SIMPLE)
+        .tick_strings(SPINNER)
 }
 
 /// The deploy spinner style: an `[MM:SS]` stamp prefix matching the phase lines
@@ -34,7 +34,7 @@ pub fn deploy_style() -> ProgressStyle {
         .with_key("stamp", |state: &ProgressState, w: &mut dyn fmt::Write| {
             let _ = write!(w, "{}", crate::log::fmt_stamp(state.elapsed()));
         })
-        .tick_strings(SIMPLE)
+        .tick_strings(SPINNER)
 }
 
 /// Owns a styled progress spinner and its lifecycle. The single source of bar
