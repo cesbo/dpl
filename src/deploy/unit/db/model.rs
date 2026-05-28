@@ -13,6 +13,7 @@ use crate::{
     config::{
         ResourceName,
         SecretName,
+        deserialize_string_from_scalar,
     },
     deploy::unit::UnitConfig,
     error::{
@@ -32,6 +33,7 @@ const USERINFO: &AsciiSet = &NON_ALPHANUMERIC
 #[serde(deny_unknown_fields)]
 pub struct DbServerConfig {
     pub engine: DbServerEngine,
+    #[serde(deserialize_with = "deserialize_string_from_scalar")]
     pub version: String,
     pub secret: SecretName,
 }
