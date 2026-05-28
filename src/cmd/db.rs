@@ -11,7 +11,6 @@ use std::{
         Read,
         Write,
     },
-    path::Path,
     process::{
         Command,
         Stdio,
@@ -55,6 +54,7 @@ use crate::{
                 DbConfig,
                 DbServerConfig,
                 DbServerEngine,
+                DbServerUnit,
             },
             list_units,
         },
@@ -200,64 +200,11 @@ fn init(
         secret: secret_name,
     };
 
-    let root_password = resolve_secret(ctx, &config.secret)?;
-
-    let unit_dir = scopeguard::guard(unit_name.unit_dir(ctx), |unit_dir| {
-        let _ = fs::remove_dir_all(unit_dir);
-    });
-
-    UnitConfig::DbServer(config.clone())
+    UnitConfig::DbServer(config)
         .save(ctx, &unit_name)
         .with_context(|| format!("write unit '{unit_name}' config"))?;
 
-    let service_name = crate::deploy::unit::db::create_service_file(
-        Path::new(crate::systemd::SYSTEMD_DIR),
-        &unit_name,
-        config.engine,
-        &config.version,
-        &root_password,
-    )
-    .with_context(|| format!("create serivce file for db-server '{unit_name}'"))?;
-
-    crate::systemd::reload().context("reload systemd")?;
-    crate::spinner::Spinner::run(
-        format!(
-            "starting db-server '{unit_name}' ({} {})",
-            config.engine.as_str(),
-            &config.version
-        ),
-        |_| crate::systemd::enable_service(&service_name),
-    )
-    .with_context(|| format!("start service for db-server '{unit_name}'"))?;
-
-    crate::spinner::Spinner::run(
-        format!("waiting for db-server '{unit_name}'"),
-        |_| -> Result<()> {
-            let deadline = Instant::now() + Duration::from_secs(60);
-            let interval = Duration::from_millis(800);
-            loop {
-                if config.engine.ping(&unit_name, &root_password, None).is_ok() {
-                    return Ok(());
-                }
-                ensure!(
-                    Instant::now() < deadline,
-                    "timeout waiting for db-server '{unit_name}'"
-                );
-                sleep(interval);
-            }
-        },
-    )?;
-
-    scopeguard::ScopeGuard::into_inner(unit_dir);
-
-    println!(
-        "{} Started db server '{unit_name}' ({engine} {version})",
-        console::style("✓").green(),
-        engine = config.engine.as_str(),
-        version = &config.version
-    );
-
-    Ok(())
+    super::unit::deploy(ctx, &unit_name, None)
 }
 
 fn create(
@@ -295,6 +242,10 @@ fn create(
 
     let root_password = resolve_secret(ctx, &server_config.secret)?;
     let password = resolve_secret(ctx, &config.secret)?;
+
+    DbServerUnit::new(ctx, &config.server, server_config.clone())
+        .reload_or_deploy()
+        .with_context(|| format!("ensure db-server '{}' is running", &config.server))?;
 
     let unit_dir = scopeguard::guard(db_name.unit_dir(ctx), |unit_dir| {
         let _ = fs::remove_dir_all(unit_dir);
@@ -420,8 +371,12 @@ fn backup(ctx: &MainContext, name: &str, path: &str, gzip: bool) -> Result<()> {
 
 fn restore(ctx: &MainContext, name: &str, path: &str) -> Result<()> {
     let (db_name, db_config) = load_db(ctx, name)?;
-    let (_, server_config) = load_db_server(ctx, db_config.server.as_str())?;
+    let (server_name, server_config) = load_db_server(ctx, db_config.server.as_str())?;
     let password = resolve_secret(ctx, &db_config.secret)?;
+
+    DbServerUnit::new(ctx, &server_name, server_config.clone())
+        .reload_or_deploy()
+        .with_context(|| format!("ensure db-server '{server_name}' is running"))?;
 
     let raw: Box<dyn Read> = if path == "-" {
         Box::new(io::stdin().lock())

@@ -2,13 +2,14 @@ mod artifacts;
 mod backup;
 mod console;
 mod model;
+mod server;
 mod sql;
 
 pub use self::{
-    artifacts::create_service_file,
     model::{
         DbConfig,
         DbServerConfig,
         DbServerEngine,
     },
+    server::DbServerUnit,
 };

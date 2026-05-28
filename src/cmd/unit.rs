@@ -24,6 +24,7 @@ use crate::{
         UnitReport,
         unit::{
             app::AppUnit,
+            db::DbServerUnit,
             domain::DomainUnit,
             http_server::HttpServerUnit,
         },
@@ -64,11 +65,12 @@ pub fn check(ctx: &MainContext, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Result<()> {
+pub(crate) fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Result<()> {
     let unit = load_unit(ctx, name)?;
 
     match (&unit, path) {
         (UnitConfig::App(_), _) => {}
+        (UnitConfig::DbServer(_), _) => {}
         (UnitConfig::HttpServer(_), _) => {}
         (UnitConfig::Domain(_), _) => {}
         _ => bail!("deploy not allowed for unit '{name}'"),
@@ -116,6 +118,9 @@ fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Result
                 },
                 None => app.deploy(&mut state, version, io::stdin().lock()),
             }
+        }
+        UnitConfig::DbServer(db_server_config) => {
+            DbServerUnit::new(ctx, name, db_server_config).deploy(&mut state)
         }
         UnitConfig::HttpServer(http_config) => {
             HttpServerUnit::new(ctx, name, http_config).deploy(&mut state)

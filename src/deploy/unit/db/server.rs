@@ -1,0 +1,123 @@
+use std::{
+    path::Path,
+    thread::sleep,
+    time::{
+        Duration,
+        Instant,
+    },
+};
+
+use super::{
+    artifacts,
+    model::DbServerConfig,
+};
+use crate::{
+    MainContext,
+    config::ResourceName,
+    deploy::{
+        DeployError,
+        state::DeployState,
+    },
+    log,
+    systemd,
+};
+
+const PING_TIMEOUT: Duration = Duration::from_secs(60);
+const PING_INTERVAL: Duration = Duration::from_millis(800);
+
+#[derive(Debug)]
+pub struct DbServerUnit<'a> {
+    pub ctx: &'a MainContext,
+    pub name: ResourceName,
+    pub config: DbServerConfig,
+}
+
+impl<'a> DbServerUnit<'a> {
+    pub fn new(ctx: &'a MainContext, name: &ResourceName, config: DbServerConfig) -> Self {
+        Self {
+            ctx,
+            name: name.clone(),
+            config,
+        }
+    }
+
+    pub fn deploy(self, state: &mut DeployState) -> Result<(), DeployError> {
+        self.install_inner(Path::new(systemd::SYSTEMD_DIR))?;
+        state.set_ready();
+        Ok(())
+    }
+
+    /// Bring the db-server up if it isn't already running.
+    /// When the systemd service is active this is a no-op.
+    pub fn reload_or_deploy(self) -> Result<(), DeployError> {
+        let service_name = format!("{}.service", self.name.scoped_unit_name());
+
+        if systemd::is_active(&service_name) {
+            return Ok(());
+        }
+
+        let unit_dir = self.name.unit_dir(self.ctx);
+        let (_guard, mut state) = DeployState::acquire(&unit_dir)
+            .map_err(|e| DeployError::unit(format!("acquire db-server '{}'", &self.name), e))?;
+        state.bump_version().map_err(DeployError::from)?;
+
+        match self.deploy(&mut state) {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                state.set_error();
+                Err(err)
+            }
+        }
+    }
+
+    fn install_inner(&self, systemd_dir: &Path) -> Result<(), DeployError> {
+        let root_password = self.ctx.resolve_secret(&self.config.secret).map_err(|e| {
+            DeployError::unit(format!("resolve secret '{}'", &self.config.secret), e)
+        })?;
+
+        artifacts::create_service_file(
+            systemd_dir,
+            &self.name,
+            self.config.engine,
+            &self.config.version,
+            &root_password,
+        )?;
+
+        systemd::reload().map_err(|e| DeployError::unit("reload systemd", e))?;
+
+        let service_name = format!("{}.service", self.name.scoped_unit_name());
+
+        {
+            let _phase = log::phase(format!("starting db-server '{}'", &self.name));
+            if systemd::is_active(&service_name) {
+                systemd::restart_service(&service_name).map_err(|e| {
+                    DeployError::unit(format!("restart service for '{}'", &self.name), e)
+                })?;
+            } else {
+                systemd::enable_service(&service_name).map_err(|e| {
+                    DeployError::unit(format!("enable service for '{}'", &self.name), e)
+                })?;
+            }
+        }
+
+        let _phase = log::phase(format!("waiting for db-server '{}'", &self.name));
+        let deadline = Instant::now() + PING_TIMEOUT;
+        loop {
+            if self
+                .config
+                .engine
+                .ping(&self.name, &root_password, None)
+                .is_ok()
+            {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(DeployError::unit(
+                    format!("waiting for db-server '{}'", &self.name),
+                    std::io::Error::other("timeout"),
+                ));
+            }
+            sleep(PING_INTERVAL);
+        }
+    }
+}
