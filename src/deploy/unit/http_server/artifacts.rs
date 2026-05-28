@@ -128,7 +128,7 @@ mod tests {
         assert!(body.contains("-p 80:80"));
         assert!(!body.contains("443:443"));
         assert!(body.contains("-v dpl--web-conf:/etc/nginx/conf.d"));
-        assert!(body.contains("-v dpl-nginx-www:/var/www"));
+        assert!(body.contains("-v dpl-www:/var/www"));
         assert!(body.contains("docker.io/library/nginx:stable"));
         assert!(body.contains("ExecReload=/usr/bin/podman exec dpl--web nginx -s reload"));
         assert!(body.contains("/var/log/podman/dpl--web.log"));

@@ -57,10 +57,7 @@ impl ResourceName {
         ctx.base().join(self.as_str())
     }
 
-    /// Scoped name of a dpl-managed unit: `dpl--<name>`. This is the shared base
-    /// for the unit's podman container name and its systemd unit names
-    /// (`<scoped>.service`, `<scoped>--<timer>.timer`). The `--` separator marks a
-    /// user unit; dpl's internal services use a single dash (e.g. `dpl-nginx`).
+    /// Scoped name of a dpl-managed unit: `dpl--<name>`.
     pub fn scoped_unit_name(&self) -> String {
         format!("dpl--{name}", name = self.as_str())
     }

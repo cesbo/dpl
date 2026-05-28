@@ -15,7 +15,7 @@ use crate::config::ResourceName;
 
 /// Podman volume for app static exports; mounts to [`NGINX_WWW_MOUNT`] in the
 /// nginx container. Holds `<name>_<version>/…` directories at its root.
-pub const NGINX_WWW_VOLUME: &str = "dpl-nginx-www";
+pub const NGINX_WWW_VOLUME: &str = "dpl-www";
 
 /// Mount base of [`NGINX_WWW_VOLUME`] inside the nginx container.
 pub const NGINX_WWW_MOUNT: &str = "/var/www";
