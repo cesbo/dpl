@@ -66,23 +66,6 @@ impl UnitConfig {
         })
     }
 
-    pub fn save(&self, ctx: &MainContext, name: &ResourceName) -> Result<(), ConfigError> {
-        let unit_dir = name.unit_dir(ctx);
-        fs::create_dir_all(&unit_dir).map_err(|err| ConfigError::Write {
-            name: name.to_string(),
-            source: err,
-        })?;
-        let yaml = serde_yaml::to_string(self).map_err(|err| ConfigError::Serialize {
-            name: name.to_string(),
-            source: err,
-        })?;
-        fs::write(unit_dir.join("config.yaml"), yaml).map_err(|err| ConfigError::Write {
-            name: name.to_string(),
-            source: err,
-        })?;
-        Ok(())
-    }
-
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
         match self {
             UnitConfig::App(config) => config.validate_references(ctx),
@@ -294,36 +277,6 @@ secret: pg-pass
             "unexpected kind: {:?}",
             err.kind,
         );
-    }
-
-    #[test]
-    fn save_roundtrip_db_server() {
-        use tempfile::TempDir;
-
-        use crate::deploy::unit::db::{
-            DbServerConfig,
-            DbServerEngine,
-        };
-
-        let base = TempDir::new().unwrap();
-        let ctx = MainContext {
-            base: base.path().to_path_buf(),
-            master_key: None,
-        };
-        let unit_name = ResourceName::new("pg-main").unwrap();
-
-        let original = UnitConfig::DbServer(DbServerConfig {
-            engine: DbServerEngine::Postgresql,
-            version: "18-alpine".into(),
-            secret: SecretName::new("pg-pass").unwrap(),
-        });
-        original.save(&ctx, &unit_name).unwrap();
-
-        let loaded = UnitConfig::load(&ctx, &unit_name).unwrap();
-        let (UnitConfig::DbServer(a), UnitConfig::DbServer(b)) = (&original, &loaded) else {
-            panic!("expected db-server variants");
-        };
-        assert_eq!(a, b);
     }
 
     #[test]

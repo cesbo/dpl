@@ -69,14 +69,17 @@ Keep this split when adding functionality.
   values live in `{base}/.secrets/` encrypted with an AES-256-GCM master key.
 - Entry points are CLI subcommands (`dpl unit ...`, `dpl db ...`,
   `dpl secret ...`). No HTTP surface.
-- `dpl db init` installs and starts the generated systemd unit; `dpl unit
-  deploy` does the same for app units. Other unit types render artifacts but
+- `dpl unit deploy` installs and starts the generated systemd unit for app
+  and db-server units, and creates the database (via `podman exec` against
+  the running server) for db units. Other unit types render artifacts but
   don't yet install services.
 - `dpl db backup`/`dpl db restore` stream plain SQL through `podman exec` as
   the `db` unit's login user (engine `dump`/`restore` methods in
   `deploy/unit/db/backup.rs`, mirroring `create_database` in `sql.rs`). The
   `path` arg defaults to `-` (stdout/stdin); no compression, no managed backup
-  directory, no DROP/CREATE — restore replays into the existing database. The
+  directory, no DROP/CREATE — restore runs `DbUnit::deploy()` first (server
+  up + empty database provisioned if missing) and then replays the dump on
+  top of whatever is already there. The
   child's stderr is drained on a separate thread and streamed live above the
   spinner (the `on_stderr` callback wired to `spinner::stderr_sink`); this also
   prevents a chatty client from deadlocking by filling its stderr pipe while

@@ -193,12 +193,17 @@ The database name is the unit name itself.
 
 ### Commands
 
-```bash
-# Bring up a containerized DBMS. Prompts for any flag you omit.
-dpl db init db-main --engine postgresql --version 18-alpine --secret db-server-password
+Write the unit's `config.yaml` under `{base_dir}/{name}/` (see the schemas
+above), then provision it with `dpl unit deploy`. `dpl db restore` is also a
+valid from-scratch entry point — it brings the db-server up and creates the
+database before streaming the dump.
 
-# Create a database + user inside an existing db-server.
-dpl db create app1 --db-server db-main --user app1 --secret app1-db-password
+```bash
+# Bring up a containerized DBMS from {base_dir}/db-main/config.yaml.
+dpl unit deploy db-main
+
+# Create the database + login user inside the running db-server.
+dpl unit deploy app1
 
 # Block until the db answers a ping (default 60s timeout).
 dpl db wait app1 --timeout 60
@@ -210,17 +215,11 @@ dpl db console app1
 dpl db backup app1 app1.sql
 dpl db backup app1 - | gzip > app1.sql.gz
 
-# Replay a SQL dump into the database from a file, or stdin.
+# Replay a SQL dump into the database from a file, or stdin. Creates the db
+# and starts the server if needed, so this works on a fresh host too.
 dpl db restore app1 app1.sql
 gunzip -c app1.sql.gz | dpl db restore app1
 ```
-
-`dpl db init` writes `{base_dir}/{name}/config.yaml`, renders a systemd
-service file from the unit's templates with the root password inlined,
-reloads systemd, and runs `systemctl enable --now`.
-
-`dpl db create` executes the engine-specific SQL to create the user and the
-database inside the running `db-server` via `podman exec`.
 
 `dpl db console` opens the engine's interactive client (`psql`, `mariadb`, or
 `mysql`) inside the running `db-server` via `podman exec -it`, connected to the
@@ -231,9 +230,10 @@ database as its login user (or the superuser with `--root`).
 via `podman exec`. They connect as the `db` unit's own login user, not the
 superuser, and stream plain SQL with no compression. The `path` argument
 defaults to `-`, which means stdout for `backup` and stdin for `restore`, so
-you can pipe through `gzip` or any other tool. `restore` replays the dump into
-the existing database; it does not drop or create the database (use
-`dpl db create` for that), so it adds to whatever is already there.
+you can pipe through `gzip` or any other tool. `restore` runs the same setup
+flow as `dpl unit deploy <db>` first — db-server up, database created if
+missing — and then replays the dump on top of whatever is already there
+(no DROP/CREATE).
 
 Progress and the client's own messages (for example PostgreSQL `NOTICE` lines
 or restore errors) go to stderr, so stdout stays clean for piping. On failure
@@ -267,7 +267,7 @@ The tag value is the secret name (matching the `<name>` used with
 the same `env` map. At deploy time `dpl` decrypts each tagged value and
 inlines the plaintext into the generated `run.sh` (or `build-N.sh` for
 build-layer envs). For `db-server` units, the root password is inlined into
-the generated systemd unit at `dpl db init` time.
+the generated systemd unit at `dpl unit deploy` time.
 
 ### CLI
 

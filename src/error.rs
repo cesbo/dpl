@@ -124,7 +124,6 @@ impl From<ConfigError> for RefError {
                 name: name.clone(),
                 source: err,
             },
-            _ => unreachable!(),
         };
         kind.into()
     }
