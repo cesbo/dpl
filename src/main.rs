@@ -50,7 +50,7 @@ enum Command {
     Deploy {
         /// Unit name
         name: String,
-        /// For an app unit: tar.gz archive (stdin if omitted).
+        /// For an app unit: tar.gz archive (required; `-` for stdin).
         /// For a db unit: SQL dump to restore (`-` for stdin; omit for
         /// provision only). Gzip is detected automatically.
         path: Option<PathBuf>,
@@ -72,7 +72,10 @@ fn main() -> ExitCode {
         // A reported deploy failure already showed its summary on the console;
         // everything else gets the full anyhow report here.
         Err(err) => {
-            if !matches!(err.downcast_ref::<DeployError>(), Some(DeployError::Reported)) {
+            if !matches!(
+                err.downcast_ref::<DeployError>(),
+                Some(DeployError::Reported)
+            ) {
                 eprintln!("Error: {err:?}");
             }
             ExitCode::FAILURE

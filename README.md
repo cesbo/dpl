@@ -316,10 +316,12 @@ secret. Exits non-zero on the first problem.
 ### Trigger a deploy
 
 ```bash
-git archive --format=tar.gz HEAD | dpl deploy myapp
+git archive --format=tar.gz HEAD | dpl deploy myapp -
 # or, from a file:
 dpl deploy myapp ./build.tar.gz
 ```
+
+The archive path is required: pass a file, or `-` to read from stdin.
 
 `dpl deploy` acquires `{unit_dir}/.deploy.lock`, bumps the version,
 renders artifacts, runs `podman build`, exports any configured files,

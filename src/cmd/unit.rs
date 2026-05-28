@@ -89,24 +89,24 @@ pub(crate) fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>
     let result: std::result::Result<(), DeployError> = match unit {
         UnitConfig::App(app_config) => {
             let app = AppUnit::new(ctx, name, app_config);
-            match path {
-                Some(path) => match fs::File::open(path) {
-                    Ok(file) => app.deploy(&mut state, version, file),
-                    Err(err) => Err(DeployError::unit("open archive", err)),
-                },
-                None => app.deploy(&mut state, version, io::stdin().lock()),
+            if let Some(path) = path {
+                let input = open_input(path, "archive")?;
+                app.deploy(&mut state, version, input)
+            } else {
+                Err(DeployError::unit(
+                    "open archive",
+                    io::Error::other("archive path is required (use `-` to read from stdin)"),
+                ))
             }
         }
         UnitConfig::Db(db_config) => {
-            let backup: Option<Box<dyn Read>> = match path {
-                Some(p) if p.as_os_str() == "-" => Some(Box::new(io::stdin().lock())),
-                Some(p) => match fs::File::open(p) {
-                    Ok(file) => Some(Box::new(file)),
-                    Err(err) => return Err(DeployError::unit("open backup", err).into()),
-                },
-                None => None,
-            };
-            DbUnit::new(ctx, name, db_config).deploy(&mut state, backup)
+            let db = DbUnit::new(ctx, name, db_config);
+            if let Some(path) = path {
+                let input = open_input(path, "backup")?;
+                db.deploy(&mut state, Some(input))
+            } else {
+                db.deploy(&mut state, None)
+            }
         }
         UnitConfig::DbServer(db_server_config) => {
             DbServerUnit::new(ctx, name, db_server_config).deploy(&mut state)
@@ -135,6 +135,18 @@ pub(crate) fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>
 
 fn build_log_path(unit_dir: &Path, version: u32) -> PathBuf {
     unit_dir.join("log").join(format!("build-{version}.log"))
+}
+
+/// Open `path` as a deploy input. `-` means stdin; anything else is a file
+/// path. `what` names the input in the error (e.g. "archive", "backup").
+fn open_input(path: &Path, what: &str) -> Result<Box<dyn Read>, DeployError> {
+    if path.as_os_str() == "-" {
+        Ok(Box::new(io::stdin().lock()))
+    } else {
+        fs::File::open(path)
+            .map(|f| Box::new(f) as Box<dyn Read>)
+            .map_err(|err| DeployError::unit(format!("open {what}"), err))
+    }
 }
 
 pub fn inspect(ctx: &MainContext, name: &str) -> Result<()> {
