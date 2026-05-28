@@ -1,23 +1,27 @@
 pub mod app;
 pub mod db;
 pub mod domain;
+pub mod http_server;
 
 use std::{
     fs,
     io,
 };
 
-use app::AppConfig;
-use db::{
-    DbConfig,
-    DbServerConfig,
-};
-use domain::DomainConfig;
 use serde::{
     Deserialize,
     Serialize,
 };
 
+use self::{
+    app::AppConfig,
+    db::{
+        DbConfig,
+        DbServerConfig,
+    },
+    domain::DomainConfig,
+    http_server::HttpServerConfig,
+};
 use crate::{
     MainContext,
     config::{
@@ -37,6 +41,7 @@ pub enum UnitConfig {
     Db(DbConfig),
     DbServer(DbServerConfig),
     Domain(DomainConfig),
+    HttpServer(HttpServerConfig),
 }
 
 impl UnitConfig {
@@ -84,6 +89,7 @@ impl UnitConfig {
             UnitConfig::Db(config) => config.validate_references(ctx),
             UnitConfig::DbServer(config) => config.validate_references(ctx),
             UnitConfig::Domain(config) => config.validate_references(ctx),
+            UnitConfig::HttpServer(config) => config.validate_references(ctx),
         }
     }
 
@@ -93,6 +99,7 @@ impl UnitConfig {
             UnitConfig::Db(_) => "db",
             UnitConfig::DbServer(_) => "db-server",
             UnitConfig::Domain(_) => "domain",
+            UnitConfig::HttpServer(_) => "http-server",
         }
     }
 
@@ -189,6 +196,35 @@ routes:
         .unwrap();
 
         assert!(matches!(config, UnitConfig::Domain(_)));
+    }
+
+    #[test]
+    fn parse_http_server_unit_config() {
+        let config: UnitConfig = serde_yaml::from_str(
+            r#"
+type: http-server
+image: docker.io/library/nginx:1.27
+https: true
+"#,
+        )
+        .unwrap();
+
+        let UnitConfig::HttpServer(http) = &config else {
+            panic!("expected http-server variant");
+        };
+        assert_eq!(http.image, "docker.io/library/nginx:1.27");
+        assert!(http.https);
+    }
+
+    #[test]
+    fn parse_http_server_unit_config_defaults() {
+        let config: UnitConfig = serde_yaml::from_str("type: http-server\n").unwrap();
+
+        let UnitConfig::HttpServer(http) = &config else {
+            panic!("expected http-server variant");
+        };
+        assert_eq!(http.image, "docker.io/library/nginx:stable");
+        assert!(!http.https);
     }
 
     #[test]

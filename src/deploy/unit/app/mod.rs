@@ -19,11 +19,7 @@ use std::{
 use podman::PodmanContext;
 use systemd::SystemdContext;
 use tempfile::TempDir;
-use tracing::{
-    debug,
-    error,
-    warn,
-};
+use tracing::error;
 
 use self::artifacts::ArtifactsContext;
 pub use self::model::AppConfig;
@@ -42,10 +38,7 @@ use crate::{
         DeployError,
         state::DeployState,
     },
-    log::{
-        self,
-        DeployLog,
-    },
+    log,
     podman::health,
 };
 
@@ -91,56 +84,21 @@ impl<'a> AppUnit<'a> {
         Ok(temp_dir)
     }
 
-    /// Run the full deploy synchronously: bump version, extract archive,
-    /// render artifacts, build image, install service.
-    pub fn deploy<R: Read>(self, mut state: DeployState, archive: R) -> Result<(), DeployError> {
-        // Remove previous build log
-        let prev_build = state.latest_build.version;
-        if prev_build != 0 {
-            self.remove_build_log(prev_build);
-        }
+    /// Run the install phase: extract archive, render artifacts,
+    /// build image, install service.
+    pub fn deploy<R: Read>(
+        self,
+        state: &mut DeployState,
+        version: u32,
+        archive: R,
+    ) -> Result<(), DeployError> {
+        let temp_dir = self.prepare(version, archive)?;
+        self.deploy_worker(version, temp_dir.path(), state)?;
 
-        let version = state.bump_version()?;
+        state.set_ready();
+        self.redeploy_dependent_domains();
 
-        let build_log_path = self.build_log_path(version);
-        let log = match DeployLog::open(&build_log_path, self.name.as_str(), version) {
-            Ok(log) => log,
-            Err(source) => {
-                state.set_error();
-                return Err(DeployError::unit("open deploy log", source));
-            }
-        };
-
-        // From here on failures are rendered by `finish_err` and reported via
-        // the build log, so they collapse to `DeployError::Reported` instead
-        // of bubbling up.
-        let _default = log.set_default();
-
-        let temp_dir = match self.prepare(version, archive) {
-            Ok(temp_dir) => temp_dir,
-            Err(err) => return Err(self.fail(&log, &mut state, err)),
-        };
-
-        match self.deploy_worker(version, temp_dir.path(), &mut state) {
-            Ok(()) => {
-                state.set_ready();
-
-                self.redeploy_dependent_domains();
-                log.finish_ok();
-
-                Ok(())
-            }
-            Err(err) => Err(self.fail(&log, &mut state, err)),
-        }
-    }
-
-    /// Mark the deploy failed: record the cause in the build log (file only),
-    /// print the one-line summary, and collapse to [`DeployError::Reported`].
-    fn fail(&self, log: &DeployLog, state: &mut DeployState, err: DeployError) -> DeployError {
-        state.set_error();
-        debug!("deploy failed: {:#}", anyhow::Error::new(err));
-        log.finish_err();
-        DeployError::Reported
+        Ok(())
     }
 
     fn deploy_worker(
@@ -262,21 +220,6 @@ impl<'a> AppUnit<'a> {
         let podman_ctx = PodmanContext::new(self.name, version);
         podman_ctx.remove_exports();
         podman_ctx.remove();
-    }
-
-    fn build_log_path(&self, version: u32) -> PathBuf {
-        self.unit_dir
-            .join("log")
-            .join(format!("build-{version}.log"))
-    }
-
-    fn remove_build_log(&self, version: u32) {
-        let path = self.build_log_path(version);
-        match fs::remove_file(&path) {
-            Ok(()) => debug!("removed build log {}", path.display()),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-            Err(err) => warn!("failed to remove build log {}: {err}", path.display()),
-        }
     }
 }
 

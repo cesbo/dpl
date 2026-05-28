@@ -28,6 +28,10 @@ pub fn reload_service(name: &str) -> io::Result<()> {
     run_systemctl(&["-q", "reload", name])
 }
 
+pub fn restart_service(name: &str) -> io::Result<()> {
+    run_systemctl(&["-q", "restart", name])
+}
+
 /// Returns `true` if the unit is currently active (running).
 pub fn is_active(name: &str) -> bool {
     run_systemctl(&["-q", "is-active", name]).is_ok()

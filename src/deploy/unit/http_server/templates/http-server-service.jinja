@@ -1,0 +1,39 @@
+[Unit]
+Description=DPL HTTP server for {{ name }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+NotifyAccess=all
+Delegate=yes
+KillMode=mixed
+TimeoutStopFailureMode=abort
+ExecStartPre=/bin/mkdir -p /var/log/podman
+ExecStartPre=/usr/bin/podman network create --ignore dpl
+ExecStartPre=-/usr/bin/rm -f %t/%N.cid
+ExecStart=/usr/bin/podman run \
+  --name {{ container_name }} \
+  --cidfile=%t/%N.cid \
+  --replace --rm \
+  --cgroups=split \
+  --sdnotify=conmon \
+  --network=dpl \
+  -p 80:80 \
+{% if https %}
+  -p 443:443 \
+{% endif %}
+  -v {{ www_volume }}:{{ www_mount }} \
+  -v {{ conf_volume }}:/etc/nginx/conf.d \
+  --log-driver=k8s-file --log-opt=path=/var/log/podman/{{ container_name }}.log \
+  {{ image }}
+ExecReload=/usr/bin/podman exec {{ container_name }} nginx -s reload
+ExecStop=/usr/bin/podman stop --cidfile=%t/%N.cid --ignore
+ExecStopPost=-/usr/bin/podman rm -v -f --cidfile=%t/%N.cid --ignore
+ExecStopPost=-/usr/bin/rm -f %t/%N.cid
+Restart=always
+RestartSec=2
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

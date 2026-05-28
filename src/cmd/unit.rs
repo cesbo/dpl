@@ -22,8 +22,12 @@ use crate::{
         DeployState,
         UnitConfig,
         UnitReport,
-        unit::app::AppUnit,
+        unit::{
+            app::AppUnit,
+            http_server::HttpServerUnit,
+        },
     },
+    log::DeployLog,
 };
 
 #[derive(clap::Args)]
@@ -62,34 +66,78 @@ pub fn check(ctx: &MainContext, name: &str) -> Result<()> {
 fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Result<()> {
     let unit = load_unit(ctx, name)?;
 
-    let UnitConfig::App(app_config) = unit else {
-        bail!("deploy not allowed for unit '{name}'");
-    };
+    match (&unit, path) {
+        (UnitConfig::App(_), _) => {}
+        (UnitConfig::HttpServer(_), None) => {}
+        (UnitConfig::HttpServer(_), Some(_)) => {
+            bail!("archive not supported for http-server unit '{name}'");
+        }
+        _ => bail!("deploy not allowed for unit '{name}'"),
+    }
 
     let unit_dir = name.unit_dir(ctx);
-    let (_guard, state) =
+    let (_guard, mut state) =
         DeployState::acquire(&unit_dir).with_context(|| format!("acquire unit '{name}'"))?;
 
-    let app = AppUnit::new(ctx, name, app_config);
+    let prev_build = state.latest_build.version;
+    if prev_build != 0 {
+        let prev_log = build_log_path(&unit_dir, prev_build);
+        if let Err(err) = fs::remove_file(&prev_log)
+            && err.kind() != io::ErrorKind::NotFound
+        {
+            tracing::warn!("remove previous build log {}: {err}", prev_log.display());
+        }
+    }
 
-    let result = match path {
-        Some(path) => {
-            let file = fs::File::open(path).context("open archive")?;
-            app.deploy(state, file)
+    let version = state
+        .bump_version()
+        .map_err(DeployError::from)
+        .with_context(|| format!("deploy unit '{name}'"))?;
+
+    let log_path = build_log_path(&unit_dir, version);
+    let log = match DeployLog::open(&log_path, name.as_str(), version) {
+        Ok(log) => log,
+        Err(err) => {
+            state.set_error();
+            return Err(anyhow::Error::new(DeployError::unit("open deploy log", err))
+                .context(format!("deploy unit '{name}'")));
         }
-        None => {
-            let stdin = io::stdin().lock();
-            app.deploy(state, stdin)
+    };
+    let _default = log.set_default();
+
+    let result: std::result::Result<(), DeployError> = match unit {
+        UnitConfig::App(app_config) => {
+            let app = AppUnit::new(ctx, name, app_config);
+            match path {
+                Some(path) => match fs::File::open(path) {
+                    Ok(file) => app.deploy(&mut state, version, file),
+                    Err(err) => Err(DeployError::unit("open archive", err)),
+                },
+                None => app.deploy(&mut state, version, io::stdin().lock()),
+            }
         }
+        UnitConfig::HttpServer(http_config) => {
+            HttpServerUnit::new(ctx, name, http_config).deploy(&mut state)
+        }
+        _ => unreachable!("pre-flight match restricts the unit type"),
     };
 
     match result {
-        Ok(()) => Ok(()),
-        // The deploy already printed its own summary and logged the cause; let
-        // it set the exit code without a redundant context chain on top.
-        Err(err @ DeployError::Reported) => Err(err.into()),
-        Err(err) => Err(anyhow::Error::new(err).context(format!("deploy unit '{name}'"))),
+        Ok(()) => {
+            log.finish_ok();
+            Ok(())
+        }
+        Err(err) => {
+            state.set_error();
+            tracing::debug!("deploy failed: {:#}", anyhow::Error::new(err));
+            log.finish_err();
+            Err(anyhow::Error::new(DeployError::Reported))
+        }
     }
+}
+
+fn build_log_path(unit_dir: &Path, version: u32) -> PathBuf {
+    unit_dir.join("log").join(format!("build-{version}.log"))
 }
 
 pub fn inspect(ctx: &MainContext, name: &str) -> Result<()> {
