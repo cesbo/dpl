@@ -1,6 +1,7 @@
 mod artifacts;
 mod host_name;
 mod model;
+mod proxy;
 mod route_location;
 
 use std::path::{
@@ -67,26 +68,35 @@ impl<'a> DomainUnit<'a> {
     /// use (also dropping the global `00-dpl.conf`), or reload nginx if it is
     /// already installed.
     fn install_inner(&self) -> Result<(), DeployError> {
-        ensure_volume(NGINX_CONF_VOLUME).map_err(|source| DeployError::UnitError {
-            info: format!("get nginx volume '{NGINX_CONF_VOLUME}'"),
-            source,
+        ensure_volume(NGINX_CONF_VOLUME)
+            .map_err(|e| DeployError::unit(format!("get nginx volume '{NGINX_CONF_VOLUME}'"), e))?;
+
+        let conf_dir = volume_mountpoint(NGINX_CONF_VOLUME).map_err(|e| {
+            DeployError::unit(
+                format!("resolve nginx volume '{NGINX_CONF_VOLUME}' mountpoint"),
+                e,
+            )
         })?;
 
-        let conf_dir =
-            volume_mountpoint(NGINX_CONF_VOLUME).map_err(|source| DeployError::UnitError {
-                info: format!("resolve nginx volume '{NGINX_CONF_VOLUME}' mountpoint"),
-                source,
-            })?;
+        // Resolve the proxy's trusted-IP allowlist.
+        let resolved = match &self.config.proxy {
+            Some(cfg) => {
+                let _phase = log::phase("resolving proxy IP ranges");
+                Some(
+                    proxy::resolve(cfg)
+                        .map_err(|e| DeployError::unit("resolve proxy IP ranges", e))?,
+                )
+            }
+            None => None,
+        };
 
-        self.write_config(&conf_dir)?;
+        self.write_config(&conf_dir, resolved.as_ref())?;
 
         // If nginx is already running, just reload its config; otherwise
         // (first deploy, or a stopped/crashed service) (re)create and start it.
         if systemd::is_active(NGINX_SERVICE) {
-            systemd::reload_service(NGINX_SERVICE).map_err(|source| DeployError::UnitError {
-                info: format!("reload service '{NGINX_SERVICE}'"),
-                source,
-            })?;
+            systemd::reload_service(NGINX_SERVICE)
+                .map_err(|e| DeployError::unit(format!("reload service '{NGINX_SERVICE}'"), e))?;
         } else {
             self.install_service(&conf_dir, Path::new(systemd::SYSTEMD_DIR))?;
         }
@@ -98,32 +108,30 @@ impl<'a> DomainUnit<'a> {
     /// volume exists, drop the global `00-dpl.conf`, render the service unit,
     /// then `daemon-reload` and `enable --now`.
     fn install_service(&self, conf_dir: &Path, systemd_dir: &Path) -> Result<(), DeployError> {
-        ensure_volume(NGINX_WWW_VOLUME).map_err(|source| DeployError::UnitError {
-            info: format!("get nginx volume '{NGINX_WWW_VOLUME}'"),
-            source,
-        })?;
+        ensure_volume(NGINX_WWW_VOLUME)
+            .map_err(|e| DeployError::unit(format!("get nginx volume '{NGINX_WWW_VOLUME}'"), e))?;
 
         artifacts::write_global_config(conf_dir)?;
         artifacts::create_nginx_service(systemd_dir)?;
 
-        systemd::reload().map_err(|source| DeployError::UnitError {
-            info: "reload systemd".to_string(),
-            source,
-        })?;
+        systemd::reload().map_err(|e| DeployError::unit("reload systemd", e))?;
         let _phase = log::phase("starting nginx");
-        systemd::enable_service(NGINX_SERVICE).map_err(|source| DeployError::UnitError {
-            info: format!("enable service '{NGINX_SERVICE}'"),
-            source,
-        })?;
+        systemd::enable_service(NGINX_SERVICE)
+            .map_err(|e| DeployError::unit(format!("enable service '{NGINX_SERVICE}'"), e))?;
 
         Ok(())
     }
 
-    fn write_config(&self, conf_dir: &Path) -> Result<(), DeployError> {
+    fn write_config(
+        &self,
+        conf_dir: &Path,
+        proxy: Option<&proxy::ResolvedProxy>,
+    ) -> Result<(), DeployError> {
         let artifacts = ArtifactsContext {
             ctx: self.ctx,
             name: &self.name,
             config: &self.config,
+            proxy,
         };
         artifacts.save(conf_dir)?;
 

@@ -10,10 +10,12 @@ use minijinja::{
 };
 use serde::Serialize;
 
-use super::model::{
-    DomainConfig,
-    ProxyConfig,
-    RouteConfig,
+use super::{
+    model::{
+        DomainConfig,
+        RouteConfig,
+    },
+    proxy::ResolvedProxy,
 };
 use crate::{
     MainContext,
@@ -78,6 +80,7 @@ pub struct ArtifactsContext<'a> {
     pub ctx: &'a MainContext,
     pub name: &'a str,
     pub config: &'a DomainConfig,
+    pub proxy: Option<&'a ResolvedProxy>,
 }
 
 impl<'a> ArtifactsContext<'a> {
@@ -85,8 +88,6 @@ impl<'a> ArtifactsContext<'a> {
     /// `conf_dir` (the root of the `dpl-nginx-conf` volume, which the nginx
     /// container mounts at `/etc/nginx/conf.d`).
     pub fn save(&self, conf_dir: &Path) -> Result<(), ArtifactError> {
-        let proxy = self.config.proxy.as_ref().map(RenderProxy::new);
-
         let mut routes = Vec::new();
         for route in &self.config.routes {
             routes.push(RenderRoute::new(self.ctx, route)?);
@@ -97,7 +98,7 @@ impl<'a> ArtifactsContext<'a> {
             NGINX_CONFIG_TEMPLATE,
             context! {
                 hosts => &self.config.hosts,
-                proxy => proxy,
+                proxy => self.proxy,
                 custom_config => &self.config.custom_config,
                 routes => routes,
             },
@@ -109,31 +110,6 @@ impl<'a> ArtifactsContext<'a> {
         fs::write(&path, content).map_err(ArtifactError::Write)?;
 
         Ok(())
-    }
-}
-
-#[derive(Serialize)]
-struct RenderProxy<'a> {
-    header: &'a str,
-    proxies: &'a [String],
-}
-
-impl<'a> RenderProxy<'a> {
-    fn new(proxy: &'a ProxyConfig) -> RenderProxy<'a> {
-        match proxy {
-            ProxyConfig::Cloudflare => RenderProxy {
-                header: "",
-                proxies: &[],
-            },
-            ProxyConfig::Fastly => RenderProxy {
-                header: "",
-                proxies: &[],
-            },
-            ProxyConfig::Custom { header, proxies } => RenderProxy {
-                header: header.as_str(),
-                proxies: proxies.as_slice(),
-            },
-        }
     }
 }
 

@@ -1,12 +1,9 @@
-use std::io;
-
 use thiserror::Error;
 
 use super::{
     artifacts::ArtifactError,
     state::DeployStateError,
 };
-use crate::archive::ArchiveError;
 
 #[derive(Debug, Error)]
 pub enum DeployError {
@@ -16,14 +13,11 @@ pub enum DeployError {
     #[error("save artifacts")]
     Artifact(#[from] ArtifactError),
 
-    #[error("extract archive")]
-    Archive(#[from] ArchiveError),
-
     #[error("{info}")]
     UnitError {
         info: String,
         #[source]
-        source: io::Error,
+        source: Box<dyn std::error::Error + Send + Sync>,
     },
 
     /// A deploy failed after its build log was opened: the cause is in that log
@@ -31,4 +25,17 @@ pub enum DeployError {
     /// no detail so the top level can exit non-zero without repeating anything.
     #[error("deploy failed")]
     Reported,
+}
+
+impl DeployError {
+    /// Wrap any unit-level failure with a human-readable `info` summary.
+    pub fn unit(
+        info: impl Into<String>,
+        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+    ) -> Self {
+        DeployError::UnitError {
+            info: info.into(),
+            source: source.into(),
+        }
+    }
 }

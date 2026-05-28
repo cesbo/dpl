@@ -72,18 +72,13 @@ impl<'a> AppUnit<'a> {
     fn prepare<R: Read>(&self, version: u32, archive: R) -> Result<TempDir, DeployError> {
         let _phase = log::phase("preparing");
 
-        let temp_dir =
-            tempfile::tempdir_in(&self.unit_dir).map_err(|source| DeployError::UnitError {
-                info: "failed to create temporary build directory".to_string(),
-                source,
-            })?;
+        let temp_dir = tempfile::tempdir_in(&self.unit_dir)
+            .map_err(|e| DeployError::unit("create temporary directory", e))?;
         let deploy_dir = temp_dir.path();
 
         let archive_path = deploy_dir.join("app.tar.gz");
-        save_archive(archive, &archive_path).map_err(|source| DeployError::UnitError {
-            info: "failed to save archive".to_string(),
-            source,
-        })?;
+        save_archive(archive, &archive_path)
+            .map_err(|e| DeployError::unit("save app archive to the temporary directory", e))?;
 
         let artifacts = ArtifactsContext {
             ctx: self.ctx,
@@ -112,17 +107,13 @@ impl<'a> AppUnit<'a> {
             Ok(log) => log,
             Err(source) => {
                 state.set_error();
-                return Err(DeployError::UnitError {
-                    info: "open deploy log".to_string(),
-                    source,
-                });
+                return Err(DeployError::unit("open deploy log", source));
             }
         };
 
-        // Route the `tracing` macros below (and on the podman worker threads)
-        // to this deploy's subscriber for the rest of the function. From here on
-        // failures are rendered by `finish_err` and reported via the build log,
-        // so they collapse to `DeployError::Reported` instead of bubbling up.
+        // From here on failures are rendered by `finish_err` and reported via
+        // the build log, so they collapse to `DeployError::Reported` instead
+        // of bubbling up.
         let _default = log.set_default();
 
         let temp_dir = match self.prepare(version, archive) {
@@ -215,19 +206,17 @@ impl<'a> AppUnit<'a> {
 
     fn build_inner(&self, deploy_dir: &Path, version: u32) -> Result<(), DeployError> {
         {
-            let _phase = log::phase("extracting archive");
+            let _phase = log::phase("extracting app archive");
             let archive_path = deploy_dir.join("app.tar.gz");
             let app_dir = deploy_dir.join("app");
-            crate::archive::extract(&archive_path, &app_dir)?;
+            crate::archive::extract(&archive_path, &app_dir)
+                .map_err(|e| DeployError::unit("extract app archive", e))?;
         }
 
-        let _phase = log::phase("building image");
+        let _phase = log::phase("building app image");
         PodmanContext::new(self.name, version)
             .build(deploy_dir)
-            .map_err(|source| DeployError::UnitError {
-                info: "build image".to_string(),
-                source,
-            })?;
+            .map_err(|e| DeployError::unit("build app image", e))?;
 
         Ok(())
     }
@@ -237,10 +226,7 @@ impl<'a> AppUnit<'a> {
             let _phase = log::phase("exporting files");
             PodmanContext::new(self.name, version)
                 .export(&self.config.exports)
-                .map_err(|source| DeployError::UnitError {
-                    info: "export static files".to_string(),
-                    source,
-                })?;
+                .map_err(|e| DeployError::unit("export files", e))?;
         }
 
         let systemd_ctx = SystemdContext::new(self.name);
@@ -249,26 +235,17 @@ impl<'a> AppUnit<'a> {
             let _phase = log::phase("installing app service");
             systemd_ctx
                 .install_app(deploy_dir)
-                .map_err(|source| DeployError::UnitError {
-                    info: "install app service".to_string(),
-                    source,
-                })?;
+                .map_err(|e| DeployError::unit("install app service", e))?;
         }
 
         {
-            let _phase = log::phase("health check");
-            health::check(self.name, self.config.port).map_err(|source| {
-                DeployError::UnitError {
-                    info: "health check".to_string(),
-                    source,
-                }
-            })?;
+            let _phase = log::phase("app health check");
+            health::check(self.name, self.config.port)
+                .map_err(|e| DeployError::unit("app health check", e))?;
+
             systemd_ctx
                 .set_restart_value("always")
-                .map_err(|source| DeployError::UnitError {
-                    info: "set restart policy to 'always'".to_string(),
-                    source,
-                })?;
+                .map_err(|e| DeployError::unit("set restart policy to 'always'", e))?;
         }
 
         let _phase = log::phase("installing timers");
