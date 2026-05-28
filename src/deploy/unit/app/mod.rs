@@ -19,7 +19,10 @@ use std::{
 use podman::PodmanContext;
 use systemd::SystemdContext;
 use tempfile::TempDir;
-use tracing::error;
+use tracing::{
+    debug,
+    error,
+};
 
 use self::artifacts::ArtifactsContext;
 pub use self::model::AppConfig;
@@ -115,6 +118,7 @@ impl<'a> AppUnit<'a> {
         }
 
         if let Err(err) = self.install_inner(deploy_dir, version) {
+            debug!("deploy failed, removing {} version {}", self.name, version);
             self.uninstall_inner(version);
             return Err(err);
         }
@@ -203,9 +207,10 @@ impl<'a> AppUnit<'a> {
         }
 
         {
-            let _phase = log::phase("app health check");
+            let phase_name = "app health check".to_string();
+            let _phase = log::phase(&phase_name);
             health::check(self.name, self.config.port)
-                .map_err(|e| DeployError::unit("app health check", e))?;
+                .map_err(|e| DeployError::unit(phase_name, e))?;
 
             systemd_ctx
                 .set_restart_value("always")

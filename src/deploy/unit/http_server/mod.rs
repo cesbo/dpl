@@ -114,9 +114,9 @@ impl<'a> HttpServerUnit<'a> {
             }
         }
 
-        let _phase = log::phase(format!("{container_name} health check"));
-        health::check(&self.name, HTTP_PORT)
-            .map_err(|e| DeployError::unit(format!("{container_name} health check"), e))?;
+        let phase_name = format!("http-server '{}' health check", &self.name);
+        let _phase = log::phase(&phase_name);
+        health::check(&self.name, HTTP_PORT).map_err(|e| DeployError::unit(phase_name, e))?;
 
         Ok(())
     }

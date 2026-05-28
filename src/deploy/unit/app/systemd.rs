@@ -67,10 +67,10 @@ impl<'a> SystemdContext<'a> {
 
         if let Err(err) = fs::remove_file(&app_service_path) {
             if err.kind() != io::ErrorKind::NotFound {
-                error!("failed to remove app service {prefix}: {err}");
+                error!("failed to remove service for unit {}: {err}", self.name);
             }
         } else {
-            debug!("app service {prefix} removed");
+            debug!("removed service for unit {}", self.name);
             reload_systemd();
         }
     }
