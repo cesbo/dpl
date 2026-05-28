@@ -149,9 +149,14 @@ fn backup(ctx: &MainContext, name: &str, path: &str, gzip: bool) -> Result<()> {
         raw
     };
 
-    crate::spinner::Spinner::run(format!("backing up '{db_name}'"), |bar| {
-        let mut on_stderr = crate::spinner::stderr_sink(bar);
-        server_config.engine.dump(
+    let mut on_stderr = |line: &[u8]| {
+        let mut err = io::stderr().lock();
+        let _ = err.write_all(line);
+        let _ = err.write_all(b"\n");
+    };
+    server_config
+        .engine
+        .dump(
             &db_config.server,
             &db_config.user,
             &password,
@@ -159,8 +164,7 @@ fn backup(ctx: &MainContext, name: &str, path: &str, gzip: bool) -> Result<()> {
             &mut out,
             &mut on_stderr,
         )
-    })
-    .with_context(|| format!("back up database '{db_name}'"))?;
+        .with_context(|| format!("back up database '{db_name}'"))?;
 
     out.flush().context("flush backup output")?;
 

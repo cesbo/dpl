@@ -77,11 +77,11 @@ Keep this split when adding functionality.
   login user (engine `dump` method in `deploy/unit/db/backup.rs`, mirroring
   `create_database` in `sql.rs`). The `path` arg defaults to `-` (stdout); a
   `.gz` destination or `-z` triggers gzip on the way out. The child's stderr
-  is drained on a separate thread and streamed live above the spinner (the
-  `on_stderr` callback wired to `spinner::stderr_sink`); this also prevents a
-  chatty client from deadlocking by filling its stderr pipe while the data
-  pipe is busy. On a non-zero exit the streamed output is the detail, so the
-  returned error only carries the exit status.
+  is drained on a separate thread and forwarded line-by-line to the user's
+  stderr via an `on_stderr` callback; this also prevents a chatty client
+  from deadlocking by filling its stderr pipe while the data pipe is busy.
+  On a non-zero exit the streamed output is the detail, so the returned
+  error only carries the exit status.
 - Restore happens through `dpl deploy <db-name> [backup]`, not a separate
   command. `DbUnit::deploy` (`deploy/unit/db/database.rs`) takes an optional
   `Box<dyn Read>`; when present it brings the server up, refuses if the
