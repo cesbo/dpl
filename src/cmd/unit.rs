@@ -11,7 +11,6 @@ use anyhow::{
     Context,
     Result,
 };
-use clap::Subcommand;
 
 use crate::{
     MainContext,
@@ -33,32 +32,6 @@ use crate::{
     },
     log::DeployLog,
 };
-
-#[derive(clap::Args)]
-pub struct Args {
-    #[command(subcommand)]
-    cmd: Cmd,
-}
-
-#[derive(Subcommand)]
-enum Cmd {
-    /// Trigger a deploy from a tar.gz archive (stdin if path is omitted)
-    Deploy {
-        /// Unit name
-        name: String,
-        /// Path to tar.gz archive; reads from stdin if omitted
-        path: Option<PathBuf>,
-    },
-}
-
-pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
-    match args.cmd {
-        Cmd::Deploy { name, path } => {
-            let name = ResourceName::new(name)?;
-            deploy(ctx, &name, path.as_deref())
-        }
-    }
-}
 
 pub fn check(ctx: &MainContext, name: &str) -> Result<()> {
     let name = ResourceName::new(name)?;

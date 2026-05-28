@@ -47,11 +47,11 @@ Each unit lives in its own directory `{unit_dir}` and has:
 - `state.json` - serialized deploy state (`active_version` and `latest_build`).
   Only app deploys update this file
 - `.deploy.lock` - advisory `flock(2)` held for the duration of a deploy so
-  two `dpl unit deploy` invocations against the same unit can't race
+  two `dpl deploy` invocations against the same unit can't race
 
 ## App Unit
 
-An app unit represents a containerized application. `dpl unit deploy` accepts a
+An app unit represents a containerized application. `dpl deploy` accepts a
 `.tar.gz` archive with the source code, generates a `containerfile` from the
 config, builds a podman image, and optionally exports static files from the
 built image.
@@ -194,16 +194,16 @@ The database name is the unit name itself.
 ### Commands
 
 Write the unit's `config.yaml` under `{base_dir}/{name}/` (see the schemas
-above), then provision it with `dpl unit deploy`. `dpl db restore` is also a
+above), then provision it with `dpl deploy`. `dpl db restore` is also a
 valid from-scratch entry point — it brings the db-server up and creates the
 database before streaming the dump.
 
 ```bash
 # Bring up a containerized DBMS from {base_dir}/db-main/config.yaml.
-dpl unit deploy db-main
+dpl deploy db-main
 
 # Create the database + login user inside the running db-server.
-dpl unit deploy app1
+dpl deploy app1
 
 # Block until the db answers a ping (default 60s timeout).
 dpl db wait app1 --timeout 60
@@ -231,7 +231,7 @@ via `podman exec`. They connect as the `db` unit's own login user, not the
 superuser, and stream plain SQL with no compression. The `path` argument
 defaults to `-`, which means stdout for `backup` and stdin for `restore`, so
 you can pipe through `gzip` or any other tool. `restore` runs the same setup
-flow as `dpl unit deploy <db>` first — db-server up, database created if
+flow as `dpl deploy <db>` first — db-server up, database created if
 missing — and then replays the dump on top of whatever is already there
 (no DROP/CREATE).
 
@@ -267,7 +267,7 @@ The tag value is the secret name (matching the `<name>` used with
 the same `env` map. At deploy time `dpl` decrypts each tagged value and
 inlines the plaintext into the generated `run.sh` (or `build-N.sh` for
 build-layer envs). For `db-server` units, the root password is inlined into
-the generated systemd unit at `dpl unit deploy` time.
+the generated systemd unit at `dpl deploy` time.
 
 ### CLI
 
@@ -315,12 +315,12 @@ secret. Exits non-zero on the first problem.
 ### Trigger a deploy
 
 ```bash
-git archive --format=tar.gz HEAD | dpl unit deploy myapp
+git archive --format=tar.gz HEAD | dpl deploy myapp
 # or, from a file:
-dpl unit deploy myapp ./build.tar.gz
+dpl deploy myapp ./build.tar.gz
 ```
 
-`dpl unit deploy` acquires `{unit_dir}/.deploy.lock`, bumps the version,
+`dpl deploy` acquires `{unit_dir}/.deploy.lock`, bumps the version,
 renders artifacts, runs `podman build`, exports any configured files,
 (re)installs the systemd service, runs the health check, and prints the
 elapsed time. The command exits non-zero if any step fails.
@@ -396,5 +396,5 @@ cargo test
 Run a deploy from the source tree:
 
 ```bash
-cargo run -- --base /opt/dpl unit deploy myapp ./build.tar.gz
+cargo run -- --base /opt/dpl deploy myapp ./build.tar.gz
 ```

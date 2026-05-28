@@ -12,7 +12,7 @@ cargo build          # Build
 cargo test           # Run all tests
 cargo test <name>    # Single test (e.g. cargo test render_templates)
 cargo clippy         # Lint
-cargo run -- --base /path/to/base <group> <command> ...
+cargo run -- --base /path/to/base <command> ...
 ```
 
 - Never run `cargo fmt` — the project uses custom rustfmt rules.
@@ -23,8 +23,8 @@ cargo run -- --base /path/to/base <group> <command> ...
 ### Separation of Concerns
 
 - **`cmd/`** (`cmd/unit.rs`, `cmd/db.rs`, `cmd/secret.rs`) — clap subcommand
-  surface. Parses flags, prompts for missing input, calls into the unit/secret
-  layer.
+  surface (top-level `deploy`/`check`/`inspect` live in `cmd/unit.rs`). Parses
+  flags, prompts for missing input, calls into the unit/secret layer.
 - **Unit implementations** (`deploy/unit/app/`, `deploy/unit/db/`,
   `deploy/unit/domain/`) — "what does a deploy / install of this kind actually
   do". All build, render, and systemd logic lives here. For db units,
@@ -39,7 +39,7 @@ Keep this split when adding functionality.
 
 ### Deploy Flow (app unit)
 
-1. `dpl unit deploy <name> [path]` loads `UnitConfig`, calls
+1. `dpl deploy <name> [path]` loads `UnitConfig`, calls
    `validate_references` against the current secrets and referenced units,
    then `DeployState::acquire` takes the `flock` on `{unit_dir}/.deploy.lock`.
 2. `AppUnit::deploy` bumps the version, writes the archive to
@@ -67,9 +67,9 @@ Keep this split when adding functionality.
 - Unit types implemented: `app`, `db-server`, `db`, `domain`.
 - Auth is out of scope — `dpl` runs locally (typically as root). Sensitive
   values live in `{base}/.secrets/` encrypted with an AES-256-GCM master key.
-- Entry points are CLI subcommands (`dpl unit ...`, `dpl db ...`,
+- Entry points are CLI subcommands (`dpl deploy`, `dpl db ...`,
   `dpl secret ...`). No HTTP surface.
-- `dpl unit deploy` installs and starts the generated systemd unit for app
+- `dpl deploy` installs and starts the generated systemd unit for app
   and db-server units, and creates the database (via `podman exec` against
   the running server) for db units. Other unit types render artifacts but
   don't yet install services.

@@ -46,6 +46,13 @@ enum Command {
     },
     /// Manage database units
     Db(cmd::db::Args),
+    /// Trigger a deploy from a tar.gz archive (stdin if path is omitted)
+    Deploy {
+        /// Unit name
+        name: String,
+        /// Path to tar.gz archive; reads from stdin if omitted
+        path: Option<PathBuf>,
+    },
     /// Show runtime state of a unit
     Inspect {
         /// Unit name
@@ -53,8 +60,6 @@ enum Command {
     },
     /// Manage encrypted runtime secrets
     Secret(cmd::secret::Args),
-    /// Manage units
-    Unit(cmd::unit::Args),
 }
 
 fn main() -> ExitCode {
@@ -81,8 +86,11 @@ fn run() -> Result<()> {
     match cli.command {
         Command::Check { name } => cmd::unit::check(&ctx, &name),
         Command::Db(args) => cmd::db::run(&ctx, args),
+        Command::Deploy { name, path } => {
+            let name = config::ResourceName::new(name)?;
+            cmd::unit::deploy(&ctx, &name, path.as_deref())
+        }
         Command::Inspect { name } => cmd::unit::inspect(&ctx, &name),
         Command::Secret(args) => cmd::secret::run(&ctx, args),
-        Command::Unit(args) => cmd::unit::run(&ctx, args),
     }
 }
