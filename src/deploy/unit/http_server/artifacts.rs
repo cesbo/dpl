@@ -9,9 +9,8 @@ use minijinja::{
     context,
 };
 
-use super::model::HttpServerConfig;
+use super::HttpServerUnit;
 use crate::{
-    config::ResourceName,
     deploy::artifacts::{
         ArtifactError,
         render_template,
@@ -53,27 +52,26 @@ pub fn write_global_config(conf_dir: &Path) -> Result<(), ArtifactError> {
 /// Returns the written file name.
 pub fn create_service_file(
     systemd_dir: &Path,
-    name: &ResourceName,
-    config: &HttpServerConfig,
+    unit: &HttpServerUnit,
 ) -> Result<String, ArtifactError> {
-    let container_name = name.scoped_unit_name();
-    let conf_volume = format!("{container_name}-conf");
-    let file_name = format!("{container_name}.service");
+    let container_name = unit.name.scoped_unit_name();
+    let conf_volume = unit.conf_volume();
 
     let content = render_template(
         &TEMPLATES,
         SERVICE_TEMPLATE,
         context! {
-            name => name.as_str(),
+            name => unit.name.as_str(),
             container_name => container_name,
-            image => config.image,
-            https => config.https,
+            image => &unit.config.image,
+            https => unit.config.https,
             conf_volume => conf_volume,
             www_volume => NGINX_WWW_VOLUME,
             www_mount => NGINX_WWW_MOUNT,
         },
     )?;
 
+    let file_name = format!("{container_name}.service");
     let path = systemd_dir.join(&file_name);
     fs::write(&path, content).map_err(ArtifactError::Write)?;
 
@@ -84,7 +82,14 @@ pub fn create_service_file(
 mod tests {
     use tempfile::tempdir;
 
-    use super::*;
+    use super::{
+        super::HttpServerConfig,
+        *,
+    };
+    use crate::{
+        MainContext,
+        config::ResourceName,
+    };
 
     #[test]
     fn write_global_config_drops_file() {
@@ -105,12 +110,17 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let systemd_dir = temp_dir.path();
         let name = ResourceName::new("web").unwrap();
-        let config = HttpServerConfig {
-            image: "docker.io/library/nginx:stable".into(),
-            https: false,
-        };
+        let ctx = MainContext::default();
+        let unit = HttpServerUnit::new(
+            &ctx,
+            &name,
+            HttpServerConfig {
+                image: "docker.io/library/nginx:stable".into(),
+                https: false,
+            },
+        );
 
-        let file_name = create_service_file(systemd_dir, &name, &config).unwrap();
+        let file_name = create_service_file(systemd_dir, &unit).unwrap();
         assert_eq!(file_name, "dpl--web.service");
 
         let body = fs::read_to_string(systemd_dir.join(&file_name)).unwrap();
@@ -130,12 +140,17 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let systemd_dir = temp_dir.path();
         let name = ResourceName::new("web").unwrap();
-        let config = HttpServerConfig {
-            image: "registry.example/custom-nginx:1.27".into(),
-            https: true,
-        };
+        let ctx = MainContext::default();
+        let unit = HttpServerUnit::new(
+            &ctx,
+            &name,
+            HttpServerConfig {
+                image: "registry.example/custom-nginx:1.27".into(),
+                https: true,
+            },
+        );
 
-        let file_name = create_service_file(systemd_dir, &name, &config).unwrap();
+        let file_name = create_service_file(systemd_dir, &unit).unwrap();
         let body = fs::read_to_string(systemd_dir.join(&file_name)).unwrap();
         assert!(body.contains("-p 80:80"));
         assert!(body.contains("-p 443:443"));

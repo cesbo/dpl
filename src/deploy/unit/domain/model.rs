@@ -112,7 +112,7 @@ impl DomainConfig {
         Ok(())
     }
 
-    fn resolve_server(&self, ctx: &MainContext) -> Result<HttpServerConfig, RefError> {
+    pub fn resolve_server(&self, ctx: &MainContext) -> Result<HttpServerConfig, RefError> {
         UnitConfig::load(ctx, &self.server)
             .map_err(RefError::from)
             .and_then(|cfg| match cfg {

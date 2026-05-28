@@ -9,10 +9,9 @@ use std::path::{
     PathBuf,
 };
 
-use tracing::warn;
-
 use self::artifacts::ArtifactsContext;
 pub use self::model::DomainConfig;
+use super::http_server::HttpServerUnit;
 use crate::{
     MainContext,
     deploy::{
@@ -24,7 +23,6 @@ use crate::{
         ensure_volume,
         volume_mountpoint,
     },
-    systemd,
 };
 
 #[derive(Debug)]
@@ -62,10 +60,12 @@ impl<'a> DomainUnit<'a> {
     }
 
     fn install_inner(&self) -> Result<(), DeployError> {
-        let server_container = self.config.server.scoped_unit_name();
-        let conf_volume = format!("{server_container}-conf");
-        let service_name = format!("{server_container}.service");
+        let server_config = self.config.resolve_server(self.ctx).map_err(|e| {
+            DeployError::unit(format!("resolve http-server '{}'", self.config.server), e)
+        })?;
+        let server_unit = HttpServerUnit::new(self.ctx, &self.config.server, server_config);
 
+        let conf_volume = server_unit.conf_volume();
         ensure_volume(&conf_volume)
             .map_err(|e| DeployError::unit(format!("get volume '{conf_volume}'"), e))?;
 
@@ -87,18 +87,7 @@ impl<'a> DomainUnit<'a> {
 
         self.write_config(&conf_dir, resolved.as_ref())?;
 
-        if systemd::is_active(&service_name) {
-            let _phase = log::phase(format!("reloading {server_container}"));
-            systemd::reload_service(&service_name)
-                .map_err(|e| DeployError::unit(format!("reload service '{service_name}'"), e))?;
-        } else {
-            warn!(
-                "http-server '{}' is not running; config written but nginx not reloaded",
-                self.config.server,
-            );
-        }
-
-        Ok(())
+        server_unit.reload_or_deploy()
     }
 
     fn write_config(

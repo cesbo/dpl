@@ -4,19 +4,23 @@ use std::{
     time::Duration,
 };
 
-use crate::podman::run_podman;
+use crate::{
+    config::ResourceName,
+    podman::run_podman,
+};
 
 const ATTEMPTS: usize = 30;
 const INTERVAL: Duration = Duration::from_millis(800);
 
 /// Wait until the container has a listening TCP socket on `port`.
-pub fn check(container: &str, port: u16) -> io::Result<()> {
+pub fn check(name: &ResourceName, port: u16) -> io::Result<()> {
+    let container = name.scoped_unit_name();
     let port_hex = format!("{port:04X}");
 
     for _ in 0 .. ATTEMPTS {
         sleep(INTERVAL);
 
-        if let Ok(table) = run_podman(&["exec", container, "cat", "/proc/net/tcp"])
+        if let Ok(table) = run_podman(&["exec", &container, "cat", "/proc/net/tcp"])
             && has_listening_port(&table, &port_hex)
         {
             return Ok(());
