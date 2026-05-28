@@ -15,7 +15,12 @@ use indicatif::{
     ProgressStyle,
 };
 
-const SPINNER: &[&str] = &["◩", "⬒", "⬔", "◨", "◪", "⬓", "⬕", "◧", "✓"];
+const SPINNER: &[&str] = &[
+    "⢀⠀", "⡀⠀", "⠄⠀", "⢂⠀", "⡂⠀", "⠅⠀", "⢃⠀", "⡃⠀", "⠍⠀", "⢋⠀", "⡋⠀", "⠍⠁", "⢋⠁", "⡋⠁", "⠍⠉", "⠋⠉",
+    "⠋⠉", "⠉⠙", "⠉⠙", "⠉⠩", "⠈⢙", "⠈⡙", "⢈⠩", "⡀⢙", "⠄⡙", "⢂⠩", "⡂⢘", "⠅⡘", "⢃⠨", "⡃⢐", "⠍⡐", "⢋⠠",
+    "⡋⢀", "⠍⡁", "⢋⠁", "⡋⠁", "⠍⠉", "⠋⠉", "⠋⠉", "⠉⠙", "⠉⠙", "⠉⠩", "⠈⢙", "⠈⡙", "⠈⠩", "⠀⢙", "⠀⡙", "⠀⠩",
+    "⠀⢘", "⠀⡘", "⠀⠨", "⠀⢐", "⠀⡐", "⠀⠠", "⠀⢀", "⠀⡀", "✓",
+];
 
 /// The deploy spinner style: an `[MM:SS]` stamp prefix matching the phase lines
 /// printed above it, and no trailing elapsed. The stamp reuses
@@ -78,4 +83,3 @@ pub fn print_above(bar: &ProgressBar, line: &[u8]) {
         let _ = err.write_all(b"\n");
     });
 }
-
