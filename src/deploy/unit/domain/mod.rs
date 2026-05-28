@@ -22,12 +22,15 @@ use crate::{
         NGINX_CONF_VOLUME,
         NGINX_WWW_VOLUME,
         ensure_volume,
+        health,
         volume_mountpoint,
     },
     systemd,
 };
 
+const NGINX_CONTAINER: &str = "dpl-nginx";
 const NGINX_SERVICE: &str = "dpl-nginx.service";
+const NGINX_PORT: u16 = 80;
 
 #[derive(Debug)]
 pub struct DomainUnit<'a> {
@@ -115,9 +118,15 @@ impl<'a> DomainUnit<'a> {
         artifacts::create_nginx_service(systemd_dir)?;
 
         systemd::reload().map_err(|e| DeployError::unit("reload systemd", e))?;
-        let _phase = log::phase("starting nginx");
-        systemd::enable_service(NGINX_SERVICE)
-            .map_err(|e| DeployError::unit(format!("enable service '{NGINX_SERVICE}'"), e))?;
+        {
+            let _phase = log::phase("starting nginx");
+            systemd::enable_service(NGINX_SERVICE)
+                .map_err(|e| DeployError::unit(format!("enable service '{NGINX_SERVICE}'"), e))?;
+        }
+
+        let _phase = log::phase("nginx health check");
+        health::check(NGINX_CONTAINER, NGINX_PORT)
+            .map_err(|e| DeployError::unit("nginx health check", e))?;
 
         Ok(())
     }

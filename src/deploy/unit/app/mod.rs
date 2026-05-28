@@ -240,7 +240,7 @@ impl<'a> AppUnit<'a> {
 
         {
             let _phase = log::phase("app health check");
-            health::check(self.name, self.config.port)
+            health::check(&self.name.scoped_unit_name(), self.config.port)
                 .map_err(|e| DeployError::unit("app health check", e))?;
 
             systemd_ctx
