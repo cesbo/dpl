@@ -65,7 +65,7 @@ impl DbConfig {
             "user" => Ok(self.user.clone()),
             "name" => Ok(unit_name.to_string()),
             "password" => self.resolve_password(ctx),
-            "host" => Ok(self.server.to_string()),
+            "host" => Ok(self.server.scoped_unit_name()),
             "port" => self
                 .resolve_server(ctx)
                 .map(|server| server.engine.default_port().to_string()),
@@ -77,7 +77,7 @@ impl DbConfig {
                     scheme = server.engine.url_scheme(),
                     user = self.user,
                     password = utf8_percent_encode(&password, USERINFO),
-                    host = self.server,
+                    host = self.server.scoped_unit_name(),
                     port = server.engine.default_port(),
                     db = unit_name,
                 ))
@@ -345,14 +345,14 @@ secret: app1-pass
             config
                 .resolve_export(&MainContext::default(), &unit, "host")
                 .unwrap(),
-            "pg-main"
+            "dpl--pg-main"
         );
 
         assert_eq!(config.resolve_export(&ctx, &unit, "port").unwrap(), "5432");
 
         assert_eq!(
             config.resolve_export(&ctx, &unit, "url").unwrap(),
-            "postgresql://app1:top%24ecret%26@pg-main:5432/app-db"
+            "postgresql://app1:top%24ecret%26@dpl--pg-main:5432/app-db"
         );
     }
 
@@ -405,14 +405,14 @@ secret: app1-pass
             config
                 .resolve_export(&MainContext::default(), &unit, "host")
                 .unwrap(),
-            "maria-main"
+            "dpl--maria-main"
         );
 
         assert_eq!(config.resolve_export(&ctx, &unit, "port").unwrap(), "3306");
 
         assert_eq!(
             config.resolve_export(&ctx, &unit, "url").unwrap(),
-            "mysql://app1:top%24ecret%26@maria-main:3306/app-db"
+            "mysql://app1:top%24ecret%26@dpl--maria-main:3306/app-db"
         );
     }
 
@@ -453,7 +453,7 @@ secret: app1-pass
 
         assert_eq!(
             config.resolve_export(&ctx, &unit, "url").unwrap(),
-            "mysql://app1:top%24ecret%26@mysql-main:3306/app-db"
+            "mysql://app1:top%24ecret%26@dpl--mysql-main:3306/app-db"
         );
     }
 
