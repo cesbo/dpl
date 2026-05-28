@@ -88,10 +88,7 @@ impl<'a> DbUnit<'a> {
         if backup.is_some() && exists {
             return Err(DeployError::unit(
                 format!("restore database '{}'", &self.name),
-                io::Error::other(format!(
-                    "database '{}' already exists; refuse to restore over it",
-                    &self.name
-                )),
+                io::Error::other("already exists; delete it manually to re-import"),
             ));
         }
 
