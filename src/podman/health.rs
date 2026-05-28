@@ -40,9 +40,7 @@ fn has_listening_port(table: &str, port_hex: &str) -> bool {
         let (_sl, local, _rem, state) =
             (fields.next(), fields.next(), fields.next(), fields.next());
         match (local, state) {
-            (Some(local), Some(state)) if state == "0A" => {
-                local.split(':').nth(1) == Some(port_hex)
-            }
+            (Some(local), Some("0A")) => local.split(':').nth(1) == Some(port_hex),
             _ => false,
         }
     })
