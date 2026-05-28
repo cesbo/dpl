@@ -16,10 +16,6 @@ exec {{ cmd }}
 fi
 
 case "$1" in
-check-tcp)
-port=$(printf '%04X' "$2")
-grep -qi ":${port} " /proc/net/tcp /proc/net/tcp6 2>/dev/null
-;;
 {% for timer in timers -%}
 timer--{{ timer.name }})
 {{ timer.script }}

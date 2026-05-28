@@ -1,5 +1,4 @@
 mod artifacts;
-mod health;
 mod inspect;
 mod model;
 mod podman;
@@ -47,6 +46,7 @@ use crate::{
         self,
         DeployLog,
     },
+    podman::health,
 };
 
 #[derive(Debug)]

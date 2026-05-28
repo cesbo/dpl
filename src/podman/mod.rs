@@ -1,3 +1,5 @@
+pub mod health;
+
 use std::{
     io,
     path::PathBuf,
