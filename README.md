@@ -33,7 +33,7 @@ dpl --base /opt/dpl <command> [args]
 | `dpl check <name>`   | Validate a unit's config and reference graph |
 | `dpl inspect <name>` | Show a unit's runtime state as JSON |
 | `dpl unit`           | Deploy units (`deploy`) |
-| `dpl db`             | Bring up DB-server units, create databases, back them up (`init`, `create`, `wait`, `console`, `backup`, `restore`) |
+| `dpl db`             | Inspect and back up databases (`wait`, `console`, `backup`) |
 | `dpl secret`         | Manage encrypted runtime secrets (`create`, `cat`, `rm`, `ls`) |
 
 Run any command with `--help` for the full flag list.
@@ -194,9 +194,9 @@ The database name is the unit name itself.
 ### Commands
 
 Write the unit's `config.yaml` under `{base_dir}/{name}/` (see the schemas
-above), then provision it with `dpl deploy`. `dpl db restore` is also a
-valid from-scratch entry point — it brings the db-server up and creates the
-database before streaming the dump.
+above), then provision it with `dpl deploy`. Passing a backup path to
+`dpl deploy <db>` restores the dump in the same step — useful for bringing a
+fresh host up from an existing backup.
 
 ```bash
 # Bring up a containerized DBMS from {base_dir}/db-main/config.yaml.
@@ -204,6 +204,10 @@ dpl deploy db-main
 
 # Create the database + login user inside the running db-server.
 dpl deploy app1
+
+# Same, but also restore a dump (the database must not exist yet).
+dpl deploy app1 app1.sql.gz
+gunzip -c app1.sql.gz | dpl deploy app1 -
 
 # Block until the db answers a ping (default 60s timeout).
 dpl db wait app1 --timeout 60
@@ -213,32 +217,29 @@ dpl db console app1
 
 # Dump a database to a SQL file, or stdout when the path is omitted.
 dpl db backup app1 app1.sql
+dpl db backup app1 app1.sql.gz       # .gz suffix → gzip
 dpl db backup app1 - | gzip > app1.sql.gz
-
-# Replay a SQL dump into the database from a file, or stdin. Creates the db
-# and starts the server if needed, so this works on a fresh host too.
-dpl db restore app1 app1.sql
-gunzip -c app1.sql.gz | dpl db restore app1
 ```
 
 `dpl db console` opens the engine's interactive client (`psql`, `mariadb`, or
 `mysql`) inside the running `db-server` via `podman exec -it`, connected to the
 database as its login user (or the superuser with `--root`).
 
-`dpl db backup` and `dpl db restore` run the engine's dump/restore client
-(`pg_dump`/`psql`, `mariadb-dump`/`mariadb`, or `mysqldump`/`mysql`) inside the running `db-server`
-via `podman exec`. They connect as the `db` unit's own login user, not the
-superuser, and stream plain SQL with no compression. The `path` argument
-defaults to `-`, which means stdout for `backup` and stdin for `restore`, so
-you can pipe through `gzip` or any other tool. `restore` runs the same setup
-flow as `dpl deploy <db>` first — db-server up, database created if
-missing — and then replays the dump on top of whatever is already there
-(no DROP/CREATE).
+`dpl db backup` runs the engine's dump client (`pg_dump`, `mariadb-dump`, or
+`mysqldump`) inside the running `db-server` via `podman exec`, as the `db`
+unit's login user. The `path` defaults to `-` (stdout) so you can pipe
+through any tool; a `.gz` destination (or `-z`) compresses on the way out.
+Client messages (e.g. PostgreSQL `NOTICE` lines) go to stderr above the
+spinner so stdout stays clean for piping; on failure those messages are
+already on screen and the final error only adds the exit status.
 
-Progress and the client's own messages (for example PostgreSQL `NOTICE` lines
-or restore errors) go to stderr, so stdout stays clean for piping. On failure
-those messages are already on screen and the final error only adds the exit
-status.
+`dpl deploy <db> <backup>` replays a dump via the engine's restore client
+(`psql`, `mariadb`, or `mysql`) after creating the database. The reader is
+auto-decoded if it starts with the gzip magic bytes, so `.sql` and `.sql.gz`
+both work. Use `-` as the path to read the dump from stdin. The deploy
+refuses if the database already exists — delete it manually to re-import.
+Restore output goes to the unit's build log (`{base_dir}/{name}/log/`)
+alongside the rest of the deploy.
 
 ## Secrets
 

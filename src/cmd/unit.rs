@@ -1,6 +1,9 @@
 use std::{
     fs,
-    io,
+    io::{
+        self,
+        Read,
+    },
     path::{
         Path,
         PathBuf,
@@ -94,7 +97,17 @@ pub(crate) fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>
                 None => app.deploy(&mut state, version, io::stdin().lock()),
             }
         }
-        UnitConfig::Db(db_config) => DbUnit::new(ctx, name, db_config).deploy(&mut state),
+        UnitConfig::Db(db_config) => {
+            let backup: Option<Box<dyn Read>> = match path {
+                Some(p) if p.as_os_str() == "-" => Some(Box::new(io::stdin().lock())),
+                Some(p) => match fs::File::open(p) {
+                    Ok(file) => Some(Box::new(file)),
+                    Err(err) => return Err(DeployError::unit("open backup", err).into()),
+                },
+                None => None,
+            };
+            DbUnit::new(ctx, name, db_config).deploy(&mut state, backup)
+        }
         UnitConfig::DbServer(db_server_config) => {
             DbServerUnit::new(ctx, name, db_server_config).deploy(&mut state)
         }

@@ -46,11 +46,13 @@ enum Command {
     },
     /// Manage database units
     Db(cmd::db::Args),
-    /// Trigger a deploy from a tar.gz archive (stdin if path is omitted)
+    /// Deploy a unit (app: tar.gz archive; db: optional SQL backup to restore)
     Deploy {
         /// Unit name
         name: String,
-        /// Path to tar.gz archive; reads from stdin if omitted
+        /// For an app unit: tar.gz archive (stdin if omitted).
+        /// For a db unit: SQL dump to restore (`-` for stdin; omit for
+        /// provision only). Gzip is detected automatically.
         path: Option<PathBuf>,
     },
     /// Show runtime state of a unit

@@ -2,10 +2,7 @@ use std::{
     fs::File,
     io::{
         self,
-        BufRead,
-        BufReader,
         BufWriter,
-        Read,
         Write,
     },
     thread::sleep,
@@ -24,7 +21,6 @@ use anyhow::{
 use clap::Subcommand;
 use flate2::{
     Compression,
-    read::GzDecoder,
     write::GzEncoder,
 };
 
@@ -32,12 +28,10 @@ use crate::{
     MainContext,
     config::ResourceName,
     deploy::{
-        DeployState,
         UnitConfig,
         unit::db::{
             DbConfig,
             DbServerConfig,
-            DbUnit,
         },
     },
 };
@@ -77,14 +71,6 @@ enum Cmd {
         #[arg(short = 'z')]
         gzip: bool,
     },
-    /// Replay a SQL dump into a database from a file (or stdin) as its login user
-    Restore {
-        /// Database (and unit) name
-        name: String,
-        /// Source file, or `-` for stdin
-        #[arg(default_value = "-")]
-        path: String,
-    },
 }
 
 pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
@@ -92,7 +78,6 @@ pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
         Cmd::Wait { name, timeout } => wait(ctx, &name, timeout),
         Cmd::Console { name, root } => console(ctx, &name, root),
         Cmd::Backup { name, path, gzip } => backup(ctx, &name, &path, gzip),
-        Cmd::Restore { name, path } => restore(ctx, &name, &path),
     }
 }
 
@@ -183,63 +168,6 @@ fn backup(ctx: &MainContext, name: &str, path: &str, gzip: bool) -> Result<()> {
     if path != "-" {
         eprintln!("backed up '{db_name}' to {path}");
     }
-
-    Ok(())
-}
-
-fn restore(ctx: &MainContext, name: &str, path: &str) -> Result<()> {
-    let (db_name, db_config) = load_db(ctx, name)?;
-    let (_, server_config) = load_db_server(ctx, db_config.server.as_str())?;
-    let password = ctx.resolve_secret(&db_config.secret)?;
-
-    // Bring the db unit up before streaming the dump.
-    let unit_dir = db_name.unit_dir(ctx);
-    let (_guard, mut state) =
-        DeployState::acquire(&unit_dir).with_context(|| format!("acquire unit '{db_name}'"))?;
-    DbUnit::new(ctx, &db_name, db_config.clone())
-        .deploy(&mut state)
-        .map_err(anyhow::Error::new)
-        .with_context(|| format!("prepare database '{db_name}'"))?;
-
-    let raw: Box<dyn Read> = if path == "-" {
-        Box::new(io::stdin().lock())
-    } else {
-        let file = File::open(path).with_context(|| format!("open backup file '{path}'"))?;
-        Box::new(file)
-    };
-
-    // Peek the gzip magic bytes so a `.gz` (or piped gzip) source is decoded
-    // transparently; the peeked bytes stay buffered for whichever reader wraps it.
-    let mut reader = BufReader::new(raw);
-    let gzipped = reader
-        .fill_buf()
-        .with_context(|| format!("read backup source '{path}'"))?
-        .starts_with(&[0x1f, 0x8b]);
-
-    let mut input: Box<dyn Read> = if gzipped {
-        Box::new(GzDecoder::new(reader))
-    } else {
-        Box::new(reader)
-    };
-
-    crate::spinner::Spinner::run(format!("restoring '{db_name}'"), |bar| {
-        let mut on_stderr = crate::spinner::stderr_sink(bar);
-        server_config.engine.restore(
-            &db_config.server,
-            &db_config.user,
-            &password,
-            db_name.as_str(),
-            &mut input,
-            &mut on_stderr,
-        )
-    })
-    .with_context(|| format!("restore database '{db_name}'"))?;
-
-    let source = if path == "-" { "stdin" } else { path };
-    eprintln!(
-        "{} restored '{db_name}' from {source}",
-        console::style("✓").green(),
-    );
 
     Ok(())
 }

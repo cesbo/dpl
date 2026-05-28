@@ -73,18 +73,25 @@ Keep this split when adding functionality.
   and db-server units, and creates the database (via `podman exec` against
   the running server) for db units. Other unit types render artifacts but
   don't yet install services.
-- `dpl db backup`/`dpl db restore` stream plain SQL through `podman exec` as
-  the `db` unit's login user (engine `dump`/`restore` methods in
-  `deploy/unit/db/backup.rs`, mirroring `create_database` in `sql.rs`). The
-  `path` arg defaults to `-` (stdout/stdin); no compression, no managed backup
-  directory, no DROP/CREATE — restore runs `DbUnit::deploy()` first (server
-  up + empty database provisioned if missing) and then replays the dump on
-  top of whatever is already there. The
-  child's stderr is drained on a separate thread and streamed live above the
-  spinner (the `on_stderr` callback wired to `spinner::stderr_sink`); this also
-  prevents a chatty client from deadlocking by filling its stderr pipe while
-  the data pipe is busy. On a non-zero exit the streamed output is the detail,
-  so the returned error only carries the exit status.
+- `dpl db backup` streams plain SQL through `podman exec` as the `db` unit's
+  login user (engine `dump` method in `deploy/unit/db/backup.rs`, mirroring
+  `create_database` in `sql.rs`). The `path` arg defaults to `-` (stdout); a
+  `.gz` destination or `-z` triggers gzip on the way out. The child's stderr
+  is drained on a separate thread and streamed live above the spinner (the
+  `on_stderr` callback wired to `spinner::stderr_sink`); this also prevents a
+  chatty client from deadlocking by filling its stderr pipe while the data
+  pipe is busy. On a non-zero exit the streamed output is the detail, so the
+  returned error only carries the exit status.
+- Restore happens through `dpl deploy <db-name> [backup]`, not a separate
+  command. `DbUnit::deploy` (`deploy/unit/db/database.rs`) takes an optional
+  `Box<dyn Read>`; when present it brings the server up, refuses if the
+  database already exists (no DROP/CREATE — delete manually to re-import),
+  creates the database, and replays the dump via the same engine `restore`
+  method. The reader is auto-decoded if it starts with the gzip magic bytes
+  (`1f 8b`), so `.sql` and `.sql.gz` both work. The path may be a file, `-`
+  for stdin, or omitted (provision only — no restore). Restore stderr goes
+  to the build log via `tracing::debug!(target: CHILD_TARGET, ...)`, matching
+  the podman-build pattern in `deploy/unit/app/podman.rs`.
 
 ## Coding Style
 

@@ -1,4 +1,12 @@
-use std::io;
+use std::io::{
+    self,
+    BufRead,
+    BufReader,
+    Read,
+};
+
+use flate2::read::GzDecoder;
+use tracing::debug;
 
 use super::{
     DbServerUnit,
@@ -12,7 +20,10 @@ use crate::{
         UnitConfig,
         state::DeployState,
     },
-    log,
+    log::{
+        self,
+        CHILD_TARGET,
+    },
 };
 
 #[derive(Debug)]
@@ -31,7 +42,11 @@ impl<'a> DbUnit<'a> {
         }
     }
 
-    pub fn deploy(self, state: &mut DeployState) -> Result<(), DeployError> {
+    pub fn deploy(
+        self,
+        state: &mut DeployState,
+        backup: Option<Box<dyn Read>>,
+    ) -> Result<(), DeployError> {
         let server_config = match UnitConfig::load(self.ctx, &self.config.server).map_err(|e| {
             DeployError::unit(
                 format!("load db-server '{}' config", &self.config.server),
@@ -72,6 +87,16 @@ impl<'a> DbUnit<'a> {
                 .is_ok()
         };
 
+        if backup.is_some() && exists {
+            return Err(DeployError::unit(
+                format!("restore database '{}'", &self.name),
+                io::Error::other(format!(
+                    "database '{}' already exists; refuse to restore over it",
+                    &self.name
+                )),
+            ));
+        }
+
         if !exists {
             let _phase = log::phase(format!("creating database '{}'", &self.name));
             server_config
@@ -86,7 +111,39 @@ impl<'a> DbUnit<'a> {
                 .map_err(|e| DeployError::unit(format!("create database '{}'", &self.name), e))?;
         }
 
+        if let Some(backup) = backup {
+            let _phase = log::phase(format!("restoring database '{}'", &self.name));
+            let mut input = open_backup(backup)
+                .map_err(|e| DeployError::unit(format!("restore database '{}'", &self.name), e))?;
+            let mut on_stderr = |line: &[u8]| {
+                debug!(target: CHILD_TARGET, "{}", String::from_utf8_lossy(line));
+            };
+            server_config
+                .engine
+                .restore(
+                    &self.config.server,
+                    &self.config.user,
+                    &user_password,
+                    self.name.as_str(),
+                    &mut input,
+                    &mut on_stderr,
+                )
+                .map_err(|e| DeployError::unit(format!("restore database '{}'", &self.name), e))?;
+        }
+
         state.set_ready();
         Ok(())
+    }
+}
+
+/// Peek the gzip magic bytes so a `.gz` (or piped gzip) source is decoded
+/// transparently; the peeked bytes stay buffered for whichever reader wraps it.
+fn open_backup(backup: Box<dyn Read>) -> io::Result<Box<dyn Read>> {
+    let mut reader = BufReader::new(backup);
+    let gzipped = reader.fill_buf()?.starts_with(&[0x1f, 0x8b]);
+    if gzipped {
+        Ok(Box::new(GzDecoder::new(reader)))
+    } else {
+        Ok(Box::new(reader))
     }
 }
