@@ -230,6 +230,24 @@ fn init(
     )
     .with_context(|| format!("start service for db-server '{unit_name}'"))?;
 
+    crate::spinner::Spinner::run(
+        format!("waiting for db-server '{unit_name}'"),
+        |_| -> Result<()> {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            let interval = Duration::from_millis(800);
+            loop {
+                if config.engine.ping(&unit_name, &root_password, None).is_ok() {
+                    return Ok(());
+                }
+                ensure!(
+                    Instant::now() < deadline,
+                    "timeout waiting for db-server '{unit_name}'"
+                );
+                sleep(interval);
+            }
+        },
+    )?;
+
     scopeguard::ScopeGuard::into_inner(unit_dir);
 
     println!(
@@ -321,7 +339,7 @@ fn wait(ctx: &MainContext, name: &str, timeout_secs: u64) -> Result<()> {
     loop {
         let result = server_config
             .engine
-            .ping(&db_config.server, &root_password, name);
+            .ping(&db_config.server, &root_password, Some(name));
 
         if result.is_ok() {
             return Ok(());

@@ -23,9 +23,14 @@ use super::model::DbServerEngine;
 use crate::config::ResourceName;
 
 impl DbServerEngine {
-    /// Returns `Ok` only when the container is up, the SQL server
-    /// accepts the connection, and the database exists.
-    pub fn ping(self, server: &ResourceName, root_password: &str, db_name: &str) -> io::Result<()> {
+    /// Returns `Ok` only when the container is up and the SQL server accepts
+    /// the root login.
+    pub fn ping(
+        self,
+        server: &ResourceName,
+        root_password: &str,
+        db_name: Option<&str>,
+    ) -> io::Result<()> {
         let server = server.scoped_unit_name();
         let password_env = self.client_password_env();
         let mut cmd = Command::new("podman");
@@ -40,18 +45,22 @@ impl DbServerEngine {
                     "-U",
                     "postgres",
                     "-d",
-                    db_name,
+                    db_name.unwrap_or("postgres"),
                     "-tAc",
                     "SELECT 1",
                 ]);
             }
             DbServerEngine::Mariadb => {
-                cmd.args([
-                    "mariadb", "-u", "root", "-N", "-B", "-e", "SELECT 1", db_name,
-                ]);
+                cmd.args(["mariadb", "-u", "root", "-N", "-B", "-e", "SELECT 1"]);
+                if let Some(name) = db_name {
+                    cmd.arg(name);
+                }
             }
             DbServerEngine::Mysql => {
-                cmd.args(["mysql", "-u", "root", "-N", "-B", "-e", "SELECT 1", db_name]);
+                cmd.args(["mysql", "-u", "root", "-N", "-B", "-e", "SELECT 1"]);
+                if let Some(name) = db_name {
+                    cmd.arg(name);
+                }
             }
         }
 
