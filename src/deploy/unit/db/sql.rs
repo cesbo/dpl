@@ -93,12 +93,40 @@ impl DbServerEngine {
             }
         };
 
+        self.exec_root_sql(&server, root_password, &sql)
+    }
+
+    /// Drop a database and its login user/role inside a running db-server
+    /// container. Uses `DROP ... IF EXISTS`, so it is idempotent when the
+    /// database or user is already gone.
+    pub fn drop_database(
+        self,
+        server: &ResourceName,
+        root_password: &str,
+        db_name: &str,
+        username: &str,
+    ) -> io::Result<()> {
+        let server = server.scoped_unit_name();
+        let sql = match self {
+            DbServerEngine::Postgresql => build_postgres_drop_sql(db_name, username),
+            DbServerEngine::Mariadb | DbServerEngine::Mysql => {
+                build_mysql_drop_sql(db_name, username)
+            }
+        };
+
+        self.exec_root_sql(&server, root_password, &sql)
+    }
+
+    /// Pipe `sql` to the engine's client (logged in as the superuser via the
+    /// db-server's root password) inside the scoped container. On a non-zero
+    /// exit the client's stderr becomes the error detail.
+    fn exec_root_sql(self, server: &str, root_password: &str, sql: &str) -> io::Result<()> {
         let client_password_env = self.client_password_env();
         let client_args = self.client_args();
 
         let mut cmd = Command::new("podman");
         cmd.env(client_password_env, root_password);
-        cmd.args(["exec", "-i", "-e", client_password_env, &server]);
+        cmd.args(["exec", "-i", "-e", client_password_env, server]);
         cmd.args(client_args);
 
         let mut child = cmd
@@ -161,6 +189,26 @@ fn build_mysql_sql(db_name: &str, username: &str, password: &str) -> String {
     )
 }
 
+fn build_postgres_drop_sql(db_name: &str, username: &str) -> String {
+    let q = PostgresQueryBuilder.quote();
+
+    let safe_db_name = quote_identifier(db_name, q);
+    let safe_username = quote_identifier(username, q);
+
+    // Drop the database before the role so the role no longer owns it.
+    format!("DROP DATABASE IF EXISTS {safe_db_name}; DROP ROLE IF EXISTS {safe_username};")
+}
+
+/// MySQL-dialect teardown SQL, shared by the `mariadb` and `mysql` engines.
+fn build_mysql_drop_sql(db_name: &str, username: &str) -> String {
+    let q = MysqlQueryBuilder.quote();
+
+    let safe_db_name = quote_identifier(db_name, q);
+    let safe_username = quote_identifier(username, q);
+
+    format!("DROP DATABASE IF EXISTS {safe_db_name}; DROP USER IF EXISTS {safe_username}@'%';")
+}
+
 fn quote_identifier(value: &str, q: Quote) -> String {
     let mut s = String::new();
     Alias::new(value).prepare(&mut s, q);
@@ -192,4 +240,23 @@ mod tests {
         assert!(sql.contains("GRANT ALL PRIVILEGES ON `app1`.* TO `app1`@'%';"));
     }
 
+    #[test]
+    fn postgres_drop_sql_structure() {
+        let sql = build_postgres_drop_sql("app1", "app1");
+        println!("{sql}");
+        assert_eq!(
+            sql,
+            "DROP DATABASE IF EXISTS \"app1\"; DROP ROLE IF EXISTS \"app1\";"
+        );
+    }
+
+    #[test]
+    fn mysql_drop_sql_structure() {
+        let sql = build_mysql_drop_sql("app1", "app1");
+        println!("{sql}");
+        assert_eq!(
+            sql,
+            "DROP DATABASE IF EXISTS `app1`; DROP USER IF EXISTS `app1`@'%';"
+        );
+    }
 }

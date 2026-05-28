@@ -75,6 +75,14 @@ pub fn child_output<R: io::Read>(reader: R) {
 /// names are static metadata, so the macro can't reference this constant).
 const PHASE_SPAN: &str = "dpl::phase";
 
+pub fn success_mark() -> console::StyledObject<&'static str> {
+    console::style("✓").green()
+}
+
+pub fn error_mark() -> console::StyledObject<&'static str> {
+    console::style("✗").red()
+}
+
 /// Open and enter a deploy phase.
 /// Sets the spinner message and stamps
 /// The previous phase's `✓` line is echoed when the next phase opens.
@@ -151,11 +159,7 @@ impl DeployLog {
             echo_phase_done(self.spinner.bar(), self.started, &prev);
         }
         self.spinner.finish();
-        eprintln!(
-            "[{}] {} deployed.",
-            fmt_stamp(elapsed),
-            console::style("✓").green(),
-        );
+        eprintln!("[{}] {} deployed.", fmt_stamp(elapsed), success_mark());
         elapsed
     }
 
@@ -172,7 +176,7 @@ impl DeployLog {
         eprintln!(
             "[{}] {} {phase} failed. Log: {}",
             fmt_stamp(elapsed),
-            console::style("✗").red(),
+            error_mark(),
             self.path.display()
         );
         elapsed
@@ -300,7 +304,7 @@ fn echo_phase_done(bar: &ProgressBar, started: Instant, name: &str) {
     let line = format!(
         "[{}] {} {name}",
         fmt_stamp(started.elapsed()),
-        console::style("✓").green(),
+        success_mark()
     );
     crate::spinner::print_above(bar, line.as_bytes());
 }
@@ -384,7 +388,8 @@ mod tests {
 
         let body = std::fs::read_to_string(&path).unwrap();
         assert!(
-            body.lines().any(|l| l.ends_with("ERROR 1064 (42000): syntax error")),
+            body.lines()
+                .any(|l| l.ends_with("ERROR 1064 (42000): syntax error")),
             "child stderr emitted from a spawned thread must reach the build log; got:\n{body}"
         );
     }

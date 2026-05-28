@@ -1,5 +1,8 @@
 use std::{
-    fs::File,
+    fs::{
+        self,
+        File,
+    },
     io::{
         self,
         BufWriter,
@@ -18,7 +21,12 @@ use anyhow::{
     bail,
     ensure,
 };
+use chrono::Utc;
 use clap::Subcommand;
+use dialoguer::{
+    Confirm,
+    Input,
+};
 use flate2::{
     Compression,
     write::GzEncoder,
@@ -28,12 +36,14 @@ use crate::{
     MainContext,
     config::ResourceName,
     deploy::{
+        DeployState,
         UnitConfig,
         unit::db::{
             DbConfig,
             DbServerConfig,
         },
     },
+    log::success_mark,
 };
 
 #[derive(clap::Args)]
@@ -71,6 +81,11 @@ enum Cmd {
         #[arg(short = 'z')]
         gzip: bool,
     },
+    /// Drop a database, its login user, and local state (keeps config.yaml)
+    Drop {
+        /// Database name
+        name: String,
+    },
 }
 
 pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
@@ -78,6 +93,7 @@ pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
         Cmd::Wait { name, timeout } => wait(ctx, &name, timeout),
         Cmd::Console { name, root } => console(ctx, &name, root),
         Cmd::Backup { name, path, gzip } => backup(ctx, &name, &path, gzip),
+        Cmd::Drop { name } => drop(ctx, &name),
     }
 }
 
@@ -170,10 +186,80 @@ fn backup(ctx: &MainContext, name: &str, path: &str, gzip: bool) -> Result<()> {
 
     // Progress goes to stderr so a `-` dump keeps stdout clean for piping.
     if path != "-" {
-        eprintln!("backed up '{db_name}' to {path}");
+        eprintln!("{} backed up '{db_name}' to {path}", success_mark());
     }
 
     Ok(())
+}
+
+fn drop(ctx: &MainContext, name: &str) -> Result<()> {
+    let (db_name, db_config) = load_db(ctx, name)?;
+    let (_, server_config) = load_db_server(ctx, db_config.server.as_str())?;
+    let unit_dir = db_name.unit_dir(ctx);
+
+    // Hold the deploy lock for the whole teardown so a concurrent deploy can't
+    // race; the guard removes `.deploy.lock` when it drops at end of scope. The
+    // loaded state is unused — we delete state.json outright below.
+    let (_guard, _state) =
+        DeployState::acquire(&unit_dir).with_context(|| format!("acquire unit '{db_name}'"))?;
+
+    loop {
+        let confirm: String = Input::with_theme(&crate::cmd::prompt_theme())
+            .with_prompt(format!("Type '{db_name}' to confirm dropping the database"))
+            .allow_empty(true)
+            .interact_text()?;
+
+        if confirm == db_name.as_str() {
+            break;
+        }
+    }
+
+    let make_backup = Confirm::with_theme(&crate::cmd::prompt_theme())
+        .with_prompt("Create a backup before dropping?")
+        .default(true)
+        .interact()?;
+
+    if make_backup {
+        let stamp = Utc::now().format("%Y%m%d-%H%M%S");
+        let path = unit_dir.join(format!("backup-{stamp}.sql.gz"));
+        let path = path.to_str().unwrap();
+        backup(ctx, name, path, true)?;
+    }
+
+    // Drop the database and login user on the server. `IF EXISTS` keeps this
+    // idempotent when the unit was never deployed (or already torn down).
+    let root_password = ctx.resolve_secret(&server_config.secret)?;
+    server_config
+        .engine
+        .drop_database(
+            &db_config.server,
+            &root_password,
+            db_name.as_str(),
+            &db_config.user,
+        )
+        .with_context(|| format!("drop database '{db_name}'"))?;
+
+    remove_if_exists(&unit_dir.join("state.json"), false)?;
+    remove_if_exists(&unit_dir.join("log"), true)?;
+
+    eprintln!("{} dropped database '{db_name}'", success_mark());
+
+    Ok(())
+}
+
+/// Remove a file (or directory tree when `dir`) if present, treating an absent
+/// target as success.
+fn remove_if_exists(path: &std::path::Path, dir: bool) -> Result<()> {
+    let result = if dir {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    };
+    match result {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| format!("remove '{}'", path.display())),
+    }
 }
 
 fn load_db_server(ctx: &MainContext, name: &str) -> Result<(ResourceName, DbServerConfig)> {
