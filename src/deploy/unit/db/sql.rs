@@ -191,4 +191,5 @@ mod tests {
         assert!(sql.contains("CREATE USER `app1`@'%' IDENTIFIED BY 'p\\'ss';"));
         assert!(sql.contains("GRANT ALL PRIVILEGES ON `app1`.* TO `app1`@'%';"));
     }
+
 }

@@ -10,7 +10,6 @@ use std::{
 use anyhow::{
     Context,
     Result,
-    bail,
 };
 use clap::Subcommand;
 
@@ -24,7 +23,10 @@ use crate::{
         UnitReport,
         unit::{
             app::AppUnit,
-            db::DbServerUnit,
+            db::{
+                DbServerUnit,
+                DbUnit,
+            },
             domain::DomainUnit,
             http_server::HttpServerUnit,
         },
@@ -70,10 +72,10 @@ pub(crate) fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>
 
     match (&unit, path) {
         (UnitConfig::App(_), _) => {}
+        (UnitConfig::Db(_), _) => {}
         (UnitConfig::DbServer(_), _) => {}
         (UnitConfig::HttpServer(_), _) => {}
         (UnitConfig::Domain(_), _) => {}
-        _ => bail!("deploy not allowed for unit '{name}'"),
     }
 
     let unit_dir = name.unit_dir(ctx);
@@ -119,6 +121,7 @@ pub(crate) fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>
                 None => app.deploy(&mut state, version, io::stdin().lock()),
             }
         }
+        UnitConfig::Db(db_config) => DbUnit::new(ctx, name, db_config).deploy(&mut state),
         UnitConfig::DbServer(db_server_config) => {
             DbServerUnit::new(ctx, name, db_server_config).deploy(&mut state)
         }
@@ -128,7 +131,6 @@ pub(crate) fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>
         UnitConfig::Domain(domain_config) => {
             DomainUnit::new(ctx, name.as_str(), domain_config).deploy(&mut state)
         }
-        _ => unreachable!("pre-flight match restricts the unit type"),
     };
 
     match result {
