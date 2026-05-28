@@ -46,17 +46,10 @@ impl<'a> DomainUnit<'a> {
         }
     }
 
-    pub fn deploy(self, mut state: DeployState) -> Result<(), DeployError> {
-        let _ = state.bump_version()?;
-        let _ = state.take_active_version();
-
-        if let Err(err) = self.install_inner() {
-            state.set_error();
-            Err(err)
-        } else {
-            state.set_ready();
-            Ok(())
-        }
+    pub fn deploy(self, state: &mut DeployState) -> Result<(), DeployError> {
+        self.install_inner()?;
+        state.set_ready();
+        Ok(())
     }
 
     fn install_inner(&self) -> Result<(), DeployError> {

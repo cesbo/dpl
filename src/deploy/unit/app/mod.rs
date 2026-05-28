@@ -144,7 +144,7 @@ impl<'a> AppUnit<'a> {
         let _phase = log::phase("updating dependent domains");
         for (name, config) in domains {
             let unit_dir = name.unit_dir(self.ctx);
-            let (_guard, state) = match DeployState::acquire(&unit_dir) {
+            let (_guard, mut state) = match DeployState::acquire(&unit_dir) {
                 Ok(v) => v,
                 Err(err) => {
                     error!("skip domain '{name}': {err}");
@@ -152,8 +152,14 @@ impl<'a> AppUnit<'a> {
                 }
             };
 
+            if let Err(err) = state.bump_version() {
+                error!("skip domain '{name}': {err}");
+                continue;
+            }
+
             let domain = DomainUnit::new(self.ctx, name.as_str(), config);
-            if let Err(err) = domain.deploy(state) {
+            if let Err(err) = domain.deploy(&mut state) {
+                state.set_error();
                 error!(
                     "domain '{name}' redeploy failed: {:#}",
                     anyhow::Error::new(err)

@@ -24,6 +24,7 @@ use crate::{
         UnitReport,
         unit::{
             app::AppUnit,
+            domain::DomainUnit,
             http_server::HttpServerUnit,
         },
     },
@@ -68,10 +69,8 @@ fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Result
 
     match (&unit, path) {
         (UnitConfig::App(_), _) => {}
-        (UnitConfig::HttpServer(_), None) => {}
-        (UnitConfig::HttpServer(_), Some(_)) => {
-            bail!("archive not supported for http-server unit '{name}'");
-        }
+        (UnitConfig::HttpServer(_), _) => {}
+        (UnitConfig::Domain(_), _) => {}
         _ => bail!("deploy not allowed for unit '{name}'"),
     }
 
@@ -99,8 +98,10 @@ fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Result
         Ok(log) => log,
         Err(err) => {
             state.set_error();
-            return Err(anyhow::Error::new(DeployError::unit("open deploy log", err))
-                .context(format!("deploy unit '{name}'")));
+            return Err(
+                anyhow::Error::new(DeployError::unit("open deploy log", err))
+                    .context(format!("deploy unit '{name}'")),
+            );
         }
     };
     let _default = log.set_default();
@@ -118,6 +119,9 @@ fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Result
         }
         UnitConfig::HttpServer(http_config) => {
             HttpServerUnit::new(ctx, name, http_config).deploy(&mut state)
+        }
+        UnitConfig::Domain(domain_config) => {
+            DomainUnit::new(ctx, name.as_str(), domain_config).deploy(&mut state)
         }
         _ => unreachable!("pre-flight match restricts the unit type"),
     };
