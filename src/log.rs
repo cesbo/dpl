@@ -174,7 +174,7 @@ impl DeployLog {
             echo_phase_done(self.spinner.bar(), self.started, &prev);
         }
         self.spinner.finish();
-        eprintln!("[{}] {} deployed.", fmt_stamp(elapsed), success_mark());
+        eprintln!("[{}] {}  deployed", fmt_stamp(elapsed), success_mark());
         elapsed
     }
 
@@ -189,7 +189,7 @@ impl DeployLog {
             .unwrap_or_else(|| self.spinner.bar().message());
         self.spinner.finish();
         eprintln!(
-            "[{}] {} {phase} failed. Log: {}",
+            "[{}] {}  {phase} failed. Log: {}",
             fmt_stamp(elapsed),
             error_mark(),
             self.path.display()
@@ -317,7 +317,7 @@ impl Visit for MessageVisitor {
 /// The stamp is cumulative elapsed since deploy start, matching [`fmt_stamp`].
 fn echo_phase_done(bar: &ProgressBar, started: Instant, name: &str) {
     let line = format!(
-        "[{}] {} {name}",
+        "[{}] {}  {name}",
         fmt_stamp(started.elapsed()),
         success_mark()
     );
