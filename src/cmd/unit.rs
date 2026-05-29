@@ -10,6 +10,7 @@ use std::{
 use anyhow::{
     Context,
     Result,
+    bail,
 };
 
 use crate::{
@@ -46,13 +47,23 @@ pub fn check(ctx: &MainContext, name: &str) -> Result<()> {
 pub fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Result<()> {
     let unit = load_unit(ctx, name)?;
 
-    match (&unit, path) {
-        (UnitConfig::App(_), _) => {}
-        (UnitConfig::Db(_), _) => {}
-        (UnitConfig::DbServer(_), _) => {}
-        (UnitConfig::HttpServer(_), _) => {}
-        (UnitConfig::Domain(_), _) => {}
-    }
+    let input = match unit {
+        UnitConfig::App(_) => {
+            let input = open_input(path)?;
+            if input.is_none() {
+                bail!("archive path is required to deploy app unit (use `-` to read from stdin)")
+            }
+            input
+        }
+        UnitConfig::Db(_) => open_input(path)?,
+        _ => {
+            if path.is_some() {
+                bail!("path argument is not allowed for {} unit", unit.kind());
+            } else {
+                None
+            }
+        }
+    };
 
     let unit_dir = name.unit_dir(ctx);
     let (_guard, mut state) =
@@ -77,23 +88,11 @@ pub fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Re
     let _default = log.set_default();
 
     let result: std::result::Result<(), DeployError> = match unit {
-        UnitConfig::App(app_config) => match path {
-            Some(path) => {
-                let input = open_input(path, "archive")?;
-                AppUnit::new(ctx, name, app_config).deploy(&mut state, version, input)
-            }
-            None => Err(DeployError::unit(
-                "open archive",
-                io::Error::other("archive path is required (use `-` to read from stdin)"),
-            )),
-        },
-        UnitConfig::Db(db_config) => {
-            let input = match path {
-                Some(path) => Some(open_input(path, "backup")?),
-                None => None,
-            };
-            DbUnit::new(ctx, name, db_config).deploy(&mut state, input)
+        UnitConfig::App(app_config) => {
+            // validated Some in the pre-flight match
+            AppUnit::new(ctx, name, app_config).deploy(&mut state, version, input.unwrap())
         }
+        UnitConfig::Db(db_config) => DbUnit::new(ctx, name, db_config).deploy(&mut state, input),
         UnitConfig::DbServer(db_server_config) => {
             DbServerUnit::new(ctx, name, db_server_config).deploy(&mut state)
         }
@@ -135,16 +134,21 @@ pub fn inspect(ctx: &MainContext, name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Open `path` as a deploy input. `-` means stdin; anything else is a file
-/// path. `what` names the input in the error (e.g. "archive", "backup").
-fn open_input(path: &Path, what: &str) -> Result<Box<dyn Read>, DeployError> {
-    if path.as_os_str() == "-" {
-        Ok(Box::new(io::stdin().lock()))
+/// Open `path` as a deploy input. `-` means stdin.
+fn open_input(path: Option<&Path>) -> Result<Option<Box<dyn Read>>, DeployError> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+
+    let input = if path.as_os_str() == "-" {
+        Box::new(io::stdin().lock())
     } else {
         fs::File::open(path)
             .map(|f| Box::new(f) as Box<dyn Read>)
-            .map_err(|err| DeployError::unit(format!("open {what}"), err))
-    }
+            .map_err(|err| DeployError::unit("open input", err))?
+    };
+
+    Ok(Some(input))
 }
 
 fn load_unit(ctx: &MainContext, name: &ResourceName) -> Result<UnitConfig> {
