@@ -110,7 +110,7 @@ impl<'a> HttpServerUnit<'a> {
             }
         }
 
-        let phase_name = format!("checking http-server '{}' health", self.name);
+        let phase_name = format!("waiting for http-server '{}'", self.name);
         let _phase = log::phase(&phase_name);
         health::check(self.name, HTTP_PORT).map_err(|e| DeployError::unit(phase_name, e))?;
 

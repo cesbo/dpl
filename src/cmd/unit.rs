@@ -176,7 +176,7 @@ fn print_failure(ctx: &MainContext, name: &UnitName, version: u32, phase: Option
         }
     };
 
-    if phase.starts_with("checking") && phase.ends_with("health") {
+    if phase.starts_with("waiting for app") {
         let runtime_log = format!("/var/log/podman/{}.log", name.scoped_unit_name());
         println!("  runtime log: {}", runtime_log);
     } else {

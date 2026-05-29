@@ -49,7 +49,7 @@ Keep this split when adding functionality.
 3. `DeployState` is rewritten to `{unit_dir}/.state.json` at each phase
    transition; failures land as `status: failed`, with `phase` recording the
    `log::phase` active at the failure (e.g. `building app image` →
-   `{unit_dir}/build.log`, `checking app health` → `/var/log/podman/{scoped}.log`).
+   `{unit_dir}/build.log`, `waiting for app` → `/var/log/podman/{scoped}.log`).
 
 ### Key Dependencies
 

@@ -60,7 +60,7 @@ pub struct BuildResult {
     pub status: DeployStatus,
 
     /// Deploy phase active when the last attempt failed (e.g. `building app
-    /// image`, `checking app health`). Set only on failure; tells later analysis
+    /// image`, `waiting for app`). Set only on failure; tells later analysis
     /// where to look — build-time phases point at `{unit_dir}/build.log`, the
     /// health-check phase at `/var/log/podman/{scoped_unit_name}.log`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -141,10 +141,7 @@ impl DeployState {
     }
 
     /// Returns currently running version
-    pub fn get_active_version(
-        ctx: &MainContext,
-        name: &UnitName,
-    ) -> Result<u32, DeployStateError> {
+    pub fn get_active_version(ctx: &MainContext, name: &UnitName) -> Result<u32, DeployStateError> {
         let state = Self::load(ctx, name)?;
         state
             .active_version
@@ -259,7 +256,7 @@ mod tests {
     fn bump_version_clears_phase() {
         let dir = tempfile::tempdir().unwrap();
         let mut state = state_at(dir.path());
-        state.set_error(Some("checking app health".to_string()));
+        state.set_error(Some("waiting for app".to_string()));
         assert_eq!(state.bump_version().unwrap(), 1);
         assert_eq!(state.latest_build.status, DeployStatus::Building);
         assert_eq!(state.latest_build.phase, None);
@@ -269,7 +266,7 @@ mod tests {
     fn set_ready_clears_phase() {
         let dir = tempfile::tempdir().unwrap();
         let mut state = state_at(dir.path());
-        state.set_error(Some("checking app health".to_string()));
+        state.set_error(Some("waiting for app".to_string()));
         state.set_ready();
         assert_eq!(state.latest_build.status, DeployStatus::Ready);
         assert_eq!(state.latest_build.phase, None);
