@@ -44,7 +44,7 @@ enum Cmd {
     /// Create and store a new secret
     Create {
         /// Secret name (`name` or `group/name`); omit for an interactive prompt
-        name: Option<String>,
+        name: Option<SecretName>,
         /// Source: omit for an interactive prompt, "-" to read stdin, or a path to a file.
         /// On an empty interactive prompt a random secret is generated and printed.
         source: Option<String>,
@@ -52,12 +52,12 @@ enum Cmd {
     /// Print a secret's plaintext to stdout
     Cat {
         /// Secret name: `name` or `group/name` (lowercase letters, digits, `-`)
-        name: String,
+        name: SecretName,
     },
     /// Remove an encrypted secret
     Rm {
         /// Secret name: `name` or `group/name` (lowercase letters, digits, `-`)
-        name: String,
+        name: SecretName,
     },
     /// List existing secret names
     Ls,
@@ -72,18 +72,17 @@ pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
     }
 }
 
-fn create(ctx: &MainContext, name: Option<String>, source: Option<&str>) -> Result<()> {
+fn create(ctx: &MainContext, name: Option<SecretName>, source: Option<&str>) -> Result<()> {
     let name = match name {
         Some(value) => {
-            let name = SecretName::new(value)?;
-            match ctx.check_secret(&name) {
+            match ctx.check_secret(&value) {
                 Ok(_) => bail!(SecretError::AlreadyExists {
-                    name: name.to_string(),
+                    name: value.to_string(),
                 }),
                 Err(SecretError::NotFound { .. }) => {}
                 Err(err) => bail!(err),
             }
-            name
+            value
         }
         None => prompt_name(ctx)?,
     };
@@ -99,18 +98,15 @@ fn create(ctx: &MainContext, name: Option<String>, source: Option<&str>) -> Resu
     Ok(())
 }
 
-fn cat(ctx: &MainContext, name: &str) -> Result<()> {
-    let name = &SecretName::new(name)?;
+fn cat(ctx: &MainContext, name: &SecretName) -> Result<()> {
     let value = ctx.resolve_secret(name)?;
     println!("{value}");
     Ok(())
 }
 
-fn rm(ctx: &MainContext, name: &str) -> Result<()> {
-    let name = &SecretName::new(name)?;
+fn rm(ctx: &MainContext, name: &SecretName) -> Result<()> {
     secret::remove(ctx.base(), name)?;
     println!("secret '{}' removed", name);
-
     Ok(())
 }
 

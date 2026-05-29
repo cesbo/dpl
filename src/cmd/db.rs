@@ -56,24 +56,24 @@ pub struct Args {
 enum Cmd {
     /// Wait until a database is reachable through its db-server's CLI
     Wait {
-        /// Database (and unit) name
-        name: String,
+        /// Database unit name
+        name: ResourceName,
         /// Timeout in seconds
         #[arg(long, default_value_t = 60)]
         timeout: u64,
     },
     /// Open an interactive SQL console to a database as its own login user
     Console {
-        /// Database (and unit) name
-        name: String,
+        /// Database unit name
+        name: ResourceName,
         /// Connect as the engine superuser with the db-server's root password
         #[arg(long)]
         root: bool,
     },
     /// Dump a database to a SQL file (or stdout) as its own login user
     Backup {
-        /// Database (and unit) name
-        name: String,
+        /// Database unit name
+        name: ResourceName,
         /// Destination file, or `-` for stdout
         #[arg(default_value = "-")]
         path: String,
@@ -83,8 +83,8 @@ enum Cmd {
     },
     /// Drop a database, its login user, and local state (keeps config.yaml)
     Drop {
-        /// Database name
-        name: String,
+        /// Database unit name
+        name: ResourceName,
     },
 }
 
@@ -97,9 +97,9 @@ pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
     }
 }
 
-fn wait(ctx: &MainContext, name: &str, timeout_secs: u64) -> Result<()> {
-    let (_, db_config) = load_db(ctx, name)?;
-    let (_, server_config) = load_db_server(ctx, db_config.server.as_str())?;
+fn wait(ctx: &MainContext, name: &ResourceName, timeout_secs: u64) -> Result<()> {
+    let db_config = load_db(ctx, name)?;
+    let server_config = load_db_server(ctx, &db_config.server)?;
 
     let root_password = ctx.resolve_secret(&server_config.secret)?;
 
@@ -107,9 +107,10 @@ fn wait(ctx: &MainContext, name: &str, timeout_secs: u64) -> Result<()> {
     let interval = Duration::from_millis(800);
 
     loop {
-        let result = server_config
-            .engine
-            .ping(&db_config.server, &root_password, Some(name));
+        let result =
+            server_config
+                .engine
+                .ping(&db_config.server, &root_password, Some(name.as_str()));
 
         if result.is_ok() {
             return Ok(());
@@ -124,9 +125,9 @@ fn wait(ctx: &MainContext, name: &str, timeout_secs: u64) -> Result<()> {
     }
 }
 
-fn console(ctx: &MainContext, name: &str, root: bool) -> Result<()> {
-    let (db_name, db_config) = load_db(ctx, name)?;
-    let (_, server_config) = load_db_server(ctx, db_config.server.as_str())?;
+fn console(ctx: &MainContext, name: &ResourceName, root: bool) -> Result<()> {
+    let db_config = load_db(ctx, name)?;
+    let server_config = load_db_server(ctx, &db_config.server)?;
 
     let (user, password) = if root {
         (
@@ -142,13 +143,13 @@ fn console(ctx: &MainContext, name: &str, root: bool) -> Result<()> {
 
     server_config
         .engine
-        .console(&db_config.server, &user, &password, db_name.as_str())
-        .with_context(|| format!("open console to '{db_name}'"))
+        .console(&db_config.server, &user, &password, name.as_str())
+        .with_context(|| format!("open console to '{name}'"))
 }
 
-fn backup(ctx: &MainContext, name: &str, path: &str, gzip: bool) -> Result<()> {
-    let (db_name, db_config) = load_db(ctx, name)?;
-    let (_, server_config) = load_db_server(ctx, db_config.server.as_str())?;
+fn backup(ctx: &MainContext, name: &ResourceName, path: &str, gzip: bool) -> Result<()> {
+    let db_config = load_db(ctx, name)?;
+    let server_config = load_db_server(ctx, &db_config.server)?;
     let password = ctx.resolve_secret(&db_config.secret)?;
 
     let raw: Box<dyn Write> = if path == "-" {
@@ -176,36 +177,36 @@ fn backup(ctx: &MainContext, name: &str, path: &str, gzip: bool) -> Result<()> {
             &db_config.server,
             &db_config.user,
             &password,
-            db_name.as_str(),
+            name.as_str(),
             &mut out,
             &mut on_stderr,
         )
-        .with_context(|| format!("back up database '{db_name}'"))?;
+        .with_context(|| format!("back up database '{name}'"))?;
 
     out.flush().context("flush backup output")?;
 
     // Progress goes to stderr so a `-` dump keeps stdout clean for piping.
     if path != "-" {
-        eprintln!("{} backed up '{db_name}' to {path}", success_mark());
+        eprintln!("{} backed up '{name}' to {path}", success_mark());
     }
 
     Ok(())
 }
 
-fn drop(ctx: &MainContext, name: &str) -> Result<()> {
-    let (db_name, db_config) = load_db(ctx, name)?;
-    let (_, server_config) = load_db_server(ctx, db_config.server.as_str())?;
+fn drop(ctx: &MainContext, name: &ResourceName) -> Result<()> {
+    let db_config = load_db(ctx, name)?;
+    let server_config = load_db_server(ctx, &db_config.server)?;
 
     let (_guard, _state) =
-        DeployState::acquire(ctx, &db_name).with_context(|| format!("acquire unit '{db_name}'"))?;
+        DeployState::acquire(ctx, name).with_context(|| format!("acquire unit '{name}'"))?;
 
     loop {
         let confirm: String = Input::with_theme(&crate::cmd::prompt_theme())
-            .with_prompt(format!("Type '{db_name}' to confirm dropping the database"))
+            .with_prompt(format!("Type '{name}' to confirm dropping the database"))
             .allow_empty(true)
             .interact_text()?;
 
-        if confirm == db_name.as_str() {
+        if confirm == name.as_str() {
             break;
         }
     }
@@ -217,9 +218,7 @@ fn drop(ctx: &MainContext, name: &str) -> Result<()> {
 
     if make_backup {
         let stamp = Utc::now().format("%Y%m%d-%H%M%S");
-        let path = ctx
-            .unit_dir(&db_name)
-            .join(format!("backup-{stamp}.sql.gz"));
+        let path = ctx.unit_dir(name).join(format!("backup-{stamp}.sql.gz"));
         let path = path.to_str().unwrap();
         backup(ctx, name, path, true)?;
     }
@@ -232,33 +231,31 @@ fn drop(ctx: &MainContext, name: &str) -> Result<()> {
         .drop_database(
             &db_config.server,
             &root_password,
-            db_name.as_str(),
+            name.as_str(),
             &db_config.user,
         )
-        .with_context(|| format!("drop database '{db_name}'"))?;
+        .with_context(|| format!("drop database '{name}'"))?;
 
-    let _ = fs::remove_file(ctx.state_path(&db_name));
-    let _ = fs::remove_file(ctx.build_log_path(&db_name));
+    let _ = fs::remove_file(ctx.state_path(name));
+    let _ = fs::remove_file(ctx.build_log_path(name));
 
-    eprintln!("{} dropped database '{db_name}'", success_mark());
+    eprintln!("{} dropped database '{name}'", success_mark());
 
     Ok(())
 }
 
-fn load_db_server(ctx: &MainContext, name: &str) -> Result<(ResourceName, DbServerConfig)> {
-    let unit_name = ResourceName::new(name)?;
-    let unit = UnitConfig::load(ctx, &unit_name)?;
+fn load_db_server(ctx: &MainContext, name: &ResourceName) -> Result<DbServerConfig> {
+    let unit = UnitConfig::load(ctx, name)?;
     let UnitConfig::DbServer(config) = unit else {
-        bail!("unit '{unit_name}' is not a db-server");
+        bail!("unit '{name}' is not a db-server");
     };
-    Ok((unit_name, config))
+    Ok(config)
 }
 
-fn load_db(ctx: &MainContext, name: &str) -> Result<(ResourceName, DbConfig)> {
-    let unit_name = ResourceName::new(name)?;
-    let unit = UnitConfig::load(ctx, &unit_name)?;
+fn load_db(ctx: &MainContext, name: &ResourceName) -> Result<DbConfig> {
+    let unit = UnitConfig::load(ctx, name)?;
     let UnitConfig::Db(config) = unit else {
-        bail!("unit '{unit_name}' is not a db");
+        bail!("unit '{name}' is not a db");
     };
-    Ok((unit_name, config))
+    Ok(config)
 }

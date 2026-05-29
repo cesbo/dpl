@@ -37,9 +37,8 @@ use crate::{
     },
 };
 
-pub fn check(ctx: &MainContext, name: &str) -> Result<()> {
-    let name = ResourceName::new(name)?;
-    let _ = load_unit(ctx, &name)?;
+pub fn check(ctx: &MainContext, name: &ResourceName) -> Result<()> {
+    let _ = load_unit(ctx, name)?;
     println!("ok");
     Ok(())
 }
@@ -119,11 +118,10 @@ pub fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Re
     }
 }
 
-pub fn inspect(ctx: &MainContext, name: &str) -> Result<()> {
-    let name = ResourceName::new(name)?;
-    let unit = load_unit(ctx, &name)?;
+pub fn inspect(ctx: &MainContext, name: &ResourceName) -> Result<()> {
+    let unit = load_unit(ctx, name)?;
 
-    let state = DeployState::load(ctx, &name).with_context(|| format!("inspect unit '{name}'"))?;
+    let state = DeployState::load(ctx, name).with_context(|| format!("inspect unit '{name}'"))?;
 
     println!("Unit:    {name} ({})", unit.kind());
     match state.active_version {
@@ -141,7 +139,7 @@ pub fn inspect(ctx: &MainContext, name: &str) -> Result<()> {
             return Ok(());
         }
         DeployStatus::Building => println!("build #{} in progress", build.version),
-        DeployStatus::Failed => print_failure(ctx, &name, build.version, build.phase.as_deref()),
+        DeployStatus::Failed => print_failure(ctx, name, build.version, build.phase.as_deref()),
         DeployStatus::Ready => {}
     }
 
@@ -152,7 +150,7 @@ pub fn inspect(ctx: &MainContext, name: &str) -> Result<()> {
 
     match unit {
         UnitConfig::App(app_config) => {
-            AppUnit::new(ctx, &name, app_config)
+            AppUnit::new(ctx, name, app_config)
                 .inspect()
                 .with_context(|| format!("inspect unit '{name}'"))?;
         }

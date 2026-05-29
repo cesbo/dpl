@@ -68,6 +68,14 @@ impl SecretName {
     }
 }
 
+impl std::str::FromStr for SecretName {
+    type Err = SecretNameError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s)
+    }
+}
+
 impl fmt::Display for SecretName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
