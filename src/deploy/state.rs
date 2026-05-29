@@ -58,6 +58,13 @@ pub enum DeployStatus {
 pub struct BuildResult {
     pub version: u32,
     pub status: DeployStatus,
+
+    /// Deploy phase active when the last attempt failed (e.g. `building app
+    /// image`, `checking app health`). Set only on failure; tells later analysis
+    /// where to look — build-time phases point at `{unit_dir}/build.log`, the
+    /// health-check phase at `/var/log/podman/{scoped_unit_name}.log`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -163,19 +170,24 @@ impl DeployState {
             .ok_or(DeployStateError::VersionOverflow)?;
         self.latest_build.version = next;
         self.latest_build.status = DeployStatus::Building;
+        self.latest_build.phase = None;
         self.save()?;
 
         Ok(next)
     }
 
-    pub fn set_error(&mut self) {
+    /// Marks the latest build failed, recording the phase it failed at (the
+    /// open [`crate::log::phase`] when available, else `None`).
+    pub fn set_error(&mut self, phase: Option<String>) {
         self.latest_build.status = DeployStatus::Failed;
+        self.latest_build.phase = phase;
         let _ = self.save();
     }
 
     /// Sets build status to ready, sets build version as active version
     pub fn set_ready(&mut self) {
         self.latest_build.status = DeployStatus::Ready;
+        self.latest_build.phase = None;
         self.active_version = Some(self.latest_build.version);
         let _ = self.save();
     }
@@ -216,5 +228,77 @@ impl Drop for DeployStateGuard {
         {
             tracing::warn!("remove deploy lock file {}: {err}", self.path.display());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state_at(dir: &std::path::Path) -> DeployState {
+        DeployState {
+            path: dir.join(".state.json"),
+            active_version: None,
+            latest_build: BuildResult::default(),
+        }
+    }
+
+    #[test]
+    fn set_error_records_phase() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = state_at(dir.path());
+        state.set_error(Some("building app image".to_string()));
+        assert_eq!(state.latest_build.status, DeployStatus::Failed);
+        assert_eq!(
+            state.latest_build.phase.as_deref(),
+            Some("building app image")
+        );
+    }
+
+    #[test]
+    fn bump_version_clears_phase() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = state_at(dir.path());
+        state.set_error(Some("checking app health".to_string()));
+        assert_eq!(state.bump_version().unwrap(), 1);
+        assert_eq!(state.latest_build.status, DeployStatus::Building);
+        assert_eq!(state.latest_build.phase, None);
+    }
+
+    #[test]
+    fn set_ready_clears_phase() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = state_at(dir.path());
+        state.set_error(Some("checking app health".to_string()));
+        state.set_ready();
+        assert_eq!(state.latest_build.status, DeployStatus::Ready);
+        assert_eq!(state.latest_build.phase, None);
+        assert_eq!(state.active_version, Some(state.latest_build.version));
+    }
+
+    #[test]
+    fn phase_serde_roundtrips_and_is_omitted_when_none() {
+        let failed = BuildResult {
+            version: 2,
+            status: DeployStatus::Failed,
+            phase: Some("building app image".to_string()),
+        };
+        let json = serde_json::to_string(&failed).unwrap();
+        assert!(json.contains(r#""phase":"building app image""#), "{json}");
+        assert_eq!(serde_json::from_str::<BuildResult>(&json).unwrap(), failed);
+
+        // Omitted from the JSON when there is no failure.
+        let ready = BuildResult {
+            version: 3,
+            status: DeployStatus::Ready,
+            phase: None,
+        };
+        let json = serde_json::to_string(&ready).unwrap();
+        assert!(!json.contains("phase"), "{json}");
+
+        // Backward-compat: legacy state files without the field load as None.
+        let legacy: BuildResult =
+            serde_json::from_str(r#"{"version":3,"status":"ready"}"#).unwrap();
+        assert_eq!(legacy.phase, None);
     }
 }

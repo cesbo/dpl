@@ -47,7 +47,9 @@ Keep this split when adding functionality.
    `build-N.sh`, systemd service), runs `podman build`, optionally exports
    static files, and (re)installs the systemd service via `systemctl`.
 3. `DeployState` is rewritten to `{unit_dir}/.state.json` at each phase
-   transition; failures land as `status: failed`.
+   transition; failures land as `status: failed`, with `phase` recording the
+   `log::phase` active at the failure (e.g. `building app image` →
+   `{unit_dir}/build.log`, `checking app health` → `/var/log/podman/{scoped}.log`).
 
 ### Key Dependencies
 

@@ -151,7 +151,7 @@ impl<'a> AppUnit<'a> {
 
             let domain = DomainUnit::new(self.ctx, &name, config);
             if let Err(err) = domain.deploy(&mut state) {
-                state.set_error();
+                state.set_error(None);
                 error!(
                     "domain '{name}' redeploy failed: {:#}",
                     anyhow::Error::new(err)
@@ -195,7 +195,7 @@ impl<'a> AppUnit<'a> {
         }
 
         {
-            let phase_name = "app health check".to_string();
+            let phase_name = "checking app health".to_string();
             let _phase = log::phase(&phase_name);
             health::check(self.name, self.config.port)
                 .map_err(|e| DeployError::unit(phase_name, e))?;

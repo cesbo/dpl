@@ -38,6 +38,11 @@ impl AppUnit<'_> {
         if let Some(active) = state.active_version {
             section.push(Field::new("active", active.to_string()));
         }
+        if build.status == DeployStatus::Failed
+            && let Some(phase) = &build.phase
+        {
+            section.push(Field::new("phase", phase.clone()).health(Health::Down));
+        }
 
         Ok(section)
     }

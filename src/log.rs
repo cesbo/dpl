@@ -146,6 +146,14 @@ impl DeployLog {
         self.started.elapsed()
     }
 
+    /// Current phase name without consuming it. Read this BEFORE [`finish_err`],
+    /// which takes the phase. Returns `None` if no phase span is open yet.
+    ///
+    /// [`finish_err`]: Self::finish_err
+    pub fn current_phase(&self) -> Option<String> {
+        self.phase.lock().expect("phase mutex poisoned").clone()
+    }
+
     /// Make this deploy's subscriber the thread default. Hold the returned guard
     /// for the deploy's lifetime so the `tracing` macros route here.
     #[must_use]
@@ -401,6 +409,28 @@ mod tests {
                 .any(|l| l.ends_with("ERROR 1064 (42000): syntax error")),
             "child stderr emitted from a spawned thread must reach the build log; got:\n{body}"
         );
+    }
+
+    #[test]
+    fn current_phase_reports_open_phase_without_consuming() {
+        init();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("build.log");
+
+        let name = ResourceName::new("web").unwrap();
+        let log = DeployLog::open(&path, &name, 1).unwrap();
+        {
+            let _default = log.set_default();
+            assert_eq!(log.current_phase(), None);
+
+            let _phase = phase("building app image");
+            assert_eq!(log.current_phase().as_deref(), Some("building app image"));
+            // Peeking must not consume the phase: a second read still sees it,
+            // and finish_err can still take it afterwards.
+            assert_eq!(log.current_phase().as_deref(), Some("building app image"));
+        }
+        log.finish_err();
     }
 
     #[test]

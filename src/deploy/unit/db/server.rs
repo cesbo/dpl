@@ -59,7 +59,8 @@ impl<'a> DbServerUnit<'a> {
         match self.deploy(&mut state) {
             Ok(()) => Ok(()),
             Err(err) => {
-                state.set_error();
+                // No DeployLog handle here; the primary unit's state records the phase.
+                state.set_error(None);
                 Err(err)
             }
         }

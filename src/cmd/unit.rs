@@ -74,7 +74,8 @@ pub fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Re
     let log = match DeployLog::open(&log_path, name, version) {
         Ok(log) => log,
         Err(err) => {
-            state.set_error();
+            // The log (and its phase tracking) never opened, so no phase to record.
+            state.set_error(None);
             return Err(
                 anyhow::Error::new(DeployError::unit("open deploy log", err))
                     .context(format!("deploy unit '{name}'")),
@@ -106,7 +107,8 @@ pub fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Re
             Ok(())
         }
         Err(err) => {
-            state.set_error();
+            // Record the failing phase before finish_err takes it.
+            state.set_error(log.current_phase());
             tracing::debug!("deploy failed: {:#}", anyhow::Error::new(err));
             log.finish_err();
             Err(anyhow::Error::new(DeployError::Reported))
