@@ -19,8 +19,8 @@ use crate::{
     deploy::{
         DeployError,
         DeployState,
+        DeployStatus,
         UnitConfig,
-        UnitReport,
         unit::{
             app::AppUnit,
             db::{
@@ -31,7 +31,10 @@ use crate::{
             http_server::HttpServerUnit,
         },
     },
-    log::DeployLog,
+    log::{
+        DeployLog,
+        error_mark,
+    },
 };
 
 pub fn check(ctx: &MainContext, name: &str) -> Result<()> {
@@ -118,18 +121,70 @@ pub fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Re
 
 pub fn inspect(ctx: &MainContext, name: &str) -> Result<()> {
     let name = ResourceName::new(name)?;
-    let unit = UnitConfig::load(ctx, &name)?;
+    let unit = load_unit(ctx, &name)?;
 
-    let report = match unit {
-        UnitConfig::App(app_config) => AppUnit::new(ctx, &name, app_config)
-            .inspect()
-            .with_context(|| format!("inspect unit '{name}'"))?,
-        other => UnitReport::new(name.as_str(), other.kind()),
+    let state = DeployState::load(ctx, &name).with_context(|| format!("inspect unit '{name}'"))?;
+
+    println!("Unit:    {name} ({})", unit.kind());
+    match state.active_version {
+        Some(active) => println!("Active:  {}", console::style(active).green()),
+        None => println!("Active:  {}", console::style("none").red()),
+    }
+    println!();
+
+    let build = &state.latest_build;
+    match build.status {
+        // Nothing deployed (or a fresh unit with no `.state.json`); the build
+        // version is meaningless here, so don't print it.
+        DeployStatus::Idle => {
+            println!("no deploys yet");
+            return Ok(());
+        }
+        DeployStatus::Building => println!("build #{} in progress", build.version),
+        DeployStatus::Failed => print_failure(ctx, &name, build.version, build.phase.as_deref()),
+        DeployStatus::Ready => {}
+    }
+
+    // Per-unit runtime detail. Run it whenever a version is live.
+    if state.active_version.is_none() {
+        return Ok(());
+    }
+
+    match unit {
+        UnitConfig::App(app_config) => {
+            AppUnit::new(ctx, &name, app_config)
+                .inspect()
+                .with_context(|| format!("inspect unit '{name}'"))?;
+        }
+        UnitConfig::Db(_) => {}
+        UnitConfig::DbServer(_) => {}
+        UnitConfig::Domain(_) => {}
+        UnitConfig::HttpServer(_) => {}
+    }
+
+    Ok(())
+}
+
+/// Print the failure line for a `Failed` build and point at the relevant log.
+fn print_failure(ctx: &MainContext, name: &ResourceName, version: u32, phase: Option<&str>) {
+    let phase = match phase {
+        Some(phase) => {
+            println!("{} build #{version} failed at {phase:?}", error_mark());
+            phase
+        }
+        None => {
+            println!("{} build #{version} failed", error_mark());
+            ""
+        }
     };
 
-    let json = serde_json::to_string_pretty(&report).context("serialize report")?;
-    println!("{json}");
-    Ok(())
+    if phase.starts_with("checking") && phase.ends_with("health") {
+        let runtime_log = format!("/var/log/podman/{}.log", name.scoped_unit_name());
+        println!("  runtime log: {}", runtime_log);
+    } else {
+        let build_log = ctx.build_log_path(name);
+        println!("  build log: {}", build_log.display());
+    }
 }
 
 /// Open `path` as a deploy input. `-` means stdin.
