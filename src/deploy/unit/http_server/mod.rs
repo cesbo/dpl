@@ -26,17 +26,13 @@ const HTTP_PORT: u16 = 80;
 #[derive(Debug)]
 pub struct HttpServerUnit<'a> {
     pub ctx: &'a MainContext,
-    pub name: ResourceName,
+    pub name: &'a ResourceName,
     pub config: HttpServerConfig,
 }
 
 impl<'a> HttpServerUnit<'a> {
-    pub fn new(ctx: &'a MainContext, name: &ResourceName, config: HttpServerConfig) -> Self {
-        Self {
-            ctx,
-            name: name.clone(),
-            config,
-        }
+    pub fn new(ctx: &'a MainContext, name: &'a ResourceName, config: HttpServerConfig) -> Self {
+        Self { ctx, name, config }
     }
 
     /// Per-instance conf volume name (`dpl--<name>-conf`). Holds the global
@@ -59,14 +55,13 @@ impl<'a> HttpServerUnit<'a> {
         let service_name = format!("{}.service", self.name.scoped_unit_name());
 
         if systemd::is_active(&service_name) {
-            let _phase = log::phase(format!("reloading http-server '{}'", &self.name));
+            let _phase = log::phase(format!("reloading http-server '{}'", self.name));
             return systemd::reload_service(&service_name)
                 .map_err(|e| DeployError::unit(format!("reload service '{service_name}'"), e));
         }
 
-        let unit_dir = self.name.unit_dir(self.ctx);
-        let (_guard, mut state) = DeployState::acquire(&unit_dir)
-            .map_err(|e| DeployError::unit(format!("acquire http-server '{}'", &self.name), e))?;
+        let (_guard, mut state) = DeployState::acquire(self.ctx, self.name)
+            .map_err(|e| DeployError::unit(format!("acquire http-server '{}'", self.name), e))?;
         state.bump_version().map_err(DeployError::from)?;
 
         match self.deploy(&mut state) {
@@ -102,21 +97,21 @@ impl<'a> HttpServerUnit<'a> {
         systemd::reload().map_err(|e| DeployError::unit("reload systemd", e))?;
 
         {
-            let _phase = log::phase(format!("starting http-server '{}'", &self.name));
+            let _phase = log::phase(format!("starting http-server '{}'", self.name));
             if systemd::is_active(&service_name) {
                 systemd::restart_service(&service_name).map_err(|e| {
-                    DeployError::unit(format!("restart service for '{}'", &self.name), e)
+                    DeployError::unit(format!("restart service for '{}'", self.name), e)
                 })?;
             } else {
                 systemd::enable_service(&service_name).map_err(|e| {
-                    DeployError::unit(format!("enable service for '{}'", &self.name), e)
+                    DeployError::unit(format!("enable service for '{}'", self.name), e)
                 })?;
             }
         }
 
-        let phase_name = format!("http-server '{}' health check", &self.name);
+        let phase_name = format!("http-server '{}' health check", self.name);
         let _phase = log::phase(&phase_name);
-        health::check(&self.name, HTTP_PORT).map_err(|e| DeployError::unit(phase_name, e))?;
+        health::check(self.name, HTTP_PORT).map_err(|e| DeployError::unit(phase_name, e))?;
 
         Ok(())
     }

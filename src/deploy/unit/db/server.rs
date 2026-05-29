@@ -28,17 +28,13 @@ const PING_INTERVAL: Duration = Duration::from_millis(800);
 #[derive(Debug)]
 pub struct DbServerUnit<'a> {
     pub ctx: &'a MainContext,
-    pub name: ResourceName,
+    pub name: &'a ResourceName,
     pub config: DbServerConfig,
 }
 
 impl<'a> DbServerUnit<'a> {
-    pub fn new(ctx: &'a MainContext, name: &ResourceName, config: DbServerConfig) -> Self {
-        Self {
-            ctx,
-            name: name.clone(),
-            config,
-        }
+    pub fn new(ctx: &'a MainContext, name: &'a ResourceName, config: DbServerConfig) -> Self {
+        Self { ctx, name, config }
     }
 
     pub fn deploy(self, state: &mut DeployState) -> Result<(), DeployError> {
@@ -56,9 +52,8 @@ impl<'a> DbServerUnit<'a> {
             return Ok(());
         }
 
-        let unit_dir = self.name.unit_dir(self.ctx);
-        let (_guard, mut state) = DeployState::acquire(&unit_dir)
-            .map_err(|e| DeployError::unit(format!("acquire db-server '{}'", &self.name), e))?;
+        let (_guard, mut state) = DeployState::acquire(self.ctx, self.name)
+            .map_err(|e| DeployError::unit(format!("acquire db-server '{}'", self.name), e))?;
         state.bump_version().map_err(DeployError::from)?;
 
         match self.deploy(&mut state) {
@@ -77,7 +72,7 @@ impl<'a> DbServerUnit<'a> {
 
         artifacts::create_service_file(
             systemd_dir,
-            &self.name,
+            self.name,
             self.config.engine,
             &self.config.version,
             &root_password,
@@ -88,32 +83,32 @@ impl<'a> DbServerUnit<'a> {
         let service_name = format!("{}.service", self.name.scoped_unit_name());
 
         {
-            let _phase = log::phase(format!("starting db-server '{}'", &self.name));
+            let _phase = log::phase(format!("starting db-server '{}'", self.name));
             if systemd::is_active(&service_name) {
                 systemd::restart_service(&service_name).map_err(|e| {
-                    DeployError::unit(format!("restart service for '{}'", &self.name), e)
+                    DeployError::unit(format!("restart service for '{}'", self.name), e)
                 })?;
             } else {
                 systemd::enable_service(&service_name).map_err(|e| {
-                    DeployError::unit(format!("enable service for '{}'", &self.name), e)
+                    DeployError::unit(format!("enable service for '{}'", self.name), e)
                 })?;
             }
         }
 
-        let _phase = log::phase(format!("waiting for db-server '{}'", &self.name));
+        let _phase = log::phase(format!("waiting for db-server '{}'", self.name));
         let deadline = Instant::now() + PING_TIMEOUT;
         loop {
             if self
                 .config
                 .engine
-                .ping(&self.name, &root_password, None)
+                .ping(self.name, &root_password, None)
                 .is_ok()
             {
                 return Ok(());
             }
             if Instant::now() >= deadline {
                 return Err(DeployError::unit(
-                    format!("waiting for db-server '{}'", &self.name),
+                    format!("waiting for db-server '{}'", self.name),
                     std::io::Error::other("timeout"),
                 ));
             }

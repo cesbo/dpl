@@ -19,6 +19,7 @@ use super::{
 };
 use crate::{
     MainContext,
+    config::ResourceName,
     deploy::artifacts::{
         ArtifactError,
         render_template,
@@ -45,7 +46,7 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
 
 pub struct ArtifactsContext<'a> {
     pub ctx: &'a MainContext,
-    pub name: &'a str,
+    pub name: &'a ResourceName,
     pub config: &'a DomainConfig,
     pub proxy: Option<&'a ResolvedProxy>,
 }

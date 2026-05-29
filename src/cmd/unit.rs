@@ -31,10 +31,7 @@ use crate::{
             http_server::HttpServerUnit,
         },
     },
-    log::{
-        DeployLog,
-        build_log_path,
-    },
+    log::DeployLog,
 };
 
 pub fn check(ctx: &MainContext, name: &str) -> Result<()> {
@@ -65,17 +62,16 @@ pub fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Re
         }
     };
 
-    let unit_dir = name.unit_dir(ctx);
     let (_guard, mut state) =
-        DeployState::acquire(&unit_dir).with_context(|| format!("acquire unit '{name}'"))?;
+        DeployState::acquire(ctx, name).with_context(|| format!("acquire unit '{name}'"))?;
 
     let version = state
         .bump_version()
         .map_err(DeployError::from)
         .with_context(|| format!("deploy unit '{name}'"))?;
 
-    let log_path = build_log_path(&unit_dir);
-    let log = match DeployLog::open(&log_path, name.as_str(), version) {
+    let log_path = ctx.build_log_path(name);
+    let log = match DeployLog::open(&log_path, name, version) {
         Ok(log) => log,
         Err(err) => {
             state.set_error();
@@ -100,7 +96,7 @@ pub fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Re
             HttpServerUnit::new(ctx, name, http_config).deploy(&mut state)
         }
         UnitConfig::Domain(domain_config) => {
-            DomainUnit::new(ctx, name.as_str(), domain_config).deploy(&mut state)
+            DomainUnit::new(ctx, name, domain_config).deploy(&mut state)
         }
     };
 

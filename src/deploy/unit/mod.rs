@@ -46,8 +46,7 @@ pub enum UnitConfig {
 
 impl UnitConfig {
     pub fn load(ctx: &MainContext, name: &ResourceName) -> Result<Self, ConfigError> {
-        let unit_dir = name.unit_dir(ctx);
-        let path = unit_dir.join("config.yaml");
+        let path = ctx.config_path(name);
         let content = fs::read_to_string(&path).map_err(|err| {
             if err.kind() == io::ErrorKind::NotFound {
                 ConfigError::NotFound {

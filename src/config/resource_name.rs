@@ -1,7 +1,4 @@
-use std::{
-    fmt,
-    path::PathBuf,
-};
+use std::fmt;
 
 use serde::{
     Deserialize,
@@ -10,8 +7,6 @@ use serde::{
     Serializer,
 };
 use thiserror::Error;
-
-use crate::MainContext;
 
 #[derive(Error, Debug)]
 #[error("invalid resource name '{0}'")]
@@ -51,10 +46,6 @@ impl ResourceName {
         name.as_bytes()
             .iter()
             .all(|&b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-    }
-
-    pub fn unit_dir(&self, ctx: &MainContext) -> PathBuf {
-        ctx.base().join(self.as_str())
     }
 
     /// Scoped name of a dpl-managed unit: `dpl--<name>`.

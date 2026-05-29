@@ -10,10 +10,7 @@ use std::{
         self,
         Read,
     },
-    path::{
-        Path,
-        PathBuf,
-    },
+    path::Path,
 };
 
 use podman::PodmanContext;
@@ -49,26 +46,18 @@ use crate::{
 pub struct AppUnit<'a> {
     pub ctx: &'a MainContext,
     pub name: &'a ResourceName,
-    pub unit_dir: PathBuf,
     pub config: AppConfig,
 }
 
 impl<'a> AppUnit<'a> {
     pub fn new(ctx: &'a MainContext, name: &'a ResourceName, config: AppConfig) -> Self {
-        let unit_dir = name.unit_dir(ctx);
-
-        Self {
-            ctx,
-            name,
-            unit_dir,
-            config,
-        }
+        Self { ctx, name, config }
     }
 
     fn prepare<R: Read>(&self, version: u32, archive: R) -> Result<TempDir, DeployError> {
         let _phase = log::phase("preparing");
 
-        let temp_dir = tempfile::tempdir_in(&self.unit_dir)
+        let temp_dir = tempfile::tempdir_in(self.ctx.unit_dir(self.name))
             .map_err(|e| DeployError::unit("create temporary directory", e))?;
         let deploy_dir = temp_dir.path();
 
@@ -147,8 +136,7 @@ impl<'a> AppUnit<'a> {
 
         let _phase = log::phase("updating dependent domains");
         for (name, config) in domains {
-            let unit_dir = name.unit_dir(self.ctx);
-            let (_guard, mut state) = match DeployState::acquire(&unit_dir) {
+            let (_guard, mut state) = match DeployState::acquire(self.ctx, self.name) {
                 Ok(v) => v,
                 Err(err) => {
                     error!("skip domain '{name}': {err}");
@@ -161,7 +149,7 @@ impl<'a> AppUnit<'a> {
                 continue;
             }
 
-            let domain = DomainUnit::new(self.ctx, name.as_str(), config);
+            let domain = DomainUnit::new(self.ctx, &name, config);
             if let Err(err) = domain.deploy(&mut state) {
                 state.set_error();
                 error!(

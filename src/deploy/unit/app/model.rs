@@ -167,8 +167,7 @@ impl AppConfig {
             "socket" => Ok(format!("{}:{}", unit_name.scoped_unit_name(), self.port)),
             // Absolute path of this app's static export inside the nginx container.
             "export" => {
-                let unit_dir = unit_name.unit_dir(ctx);
-                let version = DeployState::get_active_version(&unit_dir)
+                let version = DeployState::get_active_version(ctx, unit_name)
                     .map_err(|_| RefError::not_deployed(unit_name.as_str()))?;
                 Ok(format!("{NGINX_WWW_MOUNT}/{unit_name}_{version}"))
             }
@@ -297,7 +296,7 @@ mod tests {
         let unit_dir = base.path().join("web");
         fs::create_dir_all(&unit_dir).unwrap();
         fs::write(
-            unit_dir.join("state.json"),
+            unit_dir.join(".state.json"),
             r#"{"active_version":3,"latest_build":{"version":3,"status":"ready"}}"#,
         )
         .unwrap();
@@ -325,7 +324,7 @@ mod tests {
             base: base.path().to_path_buf(),
             master_key: None,
         };
-        // No state.json on disk → no active deployment to export from.
+        // No .state.json on disk → no active deployment to export from.
         let err = sample_config()
             .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "export")
             .unwrap_err();

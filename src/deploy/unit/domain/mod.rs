@@ -4,16 +4,14 @@ mod model;
 mod proxy;
 mod route_location;
 
-use std::path::{
-    Path,
-    PathBuf,
-};
+use std::path::Path;
 
 use self::artifacts::ArtifactsContext;
 pub use self::model::DomainConfig;
 use super::http_server::HttpServerUnit;
 use crate::{
     MainContext,
+    config::ResourceName,
     deploy::{
         DeployError,
         state::DeployState,
@@ -28,22 +26,13 @@ use crate::{
 #[derive(Debug)]
 pub struct DomainUnit<'a> {
     pub ctx: &'a MainContext,
-    pub name: String,
-    pub unit_dir: PathBuf,
+    pub name: &'a ResourceName,
     pub config: DomainConfig,
 }
 
 impl<'a> DomainUnit<'a> {
-    pub fn new(ctx: &'a MainContext, name: impl Into<String>, config: DomainConfig) -> Self {
-        let name = name.into();
-        let unit_dir = ctx.base().join(&name);
-
-        Self {
-            ctx,
-            name,
-            unit_dir,
-            config,
-        }
+    pub fn new(ctx: &'a MainContext, name: &'a ResourceName, config: DomainConfig) -> Self {
+        Self { ctx, name, config }
     }
 
     pub fn deploy(self, state: &mut DeployState) -> Result<(), DeployError> {
@@ -90,7 +79,7 @@ impl<'a> DomainUnit<'a> {
     ) -> Result<(), DeployError> {
         let artifacts = ArtifactsContext {
             ctx: self.ctx,
-            name: &self.name,
+            name: self.name,
             config: &self.config,
             proxy,
         };

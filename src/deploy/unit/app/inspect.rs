@@ -22,7 +22,7 @@ impl AppUnit<'_> {
 
     /// On-disk deploy state: version, status, active version, last error.
     fn deploy_section(&self) -> Result<Section, DeployError> {
-        let state = DeployState::load(&self.unit_dir)?;
+        let state = DeployState::load(self.ctx, self.name)?;
 
         let mut section = Section::new("deploy");
         let build = &state.latest_build;

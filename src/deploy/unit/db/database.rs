@@ -26,17 +26,13 @@ use crate::{
 #[derive(Debug)]
 pub struct DbUnit<'a> {
     pub ctx: &'a MainContext,
-    pub name: ResourceName,
+    pub name: &'a ResourceName,
     pub config: DbConfig,
 }
 
 impl<'a> DbUnit<'a> {
-    pub fn new(ctx: &'a MainContext, name: &ResourceName, config: DbConfig) -> Self {
-        Self {
-            ctx,
-            name: name.clone(),
-            config,
-        }
+    pub fn new(ctx: &'a MainContext, name: &'a ResourceName, config: DbConfig) -> Self {
+        Self { ctx, name, config }
     }
 
     pub fn deploy(
@@ -74,7 +70,7 @@ impl<'a> DbUnit<'a> {
             .reload_or_deploy()?;
 
         let exists = {
-            let _phase = log::phase(format!("checking database '{}'", &self.name));
+            let _phase = log::phase(format!("checking database '{}'", self.name));
             server_config
                 .engine
                 .ping(
@@ -87,13 +83,13 @@ impl<'a> DbUnit<'a> {
 
         if backup.is_some() && exists {
             return Err(DeployError::unit(
-                format!("restore database '{}'", &self.name),
+                format!("restore database '{}'", self.name),
                 io::Error::other("already exists; delete it manually to re-import"),
             ));
         }
 
         if !exists {
-            let _phase = log::phase(format!("creating database '{}'", &self.name));
+            let _phase = log::phase(format!("creating database '{}'", self.name));
             server_config
                 .engine
                 .create_database(
@@ -103,13 +99,13 @@ impl<'a> DbUnit<'a> {
                     &self.config.user,
                     &user_password,
                 )
-                .map_err(|e| DeployError::unit(format!("create database '{}'", &self.name), e))?;
+                .map_err(|e| DeployError::unit(format!("create database '{}'", self.name), e))?;
         }
 
         if let Some(backup) = backup {
-            let _phase = log::phase(format!("restoring database '{}'", &self.name));
+            let _phase = log::phase(format!("restoring database '{}'", self.name));
             let mut input = open_backup(backup)
-                .map_err(|e| DeployError::unit(format!("restore database '{}'", &self.name), e))?;
+                .map_err(|e| DeployError::unit(format!("restore database '{}'", self.name), e))?;
             server_config
                 .engine
                 .restore(
@@ -119,7 +115,7 @@ impl<'a> DbUnit<'a> {
                     self.name.as_str(),
                     &mut input,
                 )
-                .map_err(|e| DeployError::unit(format!("restore database '{}'", &self.name), e))?;
+                .map_err(|e| DeployError::unit(format!("restore database '{}'", self.name), e))?;
         }
 
         state.set_ready();

@@ -6,7 +6,10 @@ use std::path::{
 use thiserror::Error;
 
 use crate::{
-    config::SecretName,
+    config::{
+        ResourceName,
+        SecretName,
+    },
     secret::{
         MasterKey,
         SecretError,
@@ -49,6 +52,26 @@ impl MainContext {
 
     pub fn base(&self) -> &Path {
         &self.base
+    }
+
+    pub fn unit_dir(&self, unit: &ResourceName) -> PathBuf {
+        self.base.join(unit.as_str())
+    }
+
+    pub fn config_path(&self, unit: &ResourceName) -> PathBuf {
+        self.unit_dir(unit).join("config.yaml")
+    }
+
+    pub fn lock_path(&self, unit: &ResourceName) -> PathBuf {
+        self.unit_dir(unit).join(".deploy.lock")
+    }
+
+    pub fn state_path(&self, unit: &ResourceName) -> PathBuf {
+        self.unit_dir(unit).join(".state.json")
+    }
+
+    pub fn build_log_path(&self, unit: &ResourceName) -> PathBuf {
+        self.unit_dir(unit).join("build.log")
     }
 
     pub fn resolve_secret(&self, name: &SecretName) -> Result<String, SecretError> {

@@ -8,10 +8,7 @@ use std::{
         self,
         Write,
     },
-    path::{
-        Path,
-        PathBuf,
-    },
+    path::PathBuf,
 };
 
 use fs4::fs_std::FileExt;
@@ -21,8 +18,10 @@ use serde::{
 };
 use thiserror::Error;
 
-const LOCK_FILE_NAME: &str = ".deploy.lock";
-const STATE_FILE_NAME: &str = "state.json";
+use crate::{
+    MainContext,
+    config::ResourceName,
+};
 
 #[derive(Debug, Error)]
 pub enum DeployStateError {
@@ -76,9 +75,12 @@ pub struct DeployState {
 
 impl DeployState {
     /// Acquire the unit-level busy lock and load its state.
-    pub fn acquire(unit_dir: &Path) -> Result<(DeployStateGuard, DeployState), DeployStateError> {
-        let guard = DeployStateGuard::lock(unit_dir)?;
-        let state = DeployState::load(unit_dir)?;
+    pub fn acquire(
+        ctx: &MainContext,
+        name: &ResourceName,
+    ) -> Result<(DeployStateGuard, DeployState), DeployStateError> {
+        let guard = DeployStateGuard::lock(ctx, name)?;
+        let state = DeployState::load(ctx, name)?;
         if state.latest_build.status == DeployStatus::Building {
             return Err(DeployStateError::Busy);
         }
@@ -86,8 +88,8 @@ impl DeployState {
         Ok((guard, state))
     }
 
-    pub fn load(unit_dir: &Path) -> Result<Self, DeployStateError> {
-        let path = unit_dir.join(STATE_FILE_NAME);
+    pub fn load(ctx: &MainContext, name: &ResourceName) -> Result<Self, DeployStateError> {
+        let path = ctx.state_path(name);
 
         let content = match read_to_string(&path) {
             Ok(content) => content,
@@ -132,8 +134,11 @@ impl DeployState {
     }
 
     /// Returns currently running version
-    pub fn get_active_version(unit_dir: &Path) -> Result<u32, DeployStateError> {
-        let state = Self::load(unit_dir)?;
+    pub fn get_active_version(
+        ctx: &MainContext,
+        name: &ResourceName,
+    ) -> Result<u32, DeployStateError> {
+        let state = Self::load(ctx, name)?;
         state
             .active_version
             .ok_or(DeployStateError::NoActiveVersion)
@@ -187,8 +192,8 @@ pub struct DeployStateGuard {
 }
 
 impl DeployStateGuard {
-    fn lock(unit_dir: &Path) -> Result<Self, DeployStateError> {
-        let path = unit_dir.join(LOCK_FILE_NAME);
+    fn lock(ctx: &MainContext, name: &ResourceName) -> Result<Self, DeployStateError> {
+        let path = ctx.lock_path(name);
         let file = OpenOptions::new()
             .create(true)
             .truncate(true)

@@ -48,7 +48,10 @@ use tracing_subscriber::{
     },
 };
 
-use crate::spinner::Spinner;
+use crate::{
+    config::ResourceName,
+    spinner::Spinner,
+};
 
 /// Child-process (podman) output: file only `debug!(target: CHILD_TARGET, …)`.
 pub const CHILD_TARGET: &str = "dpl::child";
@@ -83,10 +86,6 @@ pub fn error_mark() -> console::StyledObject<&'static str> {
     console::style("✗").red()
 }
 
-pub fn build_log_path(unit_dir: &Path) -> PathBuf {
-    unit_dir.join("build.log")
-}
-
 /// Open and enter a deploy phase.
 /// Sets the spinner message and stamps
 /// The previous phase's `✓` line is echoed when the next phase opens.
@@ -107,7 +106,7 @@ pub struct DeployLog {
 }
 
 impl DeployLog {
-    pub fn open(path: &Path, unit: &str, version: u32) -> io::Result<Self> {
+    pub fn open(path: &Path, unit: &ResourceName, version: u32) -> io::Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -340,7 +339,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("build.log");
 
-        let log = DeployLog::open(&path, "web", 3).unwrap();
+        let name = ResourceName::new("web").unwrap();
+        let log = DeployLog::open(&path, &name, 3).unwrap();
         {
             let _default = log.set_default();
             let _phase = phase("building image");
@@ -379,7 +379,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("build.log");
 
-        let log = DeployLog::open(&path, "db-sezam", 7).unwrap();
+        let name = ResourceName::new("db-sezam").unwrap();
+        let log = DeployLog::open(&path, &name, 7).unwrap();
         {
             let _default = log.set_default();
             let _phase = phase("restoring database");

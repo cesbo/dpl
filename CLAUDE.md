@@ -32,7 +32,7 @@ cargo run -- --base /path/to/base <command> ...
   (`sql.rs`), `dump`/`restore` (`backup.rs`), `console` (`console.rs`); `cmd/db.rs`
   only resolves config/secrets and picks the login (e.g. `--root`), never spawns
   the client itself.
-- **Deploy state** (`deploy/state.rs`) — on-disk `state.json` and the
+- **Deploy state** (`deploy/state.rs`) — on-disk `.state.json` and the
   `.deploy.lock` advisory `flock`. Acquired before any unit deploy runs.
 
 Keep this split when adding functionality.
@@ -46,7 +46,7 @@ Keep this split when adding functionality.
    `{deploy_dir}/app.tar.gz`, renders artifacts (`containerfile`, `run.sh`,
    `build-N.sh`, systemd service), runs `podman build`, optionally exports
    static files, and (re)installs the systemd service via `systemctl`.
-3. `DeployState` is rewritten to `{unit_dir}/state.json` at each phase
+3. `DeployState` is rewritten to `{unit_dir}/.state.json` at each phase
    transition; failures land as `status: failed`.
 
 ### Key Dependencies

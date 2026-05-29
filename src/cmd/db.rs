@@ -43,10 +43,7 @@ use crate::{
             DbServerConfig,
         },
     },
-    log::{
-        build_log_path,
-        success_mark,
-    },
+    log::success_mark,
 };
 
 #[derive(clap::Args)]
@@ -198,13 +195,9 @@ fn backup(ctx: &MainContext, name: &str, path: &str, gzip: bool) -> Result<()> {
 fn drop(ctx: &MainContext, name: &str) -> Result<()> {
     let (db_name, db_config) = load_db(ctx, name)?;
     let (_, server_config) = load_db_server(ctx, db_config.server.as_str())?;
-    let unit_dir = db_name.unit_dir(ctx);
 
-    // Hold the deploy lock for the whole teardown so a concurrent deploy can't
-    // race; the guard removes `.deploy.lock` when it drops at end of scope. The
-    // loaded state is unused — we delete state.json outright below.
     let (_guard, _state) =
-        DeployState::acquire(&unit_dir).with_context(|| format!("acquire unit '{db_name}'"))?;
+        DeployState::acquire(ctx, &db_name).with_context(|| format!("acquire unit '{db_name}'"))?;
 
     loop {
         let confirm: String = Input::with_theme(&crate::cmd::prompt_theme())
@@ -224,7 +217,9 @@ fn drop(ctx: &MainContext, name: &str) -> Result<()> {
 
     if make_backup {
         let stamp = Utc::now().format("%Y%m%d-%H%M%S");
-        let path = unit_dir.join(format!("backup-{stamp}.sql.gz"));
+        let path = ctx
+            .unit_dir(&db_name)
+            .join(format!("backup-{stamp}.sql.gz"));
         let path = path.to_str().unwrap();
         backup(ctx, name, path, true)?;
     }
@@ -242,8 +237,8 @@ fn drop(ctx: &MainContext, name: &str) -> Result<()> {
         )
         .with_context(|| format!("drop database '{db_name}'"))?;
 
-    let _ = fs::remove_file(unit_dir.join("state.json"));
-    let _ = fs::remove_file(build_log_path(&unit_dir));
+    let _ = fs::remove_file(ctx.state_path(&db_name));
+    let _ = fs::remove_file(ctx.build_log_path(&db_name));
 
     eprintln!("{} dropped database '{db_name}'", success_mark());
 
