@@ -103,6 +103,7 @@ mod tests {
 
         let body = fs::read_to_string(&path).unwrap();
         assert!(body.contains("ssl_session_cache"));
+        assert!(body.contains("access_log /dev/stdout json;"));
     }
 
     #[test]
@@ -132,6 +133,7 @@ mod tests {
         assert!(body.contains("docker.io/library/nginx:stable"));
         assert!(body.contains("ExecReload=/usr/bin/podman exec dpl--web nginx -s reload"));
         assert!(body.contains("/var/log/podman/dpl--web.log"));
+        assert!(body.contains("--log-opt=max-size=20mb"));
         assert!(body.contains("Description=DPL HTTP server for web"));
     }
 
