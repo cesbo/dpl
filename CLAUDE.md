@@ -47,7 +47,7 @@ Keep this split when adding functionality.
    `build-N.sh`, systemd service), runs `podman build`, optionally exports
    static files, and (re)installs the systemd service via `systemctl`.
 3. `DeployState` is rewritten to `{unit_dir}/state.json` at each phase
-   transition; failures land as `status: failed` with an `error` string.
+   transition; failures land as `status: failed`.
 
 ### Key Dependencies
 
@@ -73,25 +73,15 @@ Keep this split when adding functionality.
   and db-server units, and creates the database (via `podman exec` against
   the running server) for db units. Other unit types render artifacts but
   don't yet install services.
-- `dpl db backup` streams plain SQL through `podman exec` as the `db` unit's
-  login user (engine `dump` method in `deploy/unit/db/backup.rs`, mirroring
-  `create_database` in `sql.rs`). The `path` arg defaults to `-` (stdout); a
-  `.gz` destination or `-z` triggers gzip on the way out. The child's stderr
-  is drained on a separate thread and forwarded line-by-line to the user's
-  stderr via an `on_stderr` callback; this also prevents a chatty client
-  from deadlocking by filling its stderr pipe while the data pipe is busy.
-  On a non-zero exit the streamed output is the detail, so the returned
-  error only carries the exit status.
+- `dpl db backup [path]` streams SQL via `podman exec` as the `db` unit's
+  login user (`deploy/unit/db/backup.rs`). `path` defaults to `-` (stdout); a
+  `.gz` destination or `-z` gzips the output.
 - Restore happens through `dpl deploy <db-name> [backup]`, not a separate
-  command. `DbUnit::deploy` (`deploy/unit/db/database.rs`) takes an optional
-  `Box<dyn Read>`; when present it brings the server up, refuses if the
-  database already exists (no DROP/CREATE — delete manually to re-import),
-  creates the database, and replays the dump via the same engine `restore`
-  method. The reader is auto-decoded if it starts with the gzip magic bytes
-  (`1f 8b`), so `.sql` and `.sql.gz` both work. The path may be a file, `-`
-  for stdin, or omitted (provision only — no restore). Restore stderr goes
-  to the build log via `tracing::debug!(target: CHILD_TARGET, ...)`, matching
-  the podman-build pattern in `deploy/unit/app/podman.rs`.
+  command (`DbUnit::deploy` in `deploy/unit/db/database.rs`). It brings the
+  server up, refuses if the database already exists (delete manually to
+  re-import), then creates the database and replays the dump. Gzip is
+  auto-detected, so `.sql` and `.sql.gz` both work; `path` may be a file, `-`
+  for stdin, or omitted (provision only).
 
 ## Coding Style
 
