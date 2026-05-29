@@ -4,10 +4,7 @@ use std::{
         self,
         Read,
     },
-    path::{
-        Path,
-        PathBuf,
-    },
+    path::Path,
 };
 
 use anyhow::{
@@ -33,7 +30,10 @@ use crate::{
             http_server::HttpServerUnit,
         },
     },
-    log::DeployLog,
+    log::{
+        DeployLog,
+        build_log_path,
+    },
 };
 
 pub fn check(ctx: &MainContext, name: &str) -> Result<()> {
@@ -43,7 +43,7 @@ pub fn check(ctx: &MainContext, name: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Result<()> {
+pub fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Result<()> {
     let unit = load_unit(ctx, name)?;
 
     match (&unit, path) {
@@ -58,22 +58,12 @@ pub(crate) fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>
     let (_guard, mut state) =
         DeployState::acquire(&unit_dir).with_context(|| format!("acquire unit '{name}'"))?;
 
-    let prev_build = state.latest_build.version;
-    if prev_build != 0 {
-        let prev_log = build_log_path(&unit_dir, prev_build);
-        if let Err(err) = fs::remove_file(&prev_log)
-            && err.kind() != io::ErrorKind::NotFound
-        {
-            tracing::warn!("remove previous build log {}: {err}", prev_log.display());
-        }
-    }
-
     let version = state
         .bump_version()
         .map_err(DeployError::from)
         .with_context(|| format!("deploy unit '{name}'"))?;
 
-    let log_path = build_log_path(&unit_dir, version);
+    let log_path = build_log_path(&unit_dir);
     let log = match DeployLog::open(&log_path, name.as_str(), version) {
         Ok(log) => log,
         Err(err) => {
@@ -87,26 +77,22 @@ pub(crate) fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>
     let _default = log.set_default();
 
     let result: std::result::Result<(), DeployError> = match unit {
-        UnitConfig::App(app_config) => {
-            let app = AppUnit::new(ctx, name, app_config);
-            if let Some(path) = path {
+        UnitConfig::App(app_config) => match path {
+            Some(path) => {
                 let input = open_input(path, "archive")?;
-                app.deploy(&mut state, version, input)
-            } else {
-                Err(DeployError::unit(
-                    "open archive",
-                    io::Error::other("archive path is required (use `-` to read from stdin)"),
-                ))
+                AppUnit::new(ctx, name, app_config).deploy(&mut state, version, input)
             }
-        }
+            None => Err(DeployError::unit(
+                "open archive",
+                io::Error::other("archive path is required (use `-` to read from stdin)"),
+            )),
+        },
         UnitConfig::Db(db_config) => {
-            let db = DbUnit::new(ctx, name, db_config);
-            if let Some(path) = path {
-                let input = open_input(path, "backup")?;
-                db.deploy(&mut state, Some(input))
-            } else {
-                db.deploy(&mut state, None)
-            }
+            let input = match path {
+                Some(path) => Some(open_input(path, "backup")?),
+                None => None,
+            };
+            DbUnit::new(ctx, name, db_config).deploy(&mut state, input)
         }
         UnitConfig::DbServer(db_server_config) => {
             DbServerUnit::new(ctx, name, db_server_config).deploy(&mut state)
@@ -133,22 +119,6 @@ pub(crate) fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>
     }
 }
 
-fn build_log_path(unit_dir: &Path, version: u32) -> PathBuf {
-    unit_dir.join("log").join(format!("build-{version}.log"))
-}
-
-/// Open `path` as a deploy input. `-` means stdin; anything else is a file
-/// path. `what` names the input in the error (e.g. "archive", "backup").
-fn open_input(path: &Path, what: &str) -> Result<Box<dyn Read>, DeployError> {
-    if path.as_os_str() == "-" {
-        Ok(Box::new(io::stdin().lock()))
-    } else {
-        fs::File::open(path)
-            .map(|f| Box::new(f) as Box<dyn Read>)
-            .map_err(|err| DeployError::unit(format!("open {what}"), err))
-    }
-}
-
 pub fn inspect(ctx: &MainContext, name: &str) -> Result<()> {
     let name = ResourceName::new(name)?;
     let unit = UnitConfig::load(ctx, &name)?;
@@ -163,6 +133,18 @@ pub fn inspect(ctx: &MainContext, name: &str) -> Result<()> {
     let json = serde_json::to_string_pretty(&report).context("serialize report")?;
     println!("{json}");
     Ok(())
+}
+
+/// Open `path` as a deploy input. `-` means stdin; anything else is a file
+/// path. `what` names the input in the error (e.g. "archive", "backup").
+fn open_input(path: &Path, what: &str) -> Result<Box<dyn Read>, DeployError> {
+    if path.as_os_str() == "-" {
+        Ok(Box::new(io::stdin().lock()))
+    } else {
+        fs::File::open(path)
+            .map(|f| Box::new(f) as Box<dyn Read>)
+            .map_err(|err| DeployError::unit(format!("open {what}"), err))
+    }
 }
 
 fn load_unit(ctx: &MainContext, name: &ResourceName) -> Result<UnitConfig> {

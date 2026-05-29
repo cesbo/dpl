@@ -43,7 +43,10 @@ use crate::{
             DbServerConfig,
         },
     },
-    log::success_mark,
+    log::{
+        build_log_path,
+        success_mark,
+    },
 };
 
 #[derive(clap::Args)]
@@ -239,27 +242,12 @@ fn drop(ctx: &MainContext, name: &str) -> Result<()> {
         )
         .with_context(|| format!("drop database '{db_name}'"))?;
 
-    remove_if_exists(&unit_dir.join("state.json"), false)?;
-    remove_if_exists(&unit_dir.join("log"), true)?;
+    let _ = fs::remove_file(unit_dir.join("state.json"));
+    let _ = fs::remove_file(build_log_path(&unit_dir));
 
     eprintln!("{} dropped database '{db_name}'", success_mark());
 
     Ok(())
-}
-
-/// Remove a file (or directory tree when `dir`) if present, treating an absent
-/// target as success.
-fn remove_if_exists(path: &std::path::Path, dir: bool) -> Result<()> {
-    let result = if dir {
-        fs::remove_dir_all(path)
-    } else {
-        fs::remove_file(path)
-    };
-    match result {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err).with_context(|| format!("remove '{}'", path.display())),
-    }
 }
 
 fn load_db_server(ctx: &MainContext, name: &str) -> Result<(ResourceName, DbServerConfig)> {

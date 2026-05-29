@@ -83,6 +83,10 @@ pub fn error_mark() -> console::StyledObject<&'static str> {
     console::style("✗").red()
 }
 
+pub fn build_log_path(unit_dir: &Path) -> PathBuf {
+    unit_dir.join("build.log")
+}
+
 /// Open and enter a deploy phase.
 /// Sets the spinner message and stamps
 /// The previous phase's `✓` line is echoed when the next phase opens.
@@ -107,7 +111,11 @@ impl DeployLog {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)?;
 
         let spinner = Spinner::with_style(
             format!("{unit} v{version}: starting"),
@@ -330,7 +338,7 @@ mod tests {
         init();
 
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("log").join("build-3.log");
+        let path = dir.path().join("build.log");
 
         let log = DeployLog::open(&path, "web", 3).unwrap();
         {
@@ -369,7 +377,7 @@ mod tests {
         init();
 
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("log").join("build-7.log");
+        let path = dir.path().join("build.log");
 
         let log = DeployLog::open(&path, "db-sezam", 7).unwrap();
         {
