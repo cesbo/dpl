@@ -49,7 +49,7 @@ use tracing_subscriber::{
 };
 
 use crate::{
-    config::ResourceName,
+    config::UnitName,
     spinner::Spinner,
 };
 
@@ -106,7 +106,7 @@ pub struct DeployLog {
 }
 
 impl DeployLog {
-    pub fn open(path: &Path, unit: &ResourceName, version: u32) -> io::Result<Self> {
+    pub fn open(path: &Path, unit: &UnitName, version: u32) -> io::Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -347,7 +347,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("build.log");
 
-        let name = ResourceName::new("web").unwrap();
+        let name = UnitName::new("web").unwrap();
         let log = DeployLog::open(&path, &name, 3).unwrap();
         {
             let _default = log.set_default();
@@ -387,7 +387,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("build.log");
 
-        let name = ResourceName::new("db-sezam").unwrap();
+        let name = UnitName::new("db-sezam").unwrap();
         let log = DeployLog::open(&path, &name, 7).unwrap();
         {
             let _default = log.set_default();
@@ -418,7 +418,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("build.log");
 
-        let name = ResourceName::new("web").unwrap();
+        let name = UnitName::new("web").unwrap();
         let log = DeployLog::open(&path, &name, 1).unwrap();
         {
             let _default = log.set_default();

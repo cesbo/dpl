@@ -11,7 +11,7 @@ pub use self::model::DomainConfig;
 use super::http_server::HttpServerUnit;
 use crate::{
     MainContext,
-    config::ResourceName,
+    config::UnitName,
     deploy::{
         DeployError,
         state::DeployState,
@@ -26,12 +26,12 @@ use crate::{
 #[derive(Debug)]
 pub struct DomainUnit<'a> {
     pub ctx: &'a MainContext,
-    pub name: &'a ResourceName,
+    pub name: &'a UnitName,
     pub config: DomainConfig,
 }
 
 impl<'a> DomainUnit<'a> {
-    pub fn new(ctx: &'a MainContext, name: &'a ResourceName, config: DomainConfig) -> Self {
+    pub fn new(ctx: &'a MainContext, name: &'a UnitName, config: DomainConfig) -> Self {
         Self { ctx, name, config }
     }
 

@@ -15,7 +15,7 @@ use anyhow::{
 
 use crate::{
     MainContext,
-    config::ResourceName,
+    config::UnitName,
     deploy::{
         DeployError,
         DeployState,
@@ -37,13 +37,13 @@ use crate::{
     },
 };
 
-pub fn check(ctx: &MainContext, name: &ResourceName) -> Result<()> {
+pub fn check(ctx: &MainContext, name: &UnitName) -> Result<()> {
     let _ = load_unit(ctx, name)?;
     println!("ok");
     Ok(())
 }
 
-pub fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Result<()> {
+pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result<()> {
     let unit = load_unit(ctx, name)?;
 
     let input = match unit {
@@ -118,7 +118,7 @@ pub fn deploy(ctx: &MainContext, name: &ResourceName, path: Option<&Path>) -> Re
     }
 }
 
-pub fn inspect(ctx: &MainContext, name: &ResourceName) -> Result<()> {
+pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
     let unit = load_unit(ctx, name)?;
 
     let state = DeployState::load(ctx, name).with_context(|| format!("inspect unit '{name}'"))?;
@@ -164,7 +164,7 @@ pub fn inspect(ctx: &MainContext, name: &ResourceName) -> Result<()> {
 }
 
 /// Print the failure line for a `Failed` build and point at the relevant log.
-fn print_failure(ctx: &MainContext, name: &ResourceName, version: u32, phase: Option<&str>) {
+fn print_failure(ctx: &MainContext, name: &UnitName, version: u32, phase: Option<&str>) {
     let phase = match phase {
         Some(phase) => {
             println!("{} build #{version} failed at {phase:?}", error_mark());
@@ -202,7 +202,7 @@ fn open_input(path: Option<&Path>) -> Result<Option<Box<dyn Read>>, DeployError>
     Ok(Some(input))
 }
 
-fn load_unit(ctx: &MainContext, name: &ResourceName) -> Result<UnitConfig> {
+fn load_unit(ctx: &MainContext, name: &UnitName) -> Result<UnitConfig> {
     let unit = UnitConfig::load(ctx, name)?;
 
     unit.validate_references(ctx)

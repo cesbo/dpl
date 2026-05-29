@@ -6,7 +6,7 @@ use std::path::Path;
 pub use self::model::HttpServerConfig;
 use crate::{
     MainContext,
-    config::ResourceName,
+    config::UnitName,
     deploy::{
         DeployError,
         state::DeployState,
@@ -26,12 +26,12 @@ const HTTP_PORT: u16 = 80;
 #[derive(Debug)]
 pub struct HttpServerUnit<'a> {
     pub ctx: &'a MainContext,
-    pub name: &'a ResourceName,
+    pub name: &'a UnitName,
     pub config: HttpServerConfig,
 }
 
 impl<'a> HttpServerUnit<'a> {
-    pub fn new(ctx: &'a MainContext, name: &'a ResourceName, config: HttpServerConfig) -> Self {
+    pub fn new(ctx: &'a MainContext, name: &'a UnitName, config: HttpServerConfig) -> Self {
         Self { ctx, name, config }
     }
 

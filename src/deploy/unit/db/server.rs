@@ -13,7 +13,7 @@ use super::{
 };
 use crate::{
     MainContext,
-    config::ResourceName,
+    config::UnitName,
     deploy::{
         DeployError,
         state::DeployState,
@@ -28,12 +28,12 @@ const PING_INTERVAL: Duration = Duration::from_millis(800);
 #[derive(Debug)]
 pub struct DbServerUnit<'a> {
     pub ctx: &'a MainContext,
-    pub name: &'a ResourceName,
+    pub name: &'a UnitName,
     pub config: DbServerConfig,
 }
 
 impl<'a> DbServerUnit<'a> {
-    pub fn new(ctx: &'a MainContext, name: &'a ResourceName, config: DbServerConfig) -> Self {
+    pub fn new(ctx: &'a MainContext, name: &'a UnitName, config: DbServerConfig) -> Self {
         Self { ctx, name, config }
     }
 

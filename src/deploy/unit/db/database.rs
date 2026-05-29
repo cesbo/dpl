@@ -13,7 +13,7 @@ use super::{
 };
 use crate::{
     MainContext,
-    config::ResourceName,
+    config::UnitName,
     deploy::{
         DeployError,
         UnitConfig,
@@ -26,12 +26,12 @@ use crate::{
 #[derive(Debug)]
 pub struct DbUnit<'a> {
     pub ctx: &'a MainContext,
-    pub name: &'a ResourceName,
+    pub name: &'a UnitName,
     pub config: DbConfig,
 }
 
 impl<'a> DbUnit<'a> {
-    pub fn new(ctx: &'a MainContext, name: &'a ResourceName, config: DbConfig) -> Self {
+    pub fn new(ctx: &'a MainContext, name: &'a UnitName, config: DbConfig) -> Self {
         Self { ctx, name, config }
     }
 

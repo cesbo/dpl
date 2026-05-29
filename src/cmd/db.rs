@@ -34,7 +34,7 @@ use flate2::{
 
 use crate::{
     MainContext,
-    config::ResourceName,
+    config::UnitName,
     deploy::{
         DeployState,
         UnitConfig,
@@ -57,7 +57,7 @@ enum Cmd {
     /// Wait until a database is reachable through its db-server's CLI
     Wait {
         /// Database unit name
-        name: ResourceName,
+        name: UnitName,
         /// Timeout in seconds
         #[arg(long, default_value_t = 60)]
         timeout: u64,
@@ -65,7 +65,7 @@ enum Cmd {
     /// Open an interactive SQL console to a database as its own login user
     Console {
         /// Database unit name
-        name: ResourceName,
+        name: UnitName,
         /// Connect as the engine superuser with the db-server's root password
         #[arg(long)]
         root: bool,
@@ -73,7 +73,7 @@ enum Cmd {
     /// Dump a database to a SQL file (or stdout) as its own login user
     Backup {
         /// Database unit name
-        name: ResourceName,
+        name: UnitName,
         /// Destination file, or `-` for stdout
         #[arg(default_value = "-")]
         path: String,
@@ -84,7 +84,7 @@ enum Cmd {
     /// Drop a database, its login user, and local state (keeps config.yaml)
     Drop {
         /// Database unit name
-        name: ResourceName,
+        name: UnitName,
     },
 }
 
@@ -97,7 +97,7 @@ pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
     }
 }
 
-fn wait(ctx: &MainContext, name: &ResourceName, timeout_secs: u64) -> Result<()> {
+fn wait(ctx: &MainContext, name: &UnitName, timeout_secs: u64) -> Result<()> {
     let db_config = load_db(ctx, name)?;
     let server_config = load_db_server(ctx, &db_config.server)?;
 
@@ -125,7 +125,7 @@ fn wait(ctx: &MainContext, name: &ResourceName, timeout_secs: u64) -> Result<()>
     }
 }
 
-fn console(ctx: &MainContext, name: &ResourceName, root: bool) -> Result<()> {
+fn console(ctx: &MainContext, name: &UnitName, root: bool) -> Result<()> {
     let db_config = load_db(ctx, name)?;
     let server_config = load_db_server(ctx, &db_config.server)?;
 
@@ -147,7 +147,7 @@ fn console(ctx: &MainContext, name: &ResourceName, root: bool) -> Result<()> {
         .with_context(|| format!("open console to '{name}'"))
 }
 
-fn backup(ctx: &MainContext, name: &ResourceName, path: &str, gzip: bool) -> Result<()> {
+fn backup(ctx: &MainContext, name: &UnitName, path: &str, gzip: bool) -> Result<()> {
     let db_config = load_db(ctx, name)?;
     let server_config = load_db_server(ctx, &db_config.server)?;
     let password = ctx.resolve_secret(&db_config.secret)?;
@@ -193,7 +193,7 @@ fn backup(ctx: &MainContext, name: &ResourceName, path: &str, gzip: bool) -> Res
     Ok(())
 }
 
-fn drop(ctx: &MainContext, name: &ResourceName) -> Result<()> {
+fn drop(ctx: &MainContext, name: &UnitName) -> Result<()> {
     let db_config = load_db(ctx, name)?;
     let server_config = load_db_server(ctx, &db_config.server)?;
 
@@ -244,7 +244,7 @@ fn drop(ctx: &MainContext, name: &ResourceName) -> Result<()> {
     Ok(())
 }
 
-fn load_db_server(ctx: &MainContext, name: &ResourceName) -> Result<DbServerConfig> {
+fn load_db_server(ctx: &MainContext, name: &UnitName) -> Result<DbServerConfig> {
     let unit = UnitConfig::load(ctx, name)?;
     let UnitConfig::DbServer(config) = unit else {
         bail!("unit '{name}' is not a db-server");
@@ -252,7 +252,7 @@ fn load_db_server(ctx: &MainContext, name: &ResourceName) -> Result<DbServerConf
     Ok(config)
 }
 
-fn load_db(ctx: &MainContext, name: &ResourceName) -> Result<DbConfig> {
+fn load_db(ctx: &MainContext, name: &UnitName) -> Result<DbConfig> {
     let unit = UnitConfig::load(ctx, name)?;
     let UnitConfig::Db(config) = unit else {
         bail!("unit '{name}' is not a db");

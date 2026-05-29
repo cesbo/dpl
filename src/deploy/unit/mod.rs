@@ -26,7 +26,7 @@ use crate::{
     MainContext,
     config::{
         ConfigError,
-        ResourceName,
+        UnitName,
     },
     error::{
         Location,
@@ -45,7 +45,7 @@ pub enum UnitConfig {
 }
 
 impl UnitConfig {
-    pub fn load(ctx: &MainContext, name: &ResourceName) -> Result<Self, ConfigError> {
+    pub fn load(ctx: &MainContext, name: &UnitName) -> Result<Self, ConfigError> {
         let path = ctx.config_path(name);
         let content = fs::read_to_string(&path).map_err(|err| {
             if err.kind() == io::ErrorKind::NotFound {
@@ -88,7 +88,7 @@ impl UnitConfig {
     pub fn resolve_export(
         &self,
         ctx: &MainContext,
-        unit_name: &ResourceName,
+        unit_name: &UnitName,
         key: &str,
     ) -> Result<String, RefError> {
         match self {
@@ -101,7 +101,7 @@ impl UnitConfig {
 
 pub fn resolve_export(
     ctx: &MainContext,
-    unit_name: &ResourceName,
+    unit_name: &UnitName,
     key: &str,
 ) -> Result<String, RefError> {
     UnitConfig::load(ctx, unit_name)
@@ -111,7 +111,7 @@ pub fn resolve_export(
 }
 
 /// Return all units satisfies `predicate`, sorted by name.
-pub fn list_units<F>(ctx: &MainContext, predicate: F) -> Vec<(ResourceName, UnitConfig)>
+pub fn list_units<F>(ctx: &MainContext, predicate: F) -> Vec<(UnitName, UnitConfig)>
 where
     F: Fn(&UnitConfig) -> bool,
 {
@@ -120,7 +120,7 @@ where
         Err(_) => return Vec::new(),
     };
 
-    let mut out: Vec<(ResourceName, UnitConfig)> = Vec::new();
+    let mut out: Vec<(UnitName, UnitConfig)> = Vec::new();
     for entry in entries.flatten() {
         let Ok(file_type) = entry.file_type() else {
             continue;
@@ -135,7 +135,7 @@ where
             continue;
         };
 
-        let Ok(unit_name) = ResourceName::new(raw) else {
+        let Ok(unit_name) = UnitName::new(raw) else {
             continue;
         };
 
@@ -250,7 +250,7 @@ secret: pg-pass
         };
 
         // load skips reference validation: succeeds even with a missing ref.
-        let unit = UnitConfig::load(&ctx, &ResourceName::new("app-x").unwrap()).unwrap();
+        let unit = UnitConfig::load(&ctx, &UnitName::new("app-x").unwrap()).unwrap();
         assert!(matches!(unit, UnitConfig::App(_)));
 
         // validate_references surfaces the missing unit through the typed chain.
@@ -333,7 +333,7 @@ secret: pg-pass
             master_key: Some(MasterKey::load(base.path()).unwrap()),
         };
 
-        let foo = UnitConfig::load(&ctx, &ResourceName::new("foo").unwrap()).unwrap();
+        let foo = UnitConfig::load(&ctx, &UnitName::new("foo").unwrap()).unwrap();
         let err = foo.validate_references(&ctx).unwrap_err();
 
         // Expected trail, innermost-first:
@@ -408,7 +408,7 @@ secret: pg-pass
             master_key: Some(MasterKey::load(base.path()).unwrap()),
         };
 
-        let foo = UnitConfig::load(&ctx, &ResourceName::new("foo").unwrap()).unwrap();
+        let foo = UnitConfig::load(&ctx, &UnitName::new("foo").unwrap()).unwrap();
         let err = foo.validate_references(&ctx).unwrap_err();
 
         // Expected trail, innermost-first:
@@ -427,7 +427,7 @@ secret: pg-pass
     fn resolve_export_unknown_unit() {
         let err = resolve_export(
             &MainContext::default(),
-            &ResourceName::new("nope").unwrap(),
+            &UnitName::new("nope").unwrap(),
             "user",
         )
         .unwrap_err();
@@ -454,8 +454,7 @@ secret: pg-pass
             base: base.path().to_path_buf(),
             master_key: None,
         };
-        let err =
-            resolve_export(&ctx, &ResourceName::new("example-com").unwrap(), "host").unwrap_err();
+        let err = resolve_export(&ctx, &UnitName::new("example-com").unwrap(), "host").unwrap_err();
         assert!(matches!(&err.trail[0], Location::Unit { name } if name == "example-com"));
         assert!(matches!(err.kind, RefErrorKind::UnknownExport { ref key } if key == "host"));
     }

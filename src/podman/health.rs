@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    config::ResourceName,
+    config::UnitName,
     podman::run_podman,
 };
 
@@ -13,7 +13,7 @@ const ATTEMPTS: usize = 30;
 const INTERVAL: Duration = Duration::from_millis(800);
 
 /// Wait until the container has a listening TCP socket on `port`.
-pub fn check(name: &ResourceName, port: u16) -> io::Result<()> {
+pub fn check(name: &UnitName, port: u16) -> io::Result<()> {
     let container = name.scoped_unit_name();
     let port_hex = format!("{port:04X}");
 

@@ -4,7 +4,7 @@ use std::{
 };
 
 use super::model::DbServerEngine;
-use crate::config::ResourceName;
+use crate::config::UnitName;
 
 impl DbServerEngine {
     /// Open an interactive SQL client against `db_name` as `user` inside the
@@ -12,7 +12,7 @@ impl DbServerEngine {
     /// terminal (the default), so the client gets a real TTY via `-it`.
     pub fn console(
         self,
-        server: &ResourceName,
+        server: &UnitName,
         user: &str,
         password: &str,
         db_name: &str,

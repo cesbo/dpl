@@ -14,7 +14,7 @@ pub use self::{
 };
 use crate::{
     MainContext,
-    config::ResourceName,
+    config::UnitName,
     error::{
         Location,
         RefError,
@@ -48,7 +48,7 @@ impl EnvList {
     /// Names of all units referenced across every entry (duplicates possible).
     ///
     /// Purely syntactic; see [`Value::unit_refs`].
-    pub fn unit_refs(&self) -> impl Iterator<Item = &ResourceName> {
+    pub fn unit_refs(&self) -> impl Iterator<Item = &UnitName> {
         self.0.values().flat_map(|value| value.unit_refs())
     }
 }
@@ -85,7 +85,7 @@ mod tests {
         )
         .unwrap();
         // BTreeMap iterates by key (CACHE, DB_URL, UPSTREAM); secret ref dropped.
-        let names: Vec<&str> = list.unit_refs().map(ResourceName::as_str).collect();
+        let names: Vec<&str> = list.unit_refs().map(UnitName::as_str).collect();
         assert_eq!(names, vec!["app-db", "api"]);
     }
 }

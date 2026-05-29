@@ -88,7 +88,7 @@ mod tests {
     };
     use crate::{
         MainContext,
-        config::ResourceName,
+        config::UnitName,
     };
 
     #[test]
@@ -110,7 +110,7 @@ mod tests {
     fn render_service_https_off() {
         let temp_dir = tempdir().unwrap();
         let systemd_dir = temp_dir.path();
-        let name = ResourceName::new("web").unwrap();
+        let name = UnitName::new("web").unwrap();
         let ctx = MainContext::default();
         let unit = HttpServerUnit::new(
             &ctx,
@@ -141,7 +141,7 @@ mod tests {
     fn render_service_https_on() {
         let temp_dir = tempdir().unwrap();
         let systemd_dir = temp_dir.path();
-        let name = ResourceName::new("web").unwrap();
+        let name = UnitName::new("web").unwrap();
         let ctx = MainContext::default();
         let unit = HttpServerUnit::new(
             &ctx,

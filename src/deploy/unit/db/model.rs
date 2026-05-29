@@ -11,7 +11,7 @@ use serde::{
 use crate::{
     MainContext,
     config::{
-        ResourceName,
+        UnitName,
         SecretName,
         deserialize_string_from_scalar,
     },
@@ -41,7 +41,7 @@ pub struct DbServerConfig {
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct DbConfig {
-    pub server: ResourceName,
+    pub server: UnitName,
     pub user: String,
     pub secret: SecretName,
 }
@@ -58,7 +58,7 @@ impl DbConfig {
     pub fn resolve_export(
         &self,
         ctx: &MainContext,
-        unit_name: &ResourceName,
+        unit_name: &UnitName,
         key: &str,
     ) -> Result<String, RefError> {
         match key {
@@ -282,11 +282,11 @@ secret: app1-pass
     #[test]
     fn db_resolve_export_unknown_key() {
         let config = DbConfig {
-            server: ResourceName::new("pg-main").unwrap(),
+            server: UnitName::new("pg-main").unwrap(),
             user: "app1".into(),
             secret: SecretName::new("app1-pass").unwrap(),
         };
-        let unit = ResourceName::new("app-db").unwrap();
+        let unit = UnitName::new("app-db").unwrap();
         let err = config
             .resolve_export(&MainContext::default(), &unit, "unknown")
             .unwrap_err();
@@ -323,11 +323,11 @@ secret: app1-pass
             master_key: Some(MasterKey::load(base.path()).unwrap()),
         };
         let config = DbConfig {
-            server: ResourceName::new("pg-main").unwrap(),
+            server: UnitName::new("pg-main").unwrap(),
             user: "app1".into(),
             secret: SecretName::new("app1-pass").unwrap(),
         };
-        let unit = ResourceName::new("app-db").unwrap();
+        let unit = UnitName::new("app-db").unwrap();
 
         assert_eq!(
             config.resolve_export(&ctx, &unit, "name").unwrap(),
@@ -383,11 +383,11 @@ secret: app1-pass
             master_key: Some(MasterKey::load(base.path()).unwrap()),
         };
         let config = DbConfig {
-            server: ResourceName::new("maria-main").unwrap(),
+            server: UnitName::new("maria-main").unwrap(),
             user: "app1".into(),
             secret: SecretName::new("app1-pass").unwrap(),
         };
-        let unit = ResourceName::new("app-db").unwrap();
+        let unit = UnitName::new("app-db").unwrap();
 
         assert_eq!(
             config.resolve_export(&ctx, &unit, "name").unwrap(),
@@ -443,11 +443,11 @@ secret: app1-pass
             master_key: Some(MasterKey::load(base.path()).unwrap()),
         };
         let config = DbConfig {
-            server: ResourceName::new("mysql-main").unwrap(),
+            server: UnitName::new("mysql-main").unwrap(),
             user: "app1".into(),
             secret: SecretName::new("app1-pass").unwrap(),
         };
-        let unit = ResourceName::new("app-db").unwrap();
+        let unit = UnitName::new("app-db").unwrap();
 
         assert_eq!(config.resolve_export(&ctx, &unit, "port").unwrap(), "3306");
 

@@ -42,14 +42,14 @@ enum Command {
     /// Validate a unit's config and reference graph
     Check {
         /// Unit name
-        name: config::ResourceName,
+        name: config::UnitName,
     },
     /// Manage database units
     Db(cmd::db::Args),
     /// Deploy a unit (app: tar.gz archive; db: optional SQL backup to restore)
     Deploy {
         /// Unit name
-        name: config::ResourceName,
+        name: config::UnitName,
         /// For an app unit: tar.gz archive (required; `-` for stdin).
         /// For a db unit: SQL dump to restore (`-` for stdin; omit for
         /// provision only). Gzip is detected automatically.
@@ -58,7 +58,7 @@ enum Command {
     /// Show runtime state of a unit
     Inspect {
         /// Unit name
-        name: config::ResourceName,
+        name: config::UnitName,
     },
     /// Manage encrypted runtime secrets
     Secret(cmd::secret::Args),

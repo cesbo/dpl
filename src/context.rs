@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use crate::{
     config::{
-        ResourceName,
+        UnitName,
         SecretName,
     },
     secret::{
@@ -54,23 +54,23 @@ impl MainContext {
         &self.base
     }
 
-    pub fn unit_dir(&self, unit: &ResourceName) -> PathBuf {
+    pub fn unit_dir(&self, unit: &UnitName) -> PathBuf {
         self.base.join(unit.as_str())
     }
 
-    pub fn config_path(&self, unit: &ResourceName) -> PathBuf {
+    pub fn config_path(&self, unit: &UnitName) -> PathBuf {
         self.unit_dir(unit).join("config.yaml")
     }
 
-    pub fn lock_path(&self, unit: &ResourceName) -> PathBuf {
+    pub fn lock_path(&self, unit: &UnitName) -> PathBuf {
         self.unit_dir(unit).join(".deploy.lock")
     }
 
-    pub fn state_path(&self, unit: &ResourceName) -> PathBuf {
+    pub fn state_path(&self, unit: &UnitName) -> PathBuf {
         self.unit_dir(unit).join(".state.json")
     }
 
-    pub fn build_log_path(&self, unit: &ResourceName) -> PathBuf {
+    pub fn build_log_path(&self, unit: &UnitName) -> PathBuf {
         self.unit_dir(unit).join("build.log")
     }
 

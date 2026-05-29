@@ -20,7 +20,7 @@ use thiserror::Error;
 
 use crate::{
     MainContext,
-    config::ResourceName,
+    config::UnitName,
 };
 
 #[derive(Debug, Error)]
@@ -84,7 +84,7 @@ impl DeployState {
     /// Acquire the unit-level busy lock and load its state.
     pub fn acquire(
         ctx: &MainContext,
-        name: &ResourceName,
+        name: &UnitName,
     ) -> Result<(DeployStateGuard, DeployState), DeployStateError> {
         let guard = DeployStateGuard::lock(ctx, name)?;
         let state = DeployState::load(ctx, name)?;
@@ -95,7 +95,7 @@ impl DeployState {
         Ok((guard, state))
     }
 
-    pub fn load(ctx: &MainContext, name: &ResourceName) -> Result<Self, DeployStateError> {
+    pub fn load(ctx: &MainContext, name: &UnitName) -> Result<Self, DeployStateError> {
         let path = ctx.state_path(name);
 
         let content = match read_to_string(&path) {
@@ -143,7 +143,7 @@ impl DeployState {
     /// Returns currently running version
     pub fn get_active_version(
         ctx: &MainContext,
-        name: &ResourceName,
+        name: &UnitName,
     ) -> Result<u32, DeployStateError> {
         let state = Self::load(ctx, name)?;
         state
@@ -204,7 +204,7 @@ pub struct DeployStateGuard {
 }
 
 impl DeployStateGuard {
-    fn lock(ctx: &MainContext, name: &ResourceName) -> Result<Self, DeployStateError> {
+    fn lock(ctx: &MainContext, name: &UnitName) -> Result<Self, DeployStateError> {
         let path = ctx.lock_path(name);
         let file = OpenOptions::new()
             .create(true)

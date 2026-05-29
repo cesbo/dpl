@@ -7,7 +7,7 @@ use serde::{
 
 use crate::{
     MainContext,
-    config::ResourceName,
+    config::UnitName,
     deploy::{
         EnvList,
         UnitConfig,
@@ -108,15 +108,15 @@ pub struct TimerConfig {
 impl AppConfig {
     /// Units referenced through `${unit:key}` tokens across `runtime.env` and
     /// every build layer's `env`, deduplicated and sorted.
-    pub fn unit_deps(&self) -> BTreeSet<ResourceName> {
-        let mut deps: BTreeSet<ResourceName> = self.runtime.env.unit_refs().cloned().collect();
+    pub fn unit_deps(&self) -> BTreeSet<UnitName> {
+        let mut deps: BTreeSet<UnitName> = self.runtime.env.unit_refs().cloned().collect();
         for layer in &self.builds {
             deps.extend(layer.env.unit_refs().cloned());
         }
         deps
     }
 
-    pub fn database_deps(&self, ctx: &MainContext) -> Result<Vec<ResourceName>, RefError> {
+    pub fn database_deps(&self, ctx: &MainContext) -> Result<Vec<UnitName>, RefError> {
         let mut dbs = Vec::new();
         for dep in self.unit_deps() {
             match UnitConfig::load(ctx, &dep) {
@@ -151,7 +151,7 @@ impl AppConfig {
     pub fn resolve_export(
         &self,
         ctx: &MainContext,
-        unit_name: &ResourceName,
+        unit_name: &UnitName,
         key: &str,
     ) -> Result<String, RefError> {
         match key {
@@ -204,7 +204,7 @@ mod tests {
         .unwrap();
         // BTreeSet → sorted, deduped, secret ref dropped.
         let deps = config.unit_deps();
-        let names: Vec<&str> = deps.iter().map(ResourceName::as_str).collect();
+        let names: Vec<&str> = deps.iter().map(UnitName::as_str).collect();
         assert_eq!(names, vec!["api", "app-db"]);
     }
 
@@ -247,7 +247,7 @@ mod tests {
             master_key: None,
         };
         let deps = config.database_deps(&ctx).unwrap();
-        let names: Vec<&str> = deps.iter().map(ResourceName::as_str).collect();
+        let names: Vec<&str> = deps.iter().map(UnitName::as_str).collect();
         assert_eq!(names, vec!["db-x"]);
     }
 
@@ -257,7 +257,7 @@ mod tests {
         let config = sample_config();
         assert_eq!(
             config
-                .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "url")
+                .resolve_export(&ctx, &UnitName::new("web").unwrap(), "url")
                 .unwrap(),
             "http://dpl--web:8080"
         );
@@ -269,7 +269,7 @@ mod tests {
         let config = sample_config();
         assert_eq!(
             config
-                .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "socket")
+                .resolve_export(&ctx, &UnitName::new("web").unwrap(), "socket")
                 .unwrap(),
             "dpl--web:8080"
         );
@@ -281,7 +281,7 @@ mod tests {
         let config = sample_config();
         assert!(
             config
-                .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "nope")
+                .resolve_export(&ctx, &UnitName::new("web").unwrap(), "nope")
                 .is_err()
         );
     }
@@ -307,7 +307,7 @@ mod tests {
         };
         assert_eq!(
             sample_config()
-                .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "export")
+                .resolve_export(&ctx, &UnitName::new("web").unwrap(), "export")
                 .unwrap(),
             "/var/www/web_3"
         );
@@ -326,7 +326,7 @@ mod tests {
         };
         // No .state.json on disk → no active deployment to export from.
         let err = sample_config()
-            .resolve_export(&ctx, &ResourceName::new("web").unwrap(), "export")
+            .resolve_export(&ctx, &UnitName::new("web").unwrap(), "export")
             .unwrap_err();
         assert!(matches!(err.kind, RefErrorKind::NotDeployed { name } if name == "web"));
     }

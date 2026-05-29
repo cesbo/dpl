@@ -20,14 +20,14 @@ use sea_query::{
 };
 
 use super::model::DbServerEngine;
-use crate::config::ResourceName;
+use crate::config::UnitName;
 
 impl DbServerEngine {
     /// Returns `Ok` only when the container is up and the SQL server accepts
     /// the root login.
     pub fn ping(
         self,
-        server: &ResourceName,
+        server: &UnitName,
         root_password: &str,
         db_name: Option<&str>,
     ) -> io::Result<()> {
@@ -79,7 +79,7 @@ impl DbServerEngine {
     /// Provision a new database + login user inside a running db-server container.
     pub fn create_database(
         self,
-        server: &ResourceName,
+        server: &UnitName,
         root_password: &str,
         db_name: &str,
         username: &str,
@@ -101,7 +101,7 @@ impl DbServerEngine {
     /// database or user is already gone.
     pub fn drop_database(
         self,
-        server: &ResourceName,
+        server: &UnitName,
         root_password: &str,
         db_name: &str,
         username: &str,

@@ -16,7 +16,7 @@ use thiserror::Error;
 
 use crate::{
     MainContext,
-    config::ResourceName,
+    config::UnitName,
 };
 
 const SECRETS_DIR: &str = ".secrets";
@@ -45,7 +45,7 @@ impl SecretName {
     }
 
     pub fn is_valid(name: &str) -> bool {
-        !name.is_empty() && name.split('/').all(ResourceName::is_valid)
+        !name.is_empty() && name.split('/').all(UnitName::is_valid)
     }
 
     /// `{base}/.secrets/{group_components}/{last}.json`

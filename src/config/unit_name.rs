@@ -9,18 +9,18 @@ use serde::{
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-#[error("invalid resource name '{0}'")]
-pub struct ResourceNameError(String);
+#[error("invalid unit name '{0}'")]
+pub struct UnitNameError(String);
 
 #[repr(transparent)]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ResourceName(String);
+pub struct UnitName(String);
 
-impl ResourceName {
-    pub fn new(value: impl Into<String>) -> Result<Self, ResourceNameError> {
+impl UnitName {
+    pub fn new(value: impl Into<String>) -> Result<Self, UnitNameError> {
         let name = value.into();
         if !Self::is_valid(&name) {
-            Err(ResourceNameError(name))
+            Err(UnitNameError(name))
         } else {
             Ok(Self(name))
         }
@@ -59,37 +59,37 @@ impl ResourceName {
     }
 }
 
-impl std::str::FromStr for ResourceName {
-    type Err = ResourceNameError;
+impl std::str::FromStr for UnitName {
+    type Err = UnitNameError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::new(s)
     }
 }
 
-impl fmt::Display for ResourceName {
+impl fmt::Display for UnitName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
 }
 
-impl AsRef<str> for ResourceName {
+impl AsRef<str> for UnitName {
     fn as_ref(&self) -> &str {
         &self.0
     }
 }
 
-impl<'de> Deserialize<'de> for ResourceName {
+impl<'de> Deserialize<'de> for UnitName {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         let value = String::deserialize(deserializer)?;
-        ResourceName::new(value).map_err(serde::de::Error::custom)
+        UnitName::new(value).map_err(serde::de::Error::custom)
     }
 }
 
-impl Serialize for ResourceName {
+impl Serialize for UnitName {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&self.0)
     }
@@ -100,38 +100,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resource_name_accepts_valid() {
-        assert!(ResourceName::new("foo").is_ok());
-        assert!(ResourceName::new("a-b-c").is_ok());
-        assert!(ResourceName::new("app-1").is_ok());
-        assert!(ResourceName::new("0").is_ok());
+    fn unit_name_accepts_valid() {
+        assert!(UnitName::new("foo").is_ok());
+        assert!(UnitName::new("a-b-c").is_ok());
+        assert!(UnitName::new("app-1").is_ok());
+        assert!(UnitName::new("0").is_ok());
     }
 
     #[test]
-    fn resource_name_rejects_invalid() {
-        assert!(ResourceName::new("").is_err());
-        assert!(ResourceName::new("-foo").is_err());
-        assert!(ResourceName::new("foo-").is_err());
-        assert!(ResourceName::new("foo--bar").is_err());
-        assert!(ResourceName::new("Foo").is_err());
-        assert!(ResourceName::new("foo_bar").is_err());
-        assert!(ResourceName::new("foo.bar").is_err());
-        assert!(ResourceName::new("foo/bar").is_err());
-        assert!(ResourceName::new(" foo").is_err());
+    fn unit_name_rejects_invalid() {
+        assert!(UnitName::new("").is_err());
+        assert!(UnitName::new("-foo").is_err());
+        assert!(UnitName::new("foo-").is_err());
+        assert!(UnitName::new("foo--bar").is_err());
+        assert!(UnitName::new("Foo").is_err());
+        assert!(UnitName::new("foo_bar").is_err());
+        assert!(UnitName::new("foo.bar").is_err());
+        assert!(UnitName::new("foo/bar").is_err());
+        assert!(UnitName::new(" foo").is_err());
     }
 
     #[test]
-    fn resource_name_serde_roundtrip() {
-        let name = ResourceName::new("pg-main").unwrap();
+    fn unit_name_serde_roundtrip() {
+        let name = UnitName::new("pg-main").unwrap();
         let yaml = serde_yaml::to_string(&name).unwrap();
         assert_eq!(yaml.trim(), "pg-main");
-        let parsed: ResourceName = serde_yaml::from_str("pg-main").unwrap();
+        let parsed: UnitName = serde_yaml::from_str("pg-main").unwrap();
         assert_eq!(parsed, name);
     }
 
     #[test]
-    fn resource_name_deserialize_rejects_invalid() {
-        let err = serde_yaml::from_str::<ResourceName>("Bad/Name").unwrap_err();
-        assert!(err.to_string().contains("invalid resource name"));
+    fn unit_name_deserialize_rejects_invalid() {
+        let err = serde_yaml::from_str::<UnitName>("Bad/Name").unwrap_err();
+        assert!(err.to_string().contains("invalid unit name"));
     }
 }

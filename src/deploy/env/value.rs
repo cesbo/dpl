@@ -9,7 +9,7 @@ use thiserror::Error;
 use crate::{
     MainContext,
     config::{
-        ResourceName,
+        UnitName,
         SecretName,
     },
     deploy::unit,
@@ -44,7 +44,7 @@ pub enum ValueError {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Ns {
     Secret,
-    Unit(ResourceName),
+    Unit(UnitName),
 }
 
 impl Ns {
@@ -53,7 +53,7 @@ impl Ns {
             return Some(Self::Secret);
         }
 
-        ResourceName::new(raw).ok().map(Self::Unit)
+        UnitName::new(raw).ok().map(Self::Unit)
     }
 
     fn as_str(&self) -> &str {
@@ -162,7 +162,7 @@ impl Value {
     /// Drops `${secret:…}` refs; use [`Value::references`] for all of them.
     /// This is purely syntactic — it does not load or classify the referenced
     /// units.
-    pub fn unit_refs(&self) -> impl Iterator<Item = &ResourceName> {
+    pub fn unit_refs(&self) -> impl Iterator<Item = &UnitName> {
         self.references().filter_map(|(ns, _)| match ns {
             Ns::Unit(name) => Some(name),
             Ns::Secret => None,
@@ -298,7 +298,7 @@ mod tests {
 
     fn uref(unit: &str, key: &str) -> Segment {
         Segment::Ref {
-            ns: Ns::Unit(ResourceName::new(unit).unwrap()),
+            ns: Ns::Unit(UnitName::new(unit).unwrap()),
             name: key.to_owned(),
         }
     }
@@ -468,7 +468,7 @@ mod tests {
             refs,
             vec![
                 (&Ns::Secret, "x"),
-                (&Ns::Unit(ResourceName::new("pg-main").unwrap()), "port"),
+                (&Ns::Unit(UnitName::new("pg-main").unwrap()), "port"),
             ]
         );
     }
@@ -476,12 +476,12 @@ mod tests {
     #[test]
     fn unit_refs_drops_secrets_keeps_order() {
         let v = Value::parse("${secret:x}-${pg-main:port}@${app-db:url}").unwrap();
-        let refs: Vec<&ResourceName> = v.unit_refs().collect();
+        let refs: Vec<&UnitName> = v.unit_refs().collect();
         assert_eq!(
             refs,
             vec![
-                &ResourceName::new("pg-main").unwrap(),
-                &ResourceName::new("app-db").unwrap(),
+                &UnitName::new("pg-main").unwrap(),
+                &UnitName::new("app-db").unwrap(),
             ]
         );
     }

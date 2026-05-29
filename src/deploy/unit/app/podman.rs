@@ -14,7 +14,7 @@ use tracing::{
 
 use super::model::ExportConfig;
 use crate::{
-    config::ResourceName,
+    config::UnitName,
     log::child_output,
     podman::{
         NGINX_WWW_VOLUME,
@@ -25,13 +25,13 @@ use crate::{
 };
 
 pub struct PodmanContext<'a> {
-    name: &'a ResourceName,
+    name: &'a UnitName,
     version: u32,
     image_tag: String,
 }
 
 impl<'a> PodmanContext<'a> {
-    pub fn new(name: &'a ResourceName, version: u32) -> Self {
+    pub fn new(name: &'a UnitName, version: u32) -> Self {
         let image_tag = format!("localhost/{name}:{version}");
         Self {
             name,

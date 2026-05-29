@@ -33,7 +33,7 @@ use super::{
 };
 use crate::{
     MainContext,
-    config::ResourceName,
+    config::UnitName,
     deploy::{
         DeployError,
         state::DeployState,
@@ -45,12 +45,12 @@ use crate::{
 #[derive(Debug)]
 pub struct AppUnit<'a> {
     pub ctx: &'a MainContext,
-    pub name: &'a ResourceName,
+    pub name: &'a UnitName,
     pub config: AppConfig,
 }
 
 impl<'a> AppUnit<'a> {
-    pub fn new(ctx: &'a MainContext, name: &'a ResourceName, config: AppConfig) -> Self {
+    pub fn new(ctx: &'a MainContext, name: &'a UnitName, config: AppConfig) -> Self {
         Self { ctx, name, config }
     }
 
@@ -116,7 +116,7 @@ impl<'a> AppUnit<'a> {
     }
 
     /// Domain units whose routes reference this app via `${<app>:export|url}`.
-    fn dependent_domains(&self) -> Vec<(ResourceName, DomainConfig)> {
+    fn dependent_domains(&self) -> Vec<(UnitName, DomainConfig)> {
         list_units(self.ctx, |c| matches!(c, UnitConfig::Domain(_)))
             .into_iter()
             .filter_map(|(name, config)| match config {
@@ -271,7 +271,7 @@ mod tests {
         let config: AppConfig =
             serde_yaml::from_str("image: alpine\nport: 8080\nbuilds: []\nruntime:\n  cmd: ./run\n")
                 .unwrap();
-        let unit_name = ResourceName::new("web").unwrap();
+        let unit_name = UnitName::new("web").unwrap();
         let app = AppUnit::new(&ctx, &unit_name, config);
 
         let domains = app.dependent_domains();

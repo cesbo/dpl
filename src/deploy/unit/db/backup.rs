@@ -16,7 +16,7 @@ use std::{
 
 use super::model::DbServerEngine;
 use crate::{
-    config::ResourceName,
+    config::UnitName,
     log::child_output,
 };
 
@@ -28,7 +28,7 @@ impl DbServerEngine {
     /// and stall the dump.
     pub fn dump<W: Write>(
         self,
-        server: &ResourceName,
+        server: &UnitName,
         user: &str,
         password: &str,
         db_name: &str,
@@ -77,7 +77,7 @@ impl DbServerEngine {
     /// is streamed to the build log.
     pub fn restore<R: Read>(
         self,
-        server: &ResourceName,
+        server: &UnitName,
         user: &str,
         password: &str,
         db_name: &str,

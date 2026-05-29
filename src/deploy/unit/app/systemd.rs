@@ -13,7 +13,7 @@ use tracing::{
 };
 
 use crate::{
-    config::ResourceName,
+    config::UnitName,
     systemd::{
         disable_service,
         enable_service,
@@ -24,11 +24,11 @@ use crate::{
 
 pub struct SystemdContext<'a> {
     systemd_dir: &'a Path,
-    name: &'a ResourceName,
+    name: &'a UnitName,
 }
 
 impl<'a> SystemdContext<'a> {
-    pub fn new(name: &'a ResourceName) -> Self {
+    pub fn new(name: &'a UnitName) -> Self {
         Self {
             systemd_dir: Path::new(crate::systemd::SYSTEMD_DIR),
             name,
@@ -258,7 +258,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::SystemdContext;
-    use crate::config::ResourceName;
+    use crate::config::UnitName;
 
     #[test]
     fn systemd_set_restart_value() {
@@ -269,7 +269,7 @@ mod tests {
         let source = "[Unit]\nDescription=Demo\n\n[Service]\nRestart=no\nExecStart=/usr/bin/true\n";
         fs::write(&service_path, source).expect("write source service file");
 
-        let name = ResourceName::new("demo").unwrap();
+        let name = UnitName::new("demo").unwrap();
         let ctx = SystemdContext {
             systemd_dir: Path::new(tmp.path()),
             name: &name,

@@ -11,7 +11,7 @@ use super::{
 };
 use crate::{
     MainContext,
-    config::ResourceName,
+    config::UnitName,
     deploy::{
         env::Value,
         unit::{
@@ -29,7 +29,7 @@ use crate::{
 #[serde(deny_unknown_fields)]
 pub struct DomainConfig {
     /// Name of the `http-server` unit that serves this domain.
-    pub server: ResourceName,
+    pub server: UnitName,
     pub hosts: Vec<HostName>,
     #[serde(default)]
     pub proxy: Option<ProxyConfig>,
@@ -81,7 +81,7 @@ impl DomainConfig {
     /// `target`/`root`, deduplicated and sorted.
     ///
     /// Reference-derived only; purely syntactic (no unit loading).
-    pub fn unit_deps(&self) -> BTreeSet<ResourceName> {
+    pub fn unit_deps(&self) -> BTreeSet<UnitName> {
         let mut deps = BTreeSet::new();
         for route in &self.routes {
             let value = match route {
@@ -137,7 +137,7 @@ mod tests {
         )
         .unwrap();
         let deps = config.unit_deps();
-        let names: Vec<&str> = deps.iter().map(ResourceName::as_str).collect();
+        let names: Vec<&str> = deps.iter().map(UnitName::as_str).collect();
         // Sorted; the literal root contributes nothing.
         assert_eq!(names, vec!["assets", "backend", "worker"]);
     }

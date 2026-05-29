@@ -11,7 +11,7 @@ use std::{
 
 use serde::Deserialize;
 
-use crate::config::ResourceName;
+use crate::config::UnitName;
 
 /// Podman volume for app static exports; mounts to [`NGINX_WWW_MOUNT`] in the
 /// nginx container. Holds `<name>_<version>/…` directories at its root.
@@ -79,7 +79,7 @@ pub struct ContainerStatus {
 
 /// Inspect a container by name. `None` when it does not exist (podman
 /// inspect exits non-zero)
-pub fn inspect_container(name: &ResourceName) -> Option<ContainerState> {
+pub fn inspect_container(name: &UnitName) -> Option<ContainerState> {
     let name = name.scoped_unit_name();
     let out = run_podman(&["container", "inspect", &name, "--format", "{{json .}}"]).ok()?;
     let state = serde_json::from_str(&out).ok()?;

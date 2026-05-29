@@ -10,7 +10,7 @@ use minijinja::{
 };
 
 use crate::{
-    config::ResourceName,
+    config::UnitName,
     deploy::{
         artifacts::{
             ArtifactError,
@@ -39,7 +39,7 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
 
 pub fn create_service_file(
     dst: &Path,
-    name: &ResourceName,
+    name: &UnitName,
     engine: DbServerEngine,
     version: &str,
     password: &str,
@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     fn render_db_service() {
-        let name = ResourceName::new("pg-main").unwrap();
+        let name = UnitName::new("pg-main").unwrap();
         let temp_dir = tempdir().unwrap();
         let dst = temp_dir.path();
 
