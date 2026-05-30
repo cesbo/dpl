@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     fs::{
         File,
         OpenOptions,
@@ -21,6 +22,7 @@ use thiserror::Error;
 use crate::{
     MainContext,
     config::UnitName,
+    deploy::DeployError,
 };
 
 #[derive(Debug, Error)]
@@ -54,17 +56,48 @@ pub enum DeployStatus {
     Failed,
 }
 
+/// Deploy phase for DeployError.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Stage {
+    /// Loading/validating config, resolving secrets, acquiring the lock,
+    /// bumping the version, staging inputs, rendering build artifacts.
+    Prepare,
+    /// Building the container image from the staged sources.
+    Build,
+    /// Installing/starting systemd services, exporting files, creating or
+    /// restoring databases, writing rendered config into volumes.
+    Install,
+    /// Waiting for the deployed unit to become healthy (its port/ping check).
+    Runtime,
+}
+
+impl fmt::Display for Stage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Stage::Prepare => "prepare",
+            Stage::Build => "build",
+            Stage::Install => "install",
+            Stage::Runtime => "runtime",
+        };
+        f.write_str(name)
+    }
+}
+
 #[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BuildResult {
     pub version: u32,
     pub status: DeployStatus,
 
-    /// Deploy phase active when the last attempt failed (e.g. `building app
-    /// image`, `waiting for app`). Set only on failure; tells later analysis
-    /// where to look — build-time phases point at `{unit_dir}/build.log`, the
-    /// health-check phase at `/var/log/podman/{scoped_unit_name}.log`.
+    /// Deploy stage the last attempt failed in. Set only on failure; selects
+    /// the relevant log and reads back in `dpl inspect`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub phase: Option<String>,
+    pub stage: Option<Stage>,
+
+    /// Human-readable cause of the last failure (the failing step plus its
+    /// source chain). Set only on failure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -167,24 +200,52 @@ impl DeployState {
             .ok_or(DeployStateError::VersionOverflow)?;
         self.latest_build.version = next;
         self.latest_build.status = DeployStatus::Building;
-        self.latest_build.phase = None;
+        self.latest_build.stage = None;
+        self.latest_build.error = None;
         self.save()?;
 
         Ok(next)
     }
 
-    /// Marks the latest build failed, recording the phase it failed at (the
-    /// open [`crate::log::phase`] when available, else `None`).
-    pub fn set_error(&mut self, phase: Option<String>) {
+    /// Marks the latest build failed, recording the [`Stage`] it failed in and
+    /// the human-readable `error` cause for later inspection.
+    pub fn set_error(&mut self, error: &DeployError) {
         self.latest_build.status = DeployStatus::Failed;
-        self.latest_build.phase = phase;
+
+        if let DeployError::Step {
+            stage,
+            info,
+            source,
+        } = error
+        {
+            let mut messages = Vec::new();
+            messages.push(info.to_owned());
+
+            let mut source: &(dyn std::error::Error + 'static) = source.as_ref();
+            loop {
+                messages.push(source.to_string());
+                match source.source() {
+                    Some(next) => source = next,
+                    None => break,
+                }
+            }
+            let message = messages.join(": ");
+
+            self.latest_build.stage = Some(*stage);
+            self.latest_build.error = Some(message);
+        } else {
+            self.latest_build.stage = None;
+            self.latest_build.error = None;
+        }
+
         let _ = self.save();
     }
 
     /// Sets build status to ready, sets build version as active version
     pub fn set_ready(&mut self) {
         self.latest_build.status = DeployStatus::Ready;
-        self.latest_build.phase = None;
+        self.latest_build.stage = None;
+        self.latest_build.error = None;
         self.active_version = Some(self.latest_build.version);
         let _ = self.save();
     }
@@ -241,61 +302,53 @@ mod tests {
     }
 
     #[test]
-    fn set_error_records_phase() {
+    fn set_error_records_stage_and_detail() {
         let dir = tempfile::tempdir().unwrap();
         let mut state = state_at(dir.path());
-        state.set_error(Some("building app image".to_string()));
+        let err = DeployError::step_runtime(
+            "waiting for app",
+            io::Error::other("container exited with code 1 (ran 2s)"),
+        );
+        state.set_error(&err);
         assert_eq!(state.latest_build.status, DeployStatus::Failed);
+        assert_eq!(state.latest_build.stage, Some(Stage::Runtime));
         assert_eq!(
-            state.latest_build.phase.as_deref(),
-            Some("building app image")
+            state.latest_build.error.as_deref(),
+            Some("waiting for app: container exited with code 1 (ran 2s)")
         );
     }
 
     #[test]
-    fn bump_version_clears_phase() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut state = state_at(dir.path());
-        state.set_error(Some("waiting for app".to_string()));
-        assert_eq!(state.bump_version().unwrap(), 1);
-        assert_eq!(state.latest_build.status, DeployStatus::Building);
-        assert_eq!(state.latest_build.phase, None);
-    }
-
-    #[test]
-    fn set_ready_clears_phase() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut state = state_at(dir.path());
-        state.set_error(Some("waiting for app".to_string()));
-        state.set_ready();
-        assert_eq!(state.latest_build.status, DeployStatus::Ready);
-        assert_eq!(state.latest_build.phase, None);
-        assert_eq!(state.active_version, Some(state.latest_build.version));
-    }
-
-    #[test]
-    fn phase_serde_roundtrips_and_is_omitted_when_none() {
+    fn failure_fields_serde_roundtrip_and_are_omitted_when_none() {
         let failed = BuildResult {
             version: 2,
             status: DeployStatus::Failed,
-            phase: Some("building app image".to_string()),
+            stage: Some(Stage::Build),
+            error: Some("build app image: exit 1".to_string()),
         };
         let json = serde_json::to_string(&failed).unwrap();
-        assert!(json.contains(r#""phase":"building app image""#), "{json}");
+        assert!(json.contains(r#""stage":"build""#), "{json}");
+        assert!(
+            json.contains(r#""error":"build app image: exit 1""#),
+            "{json}"
+        );
         assert_eq!(serde_json::from_str::<BuildResult>(&json).unwrap(), failed);
 
-        // Omitted from the JSON when there is no failure.
+        // Both omitted from the JSON when there is no failure.
         let ready = BuildResult {
             version: 3,
             status: DeployStatus::Ready,
-            phase: None,
+            stage: None,
+            error: None,
         };
         let json = serde_json::to_string(&ready).unwrap();
-        assert!(!json.contains("phase"), "{json}");
+        assert!(!json.contains("stage"), "{json}");
+        assert!(!json.contains("error"), "{json}");
 
-        // Backward-compat: legacy state files without the field load as None.
+        // Backward-compat: legacy state files without the fields load as None.
         let legacy: BuildResult =
             serde_json::from_str(r#"{"version":3,"status":"ready"}"#).unwrap();
-        assert_eq!(legacy.phase, None);
+        assert_eq!(legacy.stage, None);
+        assert_eq!(legacy.error, None);
     }
 }

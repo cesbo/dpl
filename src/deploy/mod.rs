@@ -11,5 +11,6 @@ pub use error::DeployError;
 pub use state::{
     DeployState,
     DeployStatus,
+    Stage,
 };
 pub use unit::UnitConfig;

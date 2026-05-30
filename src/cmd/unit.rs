@@ -20,6 +20,7 @@ use crate::{
         DeployError,
         DeployState,
         DeployStatus,
+        Stage,
         UnitConfig,
         unit::{
             app::AppUnit,
@@ -69,19 +70,16 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
 
     let version = state
         .bump_version()
-        .map_err(DeployError::from)
+        .map_err(|e| DeployError::step_prepare("bump version", e))
         .with_context(|| format!("deploy unit '{name}'"))?;
 
     let log_path = ctx.build_log_path(name);
     let log = match DeployLog::open(&log_path, name, version) {
         Ok(log) => log,
         Err(err) => {
-            // The log (and its phase tracking) never opened, so no phase to record.
-            state.set_error(None);
-            return Err(
-                anyhow::Error::new(DeployError::unit("open deploy log", err))
-                    .context(format!("deploy unit '{name}'")),
-            );
+            let err = DeployError::step_prepare("open deploy log", err);
+            state.set_error(&err);
+            return Err(anyhow::Error::new(err).context(format!("deploy unit '{name}'")));
         }
     };
     let _default = log.set_default();
@@ -109,8 +107,8 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
             Ok(())
         }
         Err(err) => {
-            // Record the failing phase before finish_err takes it.
-            state.set_error(log.current_phase());
+            // Record the failing stage and cause before converting to Reported.
+            state.set_error(&err);
             tracing::debug!("deploy failed: {:#}", anyhow::Error::new(err));
             log.finish_err();
             Err(anyhow::Error::new(DeployError::Reported))
@@ -139,7 +137,13 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
             return Ok(());
         }
         DeployStatus::Building => println!("build #{} in progress", build.version),
-        DeployStatus::Failed => print_failure(ctx, name, build.version, build.phase.as_deref()),
+        DeployStatus::Failed => print_failure(
+            ctx,
+            name,
+            build.version,
+            build.stage,
+            build.error.as_deref(),
+        ),
         DeployStatus::Ready => {}
     }
 
@@ -164,19 +168,25 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
 }
 
 /// Print the failure line for a `Failed` build and point at the relevant log.
-fn print_failure(ctx: &MainContext, name: &UnitName, version: u32, phase: Option<&str>) {
-    let phase = match phase {
-        Some(phase) => {
-            println!("{} build #{version} failed at {phase:?}", error_mark());
-            phase
-        }
-        None => {
-            println!("{} build #{version} failed", error_mark());
-            ""
-        }
-    };
+fn print_failure(
+    ctx: &MainContext,
+    name: &UnitName,
+    version: u32,
+    stage: Option<Stage>,
+    error: Option<&str>,
+) {
+    match stage {
+        Some(stage) => println!("{} build #{version} failed ({stage})", error_mark()),
+        None => println!("{} build #{version} failed", error_mark()),
+    }
 
-    if phase.starts_with("waiting for app") {
+    if let Some(error) = error {
+        println!("  {error}");
+    }
+
+    // A runtime failure (the health check) lives in the container's own log;
+    // every earlier stage is in the build log.
+    if stage == Some(Stage::Runtime) {
         let runtime_log = format!("/var/log/podman/{}.log", name.scoped_unit_name());
         println!("  runtime log: {}", runtime_log);
     } else {
@@ -196,7 +206,7 @@ fn open_input(path: Option<&Path>) -> Result<Option<Box<dyn Read>>, DeployError>
     } else {
         fs::File::open(path)
             .map(|f| Box::new(f) as Box<dyn Read>)
-            .map_err(|err| DeployError::unit("open input", err))?
+            .map_err(|err| DeployError::step_prepare("open input", err))?
     };
 
     Ok(Some(input))

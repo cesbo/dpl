@@ -56,19 +56,24 @@ impl<'a> HttpServerUnit<'a> {
 
         if systemd::is_active(&service_name) {
             let _phase = log::phase(format!("reloading http-server '{}'", self.name));
-            return systemd::reload_service(&service_name)
-                .map_err(|e| DeployError::unit(format!("reload service '{service_name}'"), e));
+            return systemd::reload_service(&service_name).map_err(|e| {
+                DeployError::step_install(format!("reload service '{service_name}'"), e)
+            });
         }
 
-        let (_guard, mut state) = DeployState::acquire(self.ctx, self.name)
-            .map_err(|e| DeployError::unit(format!("acquire http-server '{}'", self.name), e))?;
-        state.bump_version().map_err(DeployError::from)?;
+        let (_guard, mut state) = DeployState::acquire(self.ctx, self.name).map_err(|e| {
+            DeployError::step_prepare(format!("acquire http-server '{}'", self.name), e)
+        })?;
+
+        state
+            .bump_version()
+            .map_err(|e| DeployError::step_prepare("bump version", e))?;
 
         match self.deploy(&mut state) {
             Ok(()) => Ok(()),
             Err(err) => {
-                // No DeployLog handle here; the primary unit's state records the phase.
-                state.set_error(None);
+                // No DeployLog handle here; the primary unit's state records the stage.
+                state.set_error(&err);
                 Err(err)
             }
         }
@@ -85,34 +90,40 @@ impl<'a> HttpServerUnit<'a> {
         let conf_dir = ensure_volume(&conf_volume)
             .and_then(|_| volume_mountpoint(&conf_volume))
             .map_err(|e| {
-                DeployError::unit(format!("resolve volume '{conf_volume}' mountpoint"), e)
+                DeployError::step_install(format!("resolve volume '{conf_volume}' mountpoint"), e)
             })?;
 
-        artifacts::write_global_config(&conf_dir)?;
+        artifacts::write_global_config(&conf_dir)
+            .map_err(|e| DeployError::step_install("write global config for http-server", e))?;
 
-        ensure_volume(NGINX_WWW_VOLUME)
-            .map_err(|e| DeployError::unit(format!("get volume '{NGINX_WWW_VOLUME}'"), e))?;
+        ensure_volume(NGINX_WWW_VOLUME).map_err(|e| {
+            DeployError::step_install(format!("get volume '{NGINX_WWW_VOLUME}'"), e)
+        })?;
 
-        artifacts::create_service_file(systemd_dir, self)?;
+        artifacts::create_service_file(systemd_dir, self)
+            .map_err(|e| DeployError::step_install("create service file for http-server", e))?;
 
-        systemd::reload().map_err(|e| DeployError::unit("reload systemd", e))?;
+        systemd::reload().map_err(|e| DeployError::step_install("reload systemd", e))?;
 
         {
             let _phase = log::phase(format!("starting http-server '{}'", self.name));
             if systemd::is_active(&service_name) {
                 systemd::restart_service(&service_name).map_err(|e| {
-                    DeployError::unit(format!("restart service for '{}'", self.name), e)
+                    DeployError::step_install(format!("restart service for '{}'", self.name), e)
                 })?;
             } else {
                 systemd::enable_service(&service_name).map_err(|e| {
-                    DeployError::unit(format!("enable service for '{}'", self.name), e)
+                    DeployError::step_install(format!("enable service for '{}'", self.name), e)
                 })?;
             }
         }
 
         let phase_name = format!("waiting for http-server '{}'", self.name);
         let _phase = log::phase(&phase_name);
-        health::check(self.name, HTTP_PORT).map_err(|e| DeployError::unit(phase_name, e))?;
+        if let Err(err) = health::check(self.name, HTTP_PORT) {
+            tracing::error!("{err}");
+            return Err(DeployError::step_runtime(phase_name, err));
+        }
 
         Ok(())
     }

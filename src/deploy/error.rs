@@ -1,20 +1,14 @@
 use thiserror::Error;
 
-use super::{
-    artifacts::ArtifactError,
-    state::DeployStateError,
-};
+use super::state::Stage;
 
 #[derive(Debug, Error)]
 pub enum DeployError {
-    #[error(transparent)]
-    State(#[from] DeployStateError),
-
-    #[error("save artifacts")]
-    Artifact(#[from] ArtifactError),
-
+    /// A deploy step failed. `stage` says which phase it happened in (drives the
+    /// log hint and the `dpl inspect` readout), `info` names the specific step.
     #[error("{info}")]
-    UnitError {
+    Step {
+        stage: Stage,
         info: String,
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
@@ -28,12 +22,45 @@ pub enum DeployError {
 }
 
 impl DeployError {
-    /// Wrap any unit-level failure with a human-readable `info` summary.
-    pub fn unit(
+    pub fn step_prepare(
         info: impl Into<String>,
         source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
     ) -> Self {
-        DeployError::UnitError {
+        DeployError::Step {
+            stage: Stage::Prepare,
+            info: info.into(),
+            source: source.into(),
+        }
+    }
+
+    pub fn step_build(
+        info: impl Into<String>,
+        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+    ) -> Self {
+        DeployError::Step {
+            stage: Stage::Build,
+            info: info.into(),
+            source: source.into(),
+        }
+    }
+
+    pub fn step_install(
+        info: impl Into<String>,
+        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+    ) -> Self {
+        DeployError::Step {
+            stage: Stage::Install,
+            info: info.into(),
+            source: source.into(),
+        }
+    }
+
+    pub fn step_runtime(
+        info: impl Into<String>,
+        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+    ) -> Self {
+        DeployError::Step {
+            stage: Stage::Runtime,
             info: info.into(),
             source: source.into(),
         }

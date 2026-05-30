@@ -43,16 +43,16 @@ impl<'a> DomainUnit<'a> {
 
     fn install_inner(&self) -> Result<(), DeployError> {
         let server_config = self.config.resolve_server(self.ctx).map_err(|e| {
-            DeployError::unit(format!("resolve http-server '{}'", self.config.server), e)
+            DeployError::step_prepare(format!("resolve http-server '{}'", self.config.server), e)
         })?;
         let server_unit = HttpServerUnit::new(self.ctx, &self.config.server, server_config);
 
         let conf_volume = server_unit.conf_volume();
         ensure_volume(&conf_volume)
-            .map_err(|e| DeployError::unit(format!("get volume '{conf_volume}'"), e))?;
+            .map_err(|e| DeployError::step_install(format!("get volume '{conf_volume}'"), e))?;
 
         let conf_dir = volume_mountpoint(&conf_volume).map_err(|e| {
-            DeployError::unit(format!("resolve volume '{conf_volume}' mountpoint"), e)
+            DeployError::step_install(format!("resolve volume '{conf_volume}' mountpoint"), e)
         })?;
 
         // Resolve the proxy's trusted-IP allowlist.
@@ -61,7 +61,7 @@ impl<'a> DomainUnit<'a> {
                 let _phase = log::phase("resolving proxy IP ranges");
                 Some(
                     proxy::resolve(cfg)
-                        .map_err(|e| DeployError::unit("resolve proxy IP ranges", e))?,
+                        .map_err(|e| DeployError::step_install("resolve proxy IP ranges", e))?,
                 )
             }
             None => None,
@@ -83,7 +83,9 @@ impl<'a> DomainUnit<'a> {
             config: &self.config,
             proxy,
         };
-        artifacts.save(conf_dir)?;
+        artifacts
+            .save(conf_dir)
+            .map_err(|e| DeployError::step_install("render domain config", e))?;
 
         Ok(())
     }

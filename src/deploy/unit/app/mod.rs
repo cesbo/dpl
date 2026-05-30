@@ -58,12 +58,13 @@ impl<'a> AppUnit<'a> {
         let _phase = log::phase("preparing");
 
         let temp_dir = tempfile::tempdir_in(self.ctx.unit_dir(self.name))
-            .map_err(|e| DeployError::unit("create temporary directory", e))?;
+            .map_err(|e| DeployError::step_prepare("create temporary directory", e))?;
         let deploy_dir = temp_dir.path();
 
         let archive_path = deploy_dir.join("app.tar.gz");
-        save_archive(archive, &archive_path)
-            .map_err(|e| DeployError::unit("save app archive to the temporary directory", e))?;
+        save_archive(archive, &archive_path).map_err(|e| {
+            DeployError::step_prepare("save app archive to the temporary directory", e)
+        })?;
 
         let artifacts = ArtifactsContext {
             ctx: self.ctx,
@@ -71,7 +72,10 @@ impl<'a> AppUnit<'a> {
             config: &self.config,
             version,
         };
-        artifacts.save(deploy_dir)?;
+
+        artifacts
+            .save(deploy_dir)
+            .map_err(|e| DeployError::step_prepare("render artifacts", e))?;
 
         Ok(temp_dir)
     }
@@ -151,7 +155,7 @@ impl<'a> AppUnit<'a> {
 
             let domain = DomainUnit::new(self.ctx, &name, config);
             if let Err(err) = domain.deploy(&mut state) {
-                state.set_error(None);
+                state.set_error(&err);
                 error!(
                     "domain '{name}' redeploy failed: {:#}",
                     anyhow::Error::new(err)
@@ -166,13 +170,13 @@ impl<'a> AppUnit<'a> {
             let archive_path = deploy_dir.join("app.tar.gz");
             let app_dir = deploy_dir.join("app");
             crate::archive::extract(&archive_path, &app_dir)
-                .map_err(|e| DeployError::unit("extract app archive", e))?;
+                .map_err(|e| DeployError::step_build("extract app archive", e))?;
         }
 
         let _phase = log::phase("building app image");
         PodmanContext::new(self.name, version)
             .build(deploy_dir)
-            .map_err(|e| DeployError::unit("build app image", e))?;
+            .map_err(|e| DeployError::step_build("build app image", e))?;
 
         Ok(())
     }
@@ -182,7 +186,7 @@ impl<'a> AppUnit<'a> {
             let _phase = log::phase("exporting files");
             PodmanContext::new(self.name, version)
                 .export(&self.config.exports)
-                .map_err(|e| DeployError::unit("export files", e))?;
+                .map_err(|e| DeployError::step_install("export files", e))?;
         }
 
         // A static build-and-export unit has no runtime: nothing to install.
@@ -197,17 +201,20 @@ impl<'a> AppUnit<'a> {
             let _phase = log::phase("installing app service");
             systemd_ctx
                 .install_app(deploy_dir)
-                .map_err(|e| DeployError::unit("install app service", e))?;
+                .map_err(|e| DeployError::step_install("install app service", e))?;
         }
 
         {
             let phase_name = "waiting for app".to_string();
             let _phase = log::phase(&phase_name);
-            health::check(self.name, runtime.port).map_err(|e| DeployError::unit(phase_name, e))?;
+            if let Err(err) = health::check(self.name, runtime.port) {
+                error!("{err}");
+                return Err(DeployError::step_runtime(phase_name, err));
+            }
 
             systemd_ctx
                 .set_restart_value("always")
-                .map_err(|e| DeployError::unit("set restart policy to 'always'", e))?;
+                .map_err(|e| DeployError::step_install("set restart policy to 'always'", e))?;
         }
 
         let _phase = log::phase("installing timers");

@@ -52,15 +52,19 @@ impl<'a> DbServerUnit<'a> {
             return Ok(());
         }
 
-        let (_guard, mut state) = DeployState::acquire(self.ctx, self.name)
-            .map_err(|e| DeployError::unit(format!("acquire db-server '{}'", self.name), e))?;
-        state.bump_version().map_err(DeployError::from)?;
+        let (_guard, mut state) = DeployState::acquire(self.ctx, self.name).map_err(|e| {
+            DeployError::step_prepare(format!("acquire db-server '{}'", self.name), e)
+        })?;
+
+        state
+            .bump_version()
+            .map_err(|e| DeployError::step_prepare("bump version", e))?;
 
         match self.deploy(&mut state) {
             Ok(()) => Ok(()),
             Err(err) => {
-                // No DeployLog handle here; the primary unit's state records the phase.
-                state.set_error(None);
+                // No DeployLog handle here; the primary unit's state records the stage.
+                state.set_error(&err);
                 Err(err)
             }
         }
@@ -68,7 +72,7 @@ impl<'a> DbServerUnit<'a> {
 
     fn install_inner(&self, systemd_dir: &Path) -> Result<(), DeployError> {
         let root_password = self.ctx.resolve_secret(&self.config.secret).map_err(|e| {
-            DeployError::unit(format!("resolve secret '{}'", &self.config.secret), e)
+            DeployError::step_prepare(format!("resolve secret '{}'", &self.config.secret), e)
         })?;
 
         artifacts::create_service_file(
@@ -77,9 +81,10 @@ impl<'a> DbServerUnit<'a> {
             self.config.engine,
             &self.config.version,
             &root_password,
-        )?;
+        )
+        .map_err(|e| DeployError::step_install("render db-server service", e))?;
 
-        systemd::reload().map_err(|e| DeployError::unit("reload systemd", e))?;
+        systemd::reload().map_err(|e| DeployError::step_install("reload systemd", e))?;
 
         let service_name = format!("{}.service", self.name.scoped_unit_name());
 
@@ -87,11 +92,11 @@ impl<'a> DbServerUnit<'a> {
             let _phase = log::phase(format!("starting db-server '{}'", self.name));
             if systemd::is_active(&service_name) {
                 systemd::restart_service(&service_name).map_err(|e| {
-                    DeployError::unit(format!("restart service for '{}'", self.name), e)
+                    DeployError::step_install(format!("restart service for '{}'", self.name), e)
                 })?;
             } else {
                 systemd::enable_service(&service_name).map_err(|e| {
-                    DeployError::unit(format!("enable service for '{}'", self.name), e)
+                    DeployError::step_install(format!("enable service for '{}'", self.name), e)
                 })?;
             }
         }
@@ -108,7 +113,7 @@ impl<'a> DbServerUnit<'a> {
                 return Ok(());
             }
             if Instant::now() >= deadline {
-                return Err(DeployError::unit(
+                return Err(DeployError::step_runtime(
                     format!("waiting for db-server '{}'", self.name),
                     std::io::Error::other("timeout"),
                 ));

@@ -73,6 +73,9 @@ pub struct ContainerStatus {
     pub status: String,
     #[serde(rename = "StartedAt")]
     pub started_at: String,
+    /// Zero-value (`0001-01-01T00:00:00Z`) while the container is still running.
+    #[serde(rename = "FinishedAt", default)]
+    pub finished_at: String,
     #[serde(rename = "ExitCode")]
     pub exit_code: i32,
 }
@@ -97,6 +100,7 @@ mod tests {
             "State": {
                 "Status": "running",
                 "StartedAt": "2026-05-20T10:11:12.123456789Z",
+                "FinishedAt": "0001-01-01T00:00:00Z",
                 "ExitCode": 0
             },
             "RestartCount": 2,
@@ -106,6 +110,7 @@ mod tests {
         let state: ContainerState = serde_json::from_str(json).unwrap();
         assert_eq!(state.state.status, "running");
         assert_eq!(state.state.started_at, "2026-05-20T10:11:12.123456789Z");
+        assert_eq!(state.state.finished_at, "0001-01-01T00:00:00Z");
         assert_eq!(state.state.exit_code, 0);
         assert_eq!(state.restart_count, 2);
         assert_eq!(state.image_name, "localhost/dpl-web:3");

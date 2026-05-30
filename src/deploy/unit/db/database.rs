@@ -40,30 +40,41 @@ impl<'a> DbUnit<'a> {
         state: &mut DeployState,
         backup: Option<Box<dyn Read>>,
     ) -> Result<(), DeployError> {
-        let server_config = match UnitConfig::load(self.ctx, &self.config.server).map_err(|e| {
-            DeployError::unit(
+        let unit = UnitConfig::load(self.ctx, &self.config.server).map_err(|e| {
+            DeployError::step_prepare(
                 format!("load db-server '{}' config", &self.config.server),
                 e,
             )
-        })? {
-            UnitConfig::DbServer(cfg) => cfg,
-            _ => {
-                return Err(DeployError::unit(
-                    format!("load db-server '{}' config", &self.config.server),
-                    RefError::wrong_unit_type(self.config.server.to_string(), "db-server"),
-                ));
-            }
+        })?;
+
+        let UnitConfig::DbServer(server_config) = unit else {
+            return Err(DeployError::step_prepare(
+                format!("load db-server '{}' config", &self.config.server),
+                RefError::wrong_unit_type(self.config.server.to_string(), "db-server"),
+            ));
         };
 
         let root_password = self
             .ctx
             .resolve_secret(&server_config.secret)
             .map_err(|e| {
-                DeployError::unit(format!("resolve secret '{}'", &server_config.secret), e)
+                DeployError::step_prepare(
+                    format!(
+                        "resolve secret '{}' with root password",
+                        &server_config.secret
+                    ),
+                    e,
+                )
             })?;
 
         let user_password = self.ctx.resolve_secret(&self.config.secret).map_err(|e| {
-            DeployError::unit(format!("resolve secret '{}'", &self.config.secret), e)
+            DeployError::step_prepare(
+                format!(
+                    "resolve secret '{}' with user password",
+                    &self.config.secret
+                ),
+                e,
+            )
         })?;
 
         DbServerUnit::new(self.ctx, &self.config.server, server_config.clone())
@@ -82,7 +93,7 @@ impl<'a> DbUnit<'a> {
         };
 
         if backup.is_some() && exists {
-            return Err(DeployError::unit(
+            return Err(DeployError::step_install(
                 format!("restore database '{}'", self.name),
                 io::Error::other("already exists; delete it manually to re-import"),
             ));
@@ -99,13 +110,16 @@ impl<'a> DbUnit<'a> {
                     &self.config.user,
                     &user_password,
                 )
-                .map_err(|e| DeployError::unit(format!("create database '{}'", self.name), e))?;
+                .map_err(|e| {
+                    DeployError::step_install(format!("create database '{}'", self.name), e)
+                })?;
         }
 
         if let Some(backup) = backup {
             let _phase = log::phase("restoring database");
-            let mut input = open_backup(backup)
-                .map_err(|e| DeployError::unit(format!("restore database '{}'", self.name), e))?;
+            let mut input = open_backup(backup).map_err(|e| {
+                DeployError::step_install(format!("restore database '{}'", self.name), e)
+            })?;
             server_config
                 .engine
                 .restore(
@@ -115,7 +129,9 @@ impl<'a> DbUnit<'a> {
                     self.name.as_str(),
                     &mut input,
                 )
-                .map_err(|e| DeployError::unit(format!("restore database '{}'", self.name), e))?;
+                .map_err(|e| {
+                    DeployError::step_install(format!("restore database '{}'", self.name), e)
+                })?;
         }
 
         state.set_ready();
