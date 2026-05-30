@@ -136,7 +136,7 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
             println!("no deploys yet");
             return Ok(());
         }
-        DeployStatus::Building => println!("build #{} in progress", build.version),
+        DeployStatus::Building => println!("build v{} in progress", build.version),
         DeployStatus::Failed => print_failure(
             ctx,
             name,
@@ -176,22 +176,22 @@ fn print_failure(
     error: Option<&str>,
 ) {
     match stage {
-        Some(stage) => println!("{} build #{version} failed ({stage})", error_mark()),
-        None => println!("{} build #{version} failed", error_mark()),
+        Some(stage) => println!("{}  build v{version} failed ({stage})", error_mark()),
+        None => println!("{}  build v{version} failed", error_mark()),
     }
 
     if let Some(error) = error {
-        println!("  {error}");
+        println!("   {error}");
     }
 
     // A runtime failure (the health check) lives in the container's own log;
     // every earlier stage is in the build log.
     if stage == Some(Stage::Runtime) {
         let runtime_log = format!("/var/log/podman/{}.log", name.scoped_unit_name());
-        println!("  runtime log: {}", runtime_log);
+        println!("   runtime log: {}", runtime_log);
     } else {
         let build_log = ctx.build_log_path(name);
-        println!("  build log: {}", build_log.display());
+        println!("   build log: {}", build_log.display());
     }
 }
 
