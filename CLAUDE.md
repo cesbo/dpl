@@ -45,7 +45,10 @@ Keep this split when adding functionality.
 2. `AppUnit::deploy` bumps the version, writes the archive to
    `{deploy_dir}/app.tar.gz`, renders artifacts (`containerfile`, `run.sh`,
    `build-N.sh`, systemd service), runs `podman build`, optionally exports
-   static files, and (re)installs the systemd service via `systemctl`.
+   static files, and (re)installs the systemd service via `systemctl`. An app
+   with no `runtime` is a static build-and-export unit: it builds + exports
+   only, skipping `run.sh`, the systemd service, the health check, and timers
+   (the `port` lives inside `runtime`, so static units have none).
 3. `DeployState` is rewritten to `{unit_dir}/.state.json` at each phase
    transition; failures land as `status: failed`, with `phase` recording the
    `log::phase` active at the failure (e.g. `building app image` →

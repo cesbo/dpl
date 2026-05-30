@@ -24,9 +24,9 @@ use crate::{
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
     pub image: String,
-    pub port: u16,
     pub builds: Vec<BuildConfig>,
-    pub runtime: RuntimeConfig,
+    #[serde(default)]
+    pub runtime: Option<RuntimeConfig>,
     #[serde(default)]
     pub volumes: Vec<VolumeConfig>,
     #[serde(default)]
@@ -55,6 +55,8 @@ pub struct BuildConfig {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeConfig {
+    /// Port the application listens on
+    pub port: u16,
     /// Environment variables
     #[serde(default)]
     pub env: EnvList,
@@ -109,7 +111,12 @@ impl AppConfig {
     /// Units referenced through `${unit:key}` tokens across `runtime.env` and
     /// every build layer's `env`, deduplicated and sorted.
     pub fn unit_deps(&self) -> BTreeSet<UnitName> {
-        let mut deps: BTreeSet<UnitName> = self.runtime.env.unit_refs().cloned().collect();
+        let mut deps: BTreeSet<UnitName> = self
+            .runtime
+            .as_ref()
+            .into_iter()
+            .flat_map(|runtime| runtime.env.unit_refs().cloned())
+            .collect();
         for layer in &self.builds {
             deps.extend(layer.env.unit_refs().cloned());
         }
@@ -129,7 +136,9 @@ impl AppConfig {
     }
 
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
-        self.runtime.env.resolve(ctx, "runtime.env")?;
+        if let Some(runtime) = &self.runtime {
+            runtime.env.resolve(ctx, "runtime.env")?;
+        }
 
         for (index, layer) in self.builds.iter().enumerate() {
             layer.env.resolve(ctx, &format!("builds[{index}].env"))?;
@@ -155,16 +164,16 @@ impl AppConfig {
         key: &str,
     ) -> Result<String, RefError> {
         match key {
-            // The app is reachable by other units over the private `dpl`
-            // container network at its container name and listening port.
-            "url" => Ok(format!(
-                "http://{}:{}",
-                unit_name.scoped_unit_name(),
-                self.port
-            )),
-            // Same address as `url` but without the scheme — the bare
-            // `host:port` that nginx's `uwsgi_pass`/`fastcgi_pass` expect.
-            "socket" => Ok(format!("{}:{}", unit_name.scoped_unit_name(), self.port)),
+            // `http://host:port` for `proxy_pass`.
+            "url" => {
+                let port = self.runtime_port(key)?;
+                Ok(format!("http://{}:{}", unit_name.scoped_unit_name(), port))
+            }
+            // `host:port` for `uwsgi_pass`, `fastcgi_pass`.
+            "socket" => {
+                let port = self.runtime_port(key)?;
+                Ok(format!("{}:{}", unit_name.scoped_unit_name(), port))
+            }
             // Absolute path of this app's static export inside the nginx container.
             "export" => {
                 let version = DeployState::get_active_version(ctx, unit_name)
@@ -173,6 +182,13 @@ impl AppConfig {
             }
             _ => Err(RefError::unknown_export(key)),
         }
+    }
+
+    fn runtime_port(&self, key: &str) -> Result<u16, RefError> {
+        self.runtime
+            .as_ref()
+            .map(|runtime| runtime.port)
+            .ok_or_else(|| RefError::unknown_export(key))
     }
 }
 
@@ -183,13 +199,25 @@ mod tests {
     fn sample_config() -> AppConfig {
         AppConfig {
             image: "alpine".into(),
-            port: 8080,
             builds: Vec::new(),
-            runtime: RuntimeConfig {
+            runtime: Some(RuntimeConfig {
+                port: 8080,
                 env: EnvList::default(),
                 init: None,
                 cmd: "./run".into(),
-            },
+            }),
+            volumes: Vec::new(),
+            exports: Vec::new(),
+            timers: Vec::new(),
+        }
+    }
+
+    /// A static build-and-export unit: no `runtime`, only `builds`/`exports`.
+    fn static_config() -> AppConfig {
+        AppConfig {
+            image: "alpine".into(),
+            builds: Vec::new(),
+            runtime: None,
             volumes: Vec::new(),
             exports: Vec::new(),
             timers: Vec::new(),
@@ -199,7 +227,7 @@ mod tests {
     #[test]
     fn app_unit_deps_from_env_and_builds() {
         let config: AppConfig = serde_yaml::from_str(
-            "image: alpine\nport: 8080\nruntime:\n  cmd: ./run\n  env:\n    DB: \"${app-db:url}\"\n    SECRET: \"${secret:k}\"\nbuilds:\n  - env:\n      API: \"${api:url}\"\n",
+            "image: alpine\nruntime:\n  port: 8080\n  cmd: ./run\n  env:\n    DB: \"${app-db:url}\"\n    SECRET: \"${secret:k}\"\nbuilds:\n  - env:\n      API: \"${api:url}\"\n",
         )
         .unwrap();
         // BTreeSet → sorted, deduped, secret ref dropped.
@@ -222,7 +250,7 @@ mod tests {
         // app `foo` references a `db` unit and another `app` unit. Only the db
         // is a startup dependency; the app reference is dropped.
         let config: AppConfig = serde_yaml::from_str(
-            "image: alpine\nport: 8080\nruntime:\n  cmd: ./run\n  env:\n    DB: \"${db-x:url}\"\n    UPSTREAM: \"${other-app:url}\"\nbuilds: []\n",
+            "image: alpine\nruntime:\n  port: 8080\n  cmd: ./run\n  env:\n    DB: \"${db-x:url}\"\n    UPSTREAM: \"${other-app:url}\"\nbuilds: []\n",
         )
         .unwrap();
 
@@ -238,7 +266,7 @@ mod tests {
         fs::create_dir_all(&app_dir).unwrap();
         fs::write(
             app_dir.join("config.yaml"),
-            "type: app\nimage: alpine\nport: 9090\nbuilds: []\nruntime:\n  cmd: ./run\n",
+            "type: app\nimage: alpine\nbuilds: []\nruntime:\n  port: 9090\n  cmd: ./run\n",
         )
         .unwrap();
 
@@ -329,5 +357,47 @@ mod tests {
             .resolve_export(&ctx, &UnitName::new("web").unwrap(), "export")
             .unwrap_err();
         assert!(matches!(err.kind, RefErrorKind::NotDeployed { name } if name == "web"));
+    }
+
+    #[test]
+    fn parse_static_app_without_runtime() {
+        // A build-and-export unit: no `runtime`, no `port`.
+        let config: UnitConfig = serde_yaml::from_str(
+            "type: app\nimage: alpine\nbuilds:\n  - files: [\"*\"]\n    script: npm run build\nexports:\n  - source: /app/dist\n    path: /\n",
+        )
+        .unwrap();
+
+        let UnitConfig::App(app) = config else {
+            panic!("expected app variant");
+        };
+        assert!(app.runtime.is_none());
+        assert!(app.unit_deps().is_empty());
+    }
+
+    #[test]
+    fn static_app_validate_references_ok() {
+        // No runtime env to resolve, no build refs → validation succeeds.
+        let ctx = MainContext::default();
+        static_config().validate_references(&ctx).unwrap();
+    }
+
+    #[test]
+    fn static_app_resolve_export_url_and_socket_error() {
+        use crate::error::RefErrorKind;
+
+        let ctx = MainContext::default();
+        let config = static_config();
+        let name = UnitName::new("web").unwrap();
+
+        // A static unit has no runtime, so the port-backed keys are unknown
+        // exports for it — only `export` is valid.
+        for key in ["url", "socket"] {
+            let err = config.resolve_export(&ctx, &name, key).unwrap_err();
+            assert!(
+                matches!(&err.kind, RefErrorKind::UnknownExport { key: k } if k == key),
+                "expected UnknownExport for {key}, got {:?}",
+                err.kind
+            );
+        }
     }
 }

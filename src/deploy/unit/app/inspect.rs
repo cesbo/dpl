@@ -12,6 +12,12 @@ impl AppUnit<'_> {
     /// Print the live container/runtime detail for the app.
     /// Called only when the unit has an active version.
     pub fn inspect(&self) -> Result<(), DeployError> {
+        // A static build-and-export unit never runs a container.
+        if self.config.runtime.is_none() {
+            println!("{} static export (no container)", success_mark());
+            return Ok(());
+        }
+
         let Some(c) = inspect_container(self.name) else {
             println!("{} container unavailable", error_mark());
             return Ok(());

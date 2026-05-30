@@ -16,7 +16,9 @@ COPY app/{{ file }} /app/{{ file }}
 RUN --mount=type=secret,id={{ name }} /bin/sh {{ path }}
 {% endif %}
 {% endfor -%}
+{% if port is not none %}
 # Runtime
 COPY artifacts/run.sh /opt/dpl/run.sh
 EXPOSE {{ port }}
 CMD ["/bin/sh", "/opt/dpl/run.sh"]
+{% endif %}

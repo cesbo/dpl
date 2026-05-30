@@ -323,7 +323,7 @@ routes:
         fs::create_dir_all(&nginx_dir).unwrap();
         fs::write(
             nginx_dir.join("config.yaml"),
-            "type: app\nimage: alpine\nport: 8080\nbuilds: []\nruntime:\n  cmd: ./run\n",
+            "type: app\nimage: alpine\nbuilds: []\nruntime:\n  port: 8080\n  cmd: ./run\n",
         )
         .unwrap();
 

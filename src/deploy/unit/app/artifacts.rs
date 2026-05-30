@@ -101,20 +101,8 @@ impl<'a> ArtifactsContext<'a> {
             CONTAINERFILE_TEMPLATE,
             context! {
                 image => self.config.image,
-                port => self.config.port,
+                port => self.config.runtime.as_ref().map(|r| r.port),
                 layers => &layers,
-            },
-        )?;
-
-        let path = artifacts_dir.join("run.sh");
-        write_artifact(
-            path,
-            RUN_SH_TEMPLATE,
-            context! {
-                env => self.config.runtime.env.resolve(self.ctx, "runtime.env")?,
-                init => &self.config.runtime.init,
-                cmd => &self.config.runtime.cmd,
-                timers => self.config.timers.iter().filter(|t| !t.disabled).collect::<Vec<_>>(),
             },
         )?;
 
@@ -134,6 +122,24 @@ impl<'a> ArtifactsContext<'a> {
                 },
             )?;
         }
+
+        // Service artifacts (run.sh, the systemd `.service`, and timers) only
+        // exist for units with a runtime.
+        let Some(runtime) = &self.config.runtime else {
+            return Ok(());
+        };
+
+        let path = artifacts_dir.join("run.sh");
+        write_artifact(
+            path,
+            RUN_SH_TEMPLATE,
+            context! {
+                env => runtime.env.resolve(self.ctx, "runtime.env")?,
+                init => &runtime.init,
+                cmd => &runtime.cmd,
+                timers => self.config.timers.iter().filter(|t| !t.disabled).collect::<Vec<_>>(),
+            },
+        )?;
 
         let dpl_bin = std::env::current_exe().map_err(ArtifactError::CurrentExe)?;
 
@@ -212,7 +218,6 @@ mod tests {
     fn render_templates() {
         let config = AppConfig {
             image: "ghcr.io/example/demo:latest".into(),
-            port: 8080,
             builds: vec![
                 // without files
                 BuildConfig {
@@ -245,11 +250,12 @@ mod tests {
                     script: Some("npm run build".to_owned()),
                 },
             ],
-            runtime: RuntimeConfig {
+            runtime: Some(RuntimeConfig {
+                port: 8080,
                 env: serde_yaml::from_str("PORT: 8080\nNODE_ENV: production\n").unwrap(),
                 init: Some("npm run static-generate\nnpm run migrate".to_owned()),
                 cmd: "demo-server".to_owned(),
-            },
+            }),
             volumes: Vec::new(),
             exports: Vec::new(),
             timers: vec![
@@ -309,7 +315,13 @@ mod tests {
         artifacts.save(&deploy_dir).unwrap();
 
         let artifacts_dir = deploy_dir.join("artifacts");
-        assert!(artifacts_dir.join("containerfile").exists());
+
+        let containerfile = fs::read_to_string(artifacts_dir.join("containerfile")).unwrap();
+        assert!(
+            containerfile.contains("EXPOSE 8080") && containerfile.contains("CMD"),
+            "runtime image must EXPOSE the port and set CMD:\n{containerfile}"
+        );
+
         assert!(artifacts_dir.join("run.sh").exists());
         assert!(artifacts_dir.join("build-1.sh").exists());
         assert!(artifacts_dir.join("build-2.sh").exists());
@@ -334,6 +346,78 @@ mod tests {
         assert!(
             service.contains("db wait cache-db"),
             "missing db wait for cache-db:\n{service}"
+        );
+    }
+
+    #[test]
+    fn render_templates_static() {
+        // A build-and-export unit: no runtime. Timers are configured but must
+        // be skipped (they exec into a container the unit never starts).
+        let config = AppConfig {
+            image: "alpine".into(),
+            builds: vec![BuildConfig {
+                description: None,
+                files: vec!["*".to_owned()],
+                env: EnvList::new(),
+                script: Some("npm run build".to_owned()),
+            }],
+            runtime: None,
+            volumes: Vec::new(),
+            exports: vec![ExportConfig {
+                description: None,
+                source: "/app/dist".to_owned(),
+                path: "/".to_owned(),
+            }],
+            timers: vec![TimerConfig {
+                name: "cleanup".into(),
+                description: None,
+                schedule: "hourly".into(),
+                script: "echo cleanup".into(),
+                disabled: false,
+            }],
+        };
+
+        let name = UnitName::new("site").unwrap();
+        let temp_dir = tempdir().unwrap();
+        let deploy_dir = temp_dir.path().join(name.as_str());
+        fs::create_dir_all(&deploy_dir).unwrap();
+
+        let ctx = MainContext {
+            base: temp_dir.path().to_path_buf(),
+            master_key: None,
+        };
+        let artifacts = ArtifactsContext {
+            ctx: &ctx,
+            name: &name,
+            config: &config,
+            version: 1,
+        };
+
+        artifacts.save(&deploy_dir).unwrap();
+
+        let artifacts_dir = deploy_dir.join("artifacts");
+        // The build still runs: containerfile + build scripts are rendered.
+        assert!(artifacts_dir.join("containerfile").exists());
+        assert!(artifacts_dir.join("build-1.sh").exists());
+        // No runtime → no entrypoint, service, or timer files.
+        assert!(!artifacts_dir.join("run.sh").exists());
+        assert!(!artifacts_dir.join("dpl--site.service").exists());
+        assert!(!artifacts_dir.join("dpl--site--cleanup.service").exists());
+        assert!(!artifacts_dir.join("dpl--site--cleanup.timer").exists());
+
+        // The image has no EXPOSE or CMD — it exists only to be exported from.
+        let containerfile = fs::read_to_string(artifacts_dir.join("containerfile")).unwrap();
+        assert!(
+            !containerfile.contains("EXPOSE"),
+            "static image must not EXPOSE a port:\n{containerfile}"
+        );
+        assert!(
+            !containerfile.contains("CMD"),
+            "static image must not set a CMD:\n{containerfile}"
+        );
+        assert!(
+            !containerfile.contains("run.sh"),
+            "static image must not copy run.sh:\n{containerfile}"
         );
     }
 }

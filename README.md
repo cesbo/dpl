@@ -46,7 +46,6 @@ Append `--help` to any command for the full flag list.
 ```yaml
 type: app
 image: node:22-alpine
-port: 3000
 
 builds:
   - files: ["package.json", "package-lock.json"]
@@ -58,6 +57,7 @@ builds:
     script: npm run build
 
 runtime:
+  port: 3000
   env:
     DB_URL: ${app-db:url}
     API_TOKEN: ${secret:api-token}
@@ -80,11 +80,35 @@ timers:
 
 - `builds` - ordered build layers. `files` lists archive paths copied into
   `/app` (`"*"` = all). `script` is optional
-- `runtime.init` - optional pre-start script
+- `runtime` - the long-running service: `port` (listened on, also used for the
+  readiness check and `${app:url}`/`${app:socket}` refs), `cmd`, optional
+  `init` pre-start script, and `env`
 - `volumes` - persistent storage (survives redeploys)
 - `exports` - copies files from the built image into the shared nginx web
   volume so domain units can serve them
 - `timers` - periodic in-container scripts
+
+### Static sites (no runtime)
+
+Omit `runtime` to make a build-and-export unit. It runs its `builds` inside a
+podman image and copies `exports` into the shared nginx web volume — there is
+no command, no port, no service, and no health check. Use it for static site
+generators (e.g. `npm run build`) whose output a `domain` unit then serves via
+`${<unit>:export}`. Without a runtime, `timers` are skipped and
+`${<unit>:url}`/`${<unit>:socket}` are unavailable (only `${<unit>:export}`).
+
+```yaml
+type: app
+image: node:22-alpine
+
+builds:
+  - files: ["*"]
+    script: npm ci && npm run build
+
+exports:
+  - source: /app/dist
+    path: /
+```
 
 ### Env templates
 

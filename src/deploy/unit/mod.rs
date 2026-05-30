@@ -240,7 +240,7 @@ secret: pg-pass
         fs::create_dir_all(&app_dir).unwrap();
         fs::write(
             app_dir.join("config.yaml"),
-            "type: app\nimage: alpine\nport: 8080\nbuilds: []\nruntime:\n  env:\n    OTHER: \"${nope:user}\"\n  cmd: ./run\n",
+            "type: app\nimage: alpine\nbuilds: []\nruntime:\n  port: 8080\n  env:\n    OTHER: \"${nope:user}\"\n  cmd: ./run\n",
         )
         .unwrap();
 
@@ -301,7 +301,7 @@ secret: pg-pass
         fs::create_dir_all(&app_dir).unwrap();
         fs::write(
             app_dir.join("config.yaml"),
-            "type: app\nimage: alpine\nport: 8080\nbuilds: []\nruntime:\n  env:\n    X: \"${db-test:password}\"\n  cmd: ./run\n",
+            "type: app\nimage: alpine\nbuilds: []\nruntime:\n  port: 8080\n  env:\n    X: \"${db-test:password}\"\n  cmd: ./run\n",
         )
         .unwrap();
 
@@ -376,7 +376,7 @@ secret: pg-pass
         fs::create_dir_all(&app_dir).unwrap();
         fs::write(
             app_dir.join("config.yaml"),
-            "type: app\nimage: alpine\nport: 8080\nbuilds: []\nruntime:\n  env:\n    DB: \"${db-test:url}\"\n  cmd: ./run\n",
+            "type: app\nimage: alpine\nbuilds: []\nruntime:\n  port: 8080\n  env:\n    DB: \"${db-test:url}\"\n  cmd: ./run\n",
         )
         .unwrap();
 
@@ -465,9 +465,9 @@ secret: pg-pass
             r#"
 type: app
 image: alpine
-port: 8080
 builds: []
 runtime:
+  port: 8080
   env:
     PLAIN: "hello"
     SECRET_KEY: "${secret:my-key}"
@@ -480,6 +480,8 @@ runtime:
         let UnitConfig::App(app) = config else {
             panic!("expected app variant");
         };
-        assert_eq!(app.runtime.cmd, "./run");
+        let runtime = app.runtime.expect("runtime present");
+        assert_eq!(runtime.cmd, "./run");
+        assert_eq!(runtime.port, 8080);
     }
 }

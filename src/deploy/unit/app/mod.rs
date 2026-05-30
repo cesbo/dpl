@@ -185,6 +185,12 @@ impl<'a> AppUnit<'a> {
                 .map_err(|e| DeployError::unit("export files", e))?;
         }
 
+        // A static build-and-export unit has no runtime: nothing to install.
+        // The build + export above is the whole deploy.
+        let Some(runtime) = &self.config.runtime else {
+            return Ok(());
+        };
+
         let systemd_ctx = SystemdContext::new(self.name);
 
         {
@@ -197,8 +203,7 @@ impl<'a> AppUnit<'a> {
         {
             let phase_name = "waiting for app".to_string();
             let _phase = log::phase(&phase_name);
-            health::check(self.name, self.config.port)
-                .map_err(|e| DeployError::unit(phase_name, e))?;
+            health::check(self.name, runtime.port).map_err(|e| DeployError::unit(phase_name, e))?;
 
             systemd_ctx
                 .set_restart_value("always")
@@ -268,9 +273,10 @@ mod tests {
             base: base.path().to_path_buf(),
             master_key: None,
         };
-        let config: AppConfig =
-            serde_yaml::from_str("image: alpine\nport: 8080\nbuilds: []\nruntime:\n  cmd: ./run\n")
-                .unwrap();
+        let config: AppConfig = serde_yaml::from_str(
+            "image: alpine\nbuilds: []\nruntime:\n  port: 8080\n  cmd: ./run\n",
+        )
+        .unwrap();
         let unit_name = UnitName::new("web").unwrap();
         let app = AppUnit::new(&ctx, &unit_name, config);
 
