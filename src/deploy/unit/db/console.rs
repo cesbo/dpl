@@ -4,7 +4,10 @@ use std::{
 };
 
 use super::model::DbServerEngine;
-use crate::config::UnitName;
+use crate::{
+    config::UnitName,
+    podman::podman_spawn_error,
+};
 
 impl DbServerEngine {
     /// Open an interactive SQL client against `db_name` as `user` inside the
@@ -25,7 +28,7 @@ impl DbServerEngine {
         cmd.args(["exec", "-it", "-e", password_env, &server]);
         cmd.args(self.console_args(user, db_name));
 
-        let status = cmd.status()?;
+        let status = cmd.status().map_err(podman_spawn_error)?;
         if status.success() {
             Ok(())
         } else {

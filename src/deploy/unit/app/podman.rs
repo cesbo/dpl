@@ -19,6 +19,7 @@ use crate::{
     podman::{
         NGINX_WWW_VOLUME,
         ensure_volume,
+        podman_spawn_error,
         run_podman,
         volume_mountpoint,
     },
@@ -82,7 +83,7 @@ impl<'a> PodmanContext<'a> {
 
         debug!("running: podman build --tag {}", &self.image_tag);
 
-        let mut child = cmd.spawn()?;
+        let mut child = cmd.spawn().map_err(podman_spawn_error)?;
 
         // Worker threads don't inherit the deploy's thread-default subscriber,
         // so capture it here and re-establish it inside each thread.

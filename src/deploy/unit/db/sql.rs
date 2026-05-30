@@ -20,7 +20,10 @@ use sea_query::{
 };
 
 use super::model::DbServerEngine;
-use crate::config::UnitName;
+use crate::{
+    config::UnitName,
+    podman::podman_spawn_error,
+};
 
 impl DbServerEngine {
     /// Returns `Ok` only when the container is up and the SQL server accepts
@@ -68,7 +71,8 @@ impl DbServerEngine {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .status()?;
+            .status()
+            .map_err(podman_spawn_error)?;
         if status.success() {
             Ok(())
         } else {
@@ -133,7 +137,8 @@ impl DbServerEngine {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()?;
+            .spawn()
+            .map_err(podman_spawn_error)?;
 
         {
             let stdin = child

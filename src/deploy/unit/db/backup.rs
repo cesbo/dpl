@@ -18,6 +18,7 @@ use super::model::DbServerEngine;
 use crate::{
     config::UnitName,
     log::child_output,
+    podman::podman_spawn_error,
 };
 
 impl DbServerEngine {
@@ -47,7 +48,8 @@ impl DbServerEngine {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()?;
+            .spawn()
+            .map_err(podman_spawn_error)?;
 
         let mut stdout = child
             .stdout
@@ -95,7 +97,8 @@ impl DbServerEngine {
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
-            .spawn()?;
+            .spawn()
+            .map_err(podman_spawn_error)?;
 
         let mut stdin = child
             .stdin

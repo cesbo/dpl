@@ -20,12 +20,21 @@ pub const NGINX_WWW_VOLUME: &str = "dpl-www";
 /// Mount base of [`NGINX_WWW_VOLUME`] inside the nginx container.
 pub const NGINX_WWW_MOUNT: &str = "/var/www";
 
+pub fn podman_spawn_error(err: io::Error) -> io::Error {
+    if err.kind() == io::ErrorKind::NotFound {
+        io::Error::new(io::ErrorKind::NotFound, "podman not found")
+    } else {
+        err
+    }
+}
+
 /// Run podman and capture its trimmed stdout.
 pub fn run_podman(args: &[&str]) -> io::Result<String> {
     let output = Command::new("podman")
         .args(args)
         .stderr(Stdio::null())
-        .output()?;
+        .output()
+        .map_err(podman_spawn_error)?;
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -92,6 +101,18 @@ pub fn inspect_container(name: &UnitName) -> Option<ContainerState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spawn_error_clarifies_missing_podman() {
+        let mapped = podman_spawn_error(io::Error::from(io::ErrorKind::NotFound));
+        assert_eq!(mapped.kind(), io::ErrorKind::NotFound);
+        assert!(mapped.to_string().contains("podman not found"), "{mapped}");
+
+        // Unrelated spawn failures pass through untouched.
+        let other = podman_spawn_error(io::Error::new(io::ErrorKind::PermissionDenied, "denied"));
+        assert_eq!(other.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(other.to_string(), "denied");
+    }
 
     #[test]
     fn parses_container_inspect_json() {
