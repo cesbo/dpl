@@ -86,6 +86,13 @@ pub fn error_mark() -> console::StyledObject<&'static str> {
     console::style("✗").red()
 }
 
+/// Print an aligned `Key:    value` line to stdout for `dpl inspect` reports.
+/// The key (plus its colon) is left-padded to a fixed column so values line up.
+pub fn print_field(key: &str, value: impl fmt::Display) {
+    let key = format!("{key}:");
+    println!("{key:<20} {value}")
+}
+
 /// Open and enter a deploy phase.
 /// Sets the spinner message and stamps
 /// The previous phase's `✓` line is echoed when the next phase opens.

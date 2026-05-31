@@ -3,23 +3,28 @@ use crate::{
     deploy::DeployError,
     log::{
         error_mark,
+        print_field,
         success_mark,
     },
     podman::inspect_container,
 };
 
 impl AppUnit<'_> {
-    /// Print the live container/runtime detail for the app.
-    /// Called only when the unit has an active version.
+    /// Print the live container/runtime detail for the app, in the same field
+    /// style as the general `dpl inspect` info. Called only when the unit has
+    /// an active version.
     pub fn inspect(&self) -> Result<(), DeployError> {
         // A static build-and-export unit never runs a container.
         if self.config.runtime.is_none() {
-            println!("{} static export (no container)", success_mark());
+            print_field(
+                "Container",
+                format!("{} static export (no container)", success_mark()),
+            );
             return Ok(());
         }
 
         let Some(c) = inspect_container(self.name) else {
-            println!("{} container unavailable", error_mark());
+            print_field("Container", format!("{} unavailable", error_mark()));
             return Ok(());
         };
 
@@ -28,16 +33,12 @@ impl AppUnit<'_> {
         } else {
             error_mark()
         };
-        println!("{mark} container {}", c.state.status);
-        println!("  {:<9} {}", "started", c.state.started_at);
-        println!("  {:<9} {}", "restarts", c.restart_count);
-        println!("  {:<9} {}", "image", c.image_name);
+        print_field("Container", format!("{mark} {}", c.state.status));
+        print_field("Started", &c.state.started_at);
+        print_field("Restarts", c.restart_count);
+        print_field("Image", &c.image_name);
         if c.state.exit_code != 0 {
-            println!(
-                "  {:<9} {}",
-                "exit code",
-                console::style(c.state.exit_code).red()
-            );
+            print_field("Exit code", console::style(c.state.exit_code).red());
         }
 
         Ok(())

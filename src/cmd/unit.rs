@@ -1,5 +1,4 @@
 use std::{
-    fmt,
     fs,
     io::{
         self,
@@ -38,7 +37,10 @@ use crate::{
             http_server::HttpServerUnit,
         },
     },
-    log::DeployLog,
+    log::{
+        DeployLog,
+        print_field,
+    },
 };
 
 pub fn check(ctx: &MainContext, name: &UnitName) -> Result<()> {
@@ -183,6 +185,7 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
 
     match unit {
         UnitConfig::App(app_config) => {
+            println!();
             AppUnit::new(ctx, name, app_config)
                 .inspect()
                 .with_context(|| format!("inspect unit '{name}'"))?;
@@ -211,11 +214,6 @@ fn print_failure(ctx: &MainContext, name: &UnitName, failure: &BuildFailure) {
         let build_log_path = ctx.build_log_path(name);
         print_field("Build log", build_log_path.display());
     }
-}
-
-fn print_field(key: &str, value: impl fmt::Display) {
-    let key = format!("{key}:");
-    println!("{key:<20} {value}")
 }
 
 /// How long ago `then` was relative to `now`: "just now", "2 min ago",
