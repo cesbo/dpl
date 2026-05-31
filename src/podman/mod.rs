@@ -20,6 +20,9 @@ pub const NGINX_WWW_VOLUME: &str = "dpl-www";
 /// Mount base of [`NGINX_WWW_VOLUME`] inside the nginx container.
 pub const NGINX_WWW_MOUNT: &str = "/var/www";
 
+/// Path to podman's lgo directory on the host.
+pub const PODMAN_LOG_DIR: &str = "/var/log/podman";
+
 pub fn podman_spawn_error(err: io::Error) -> io::Error {
     if err.kind() == io::ErrorKind::NotFound {
         io::Error::new(io::ErrorKind::NotFound, "podman not found")

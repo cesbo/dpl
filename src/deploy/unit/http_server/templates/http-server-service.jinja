@@ -9,7 +9,7 @@ NotifyAccess=all
 Delegate=yes
 KillMode=mixed
 TimeoutStopFailureMode=abort
-ExecStartPre=/bin/mkdir -p /var/log/podman
+ExecStartPre=/bin/mkdir -p {{ podman_log_dir }}
 ExecStartPre=/usr/bin/podman network create --ignore dpl
 ExecStartPre=-/usr/bin/rm -f %t/%N.cid
 ExecStart=/usr/bin/podman run \
@@ -25,7 +25,7 @@ ExecStart=/usr/bin/podman run \
 {% endif %}
   -v {{ www_volume }}:{{ www_mount }} \
   -v {{ conf_volume }}:/etc/nginx/conf.d \
-  --log-driver=k8s-file --log-opt=path=/var/log/podman/{{ container_name }}.log \
+  --log-driver=k8s-file --log-opt=path={{ podman_log_dir }}/{{ container_name }}.log \
   --log-opt=max-size=20mb \
   {{ image }}
 ExecReload=/usr/bin/podman exec {{ container_name }} nginx -s reload

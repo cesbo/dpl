@@ -68,6 +68,7 @@ pub fn create_service_file(
             conf_volume => conf_volume,
             www_volume => NGINX_WWW_VOLUME,
             www_mount => NGINX_WWW_MOUNT,
+            podman_log_dir => crate::podman::PODMAN_LOG_DIR,
         },
     )?;
 

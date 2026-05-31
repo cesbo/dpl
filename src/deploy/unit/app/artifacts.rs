@@ -157,6 +157,7 @@ impl<'a> ArtifactsContext<'a> {
                 version => self.version,
                 volumes => &self.config.volumes,
                 databases => self.config.database_deps(self.ctx)?,
+                podman_log_dir => crate::podman::PODMAN_LOG_DIR,
             },
         )?;
 

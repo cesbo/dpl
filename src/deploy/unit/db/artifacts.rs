@@ -59,6 +59,7 @@ pub fn create_service_file(
             data_path => engine.data_path(),
             env_var => engine.password_env(),
             password => escape_systemd_env_value(password),
+            podman_log_dir => crate::podman::PODMAN_LOG_DIR,
         },
     )?;
 

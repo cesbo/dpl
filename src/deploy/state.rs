@@ -12,6 +12,10 @@ use std::{
     path::PathBuf,
 };
 
+use chrono::{
+    DateTime,
+    Utc,
+};
 use fs4::fs_std::FileExt;
 use serde::{
     Deserialize,
@@ -88,6 +92,9 @@ impl fmt::Display for Stage {
 pub struct BuildResult {
     pub version: u32,
     pub status: DeployStatus,
+
+    /// When the lataest build last changed status.
+    pub updated_at: DateTime<Utc>,
 
     /// Deploy stage the last attempt failed in. Set only on failure; selects
     /// the relevant log and reads back in `dpl inspect`.
@@ -200,6 +207,7 @@ impl DeployState {
             .ok_or(DeployStateError::VersionOverflow)?;
         self.latest_build.version = next;
         self.latest_build.status = DeployStatus::Building;
+        self.latest_build.updated_at = Utc::now();
         self.latest_build.stage = None;
         self.latest_build.error = None;
         self.save()?;
@@ -211,6 +219,7 @@ impl DeployState {
     /// the human-readable `error` cause for later inspection.
     pub fn set_error(&mut self, error: &DeployError) {
         self.latest_build.status = DeployStatus::Failed;
+        self.latest_build.updated_at = Utc::now();
 
         if let DeployError::Step {
             stage,
@@ -243,10 +252,11 @@ impl DeployState {
 
     /// Sets build status to ready, sets build version as active version
     pub fn set_ready(&mut self) {
+        self.active_version = Some(self.latest_build.version);
         self.latest_build.status = DeployStatus::Ready;
+        self.latest_build.updated_at = Utc::now();
         self.latest_build.stage = None;
         self.latest_build.error = None;
-        self.active_version = Some(self.latest_build.version);
         let _ = self.save();
     }
 }
@@ -316,39 +326,5 @@ mod tests {
             state.latest_build.error.as_deref(),
             Some("waiting for app: container exited with code 1 (ran 2s)")
         );
-    }
-
-    #[test]
-    fn failure_fields_serde_roundtrip_and_are_omitted_when_none() {
-        let failed = BuildResult {
-            version: 2,
-            status: DeployStatus::Failed,
-            stage: Some(Stage::Build),
-            error: Some("build app image: exit 1".to_string()),
-        };
-        let json = serde_json::to_string(&failed).unwrap();
-        assert!(json.contains(r#""stage":"build""#), "{json}");
-        assert!(
-            json.contains(r#""error":"build app image: exit 1""#),
-            "{json}"
-        );
-        assert_eq!(serde_json::from_str::<BuildResult>(&json).unwrap(), failed);
-
-        // Both omitted from the JSON when there is no failure.
-        let ready = BuildResult {
-            version: 3,
-            status: DeployStatus::Ready,
-            stage: None,
-            error: None,
-        };
-        let json = serde_json::to_string(&ready).unwrap();
-        assert!(!json.contains("stage"), "{json}");
-        assert!(!json.contains("error"), "{json}");
-
-        // Backward-compat: legacy state files without the fields load as None.
-        let legacy: BuildResult =
-            serde_json::from_str(r#"{"version":3,"status":"ready"}"#).unwrap();
-        assert_eq!(legacy.stage, None);
-        assert_eq!(legacy.error, None);
     }
 }

@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     fs,
     io::{
         self,
@@ -12,11 +13,16 @@ use anyhow::{
     Result,
     bail,
 };
+use chrono::{
+    DateTime,
+    Utc,
+};
 
 use crate::{
     MainContext,
     config::UnitName,
     deploy::{
+        BuildResult,
         DeployError,
         DeployState,
         DeployStatus,
@@ -32,10 +38,7 @@ use crate::{
             http_server::HttpServerUnit,
         },
     },
-    log::{
-        DeployLog,
-        error_mark,
-    },
+    log::DeployLog,
 };
 
 pub fn check(ctx: &MainContext, name: &UnitName) -> Result<()> {
@@ -120,30 +123,48 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
     let unit = load_unit(ctx, name)?;
 
     let state = DeployState::load(ctx, name).with_context(|| format!("inspect unit '{name}'"))?;
-
-    println!("Unit:    {name} ({})", unit.kind());
-    match state.active_version {
-        Some(active) => println!("Active:  {}", console::style(active).green()),
-        None => println!("Active:  {}", console::style("none").red()),
-    }
-    println!();
-
     let build = &state.latest_build;
+    let now = Utc::now();
+
+    const ACTIVE_VERSION: &str = "Active version";
+    const LATEST_DEPLOY: &str = "Latest deploy";
+
+    print_field("Unit", unit.kind());
+    match state.active_version {
+        Some(active) => {
+            let deployed = if build.status == DeployStatus::Ready && build.version == active {
+                format!(" deployed {}", fmt_ago(now, build.updated_at))
+            } else {
+                String::new()
+            };
+            let info = format!("{}{}", console::style(active).green(), deployed);
+            print_field(ACTIVE_VERSION, info);
+        }
+        None => print_field(ACTIVE_VERSION, console::style("-").red()),
+    }
+
     match build.status {
-        // Nothing deployed (or a fresh unit with no `.state.json`); the build
-        // version is meaningless here, so don't print it.
         DeployStatus::Idle => {
-            println!("no deploys yet");
+            print_field(LATEST_DEPLOY, "No deploys yet");
             return Ok(());
         }
-        DeployStatus::Building => println!("build v{} in progress", build.version),
-        DeployStatus::Failed => print_failure(
-            ctx,
-            name,
-            build.version,
-            build.stage,
-            build.error.as_deref(),
-        ),
+        DeployStatus::Building => {
+            let info = format!(
+                "Version {} in progress · started {}",
+                build.version,
+                fmt_ago(now, build.updated_at)
+            );
+            print_field(LATEST_DEPLOY, info);
+        }
+        DeployStatus::Failed => {
+            let info = format!(
+                "Version {} build failed · {}",
+                build.version,
+                fmt_ago(now, build.updated_at)
+            );
+            print_field(LATEST_DEPLOY, info);
+            print_failure(ctx, name, build);
+        }
         DeployStatus::Ready => {}
     }
 
@@ -168,30 +189,43 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
 }
 
 /// Print the failure line for a `Failed` build and point at the relevant log.
-fn print_failure(
-    ctx: &MainContext,
-    name: &UnitName,
-    version: u32,
-    stage: Option<Stage>,
-    error: Option<&str>,
-) {
-    match stage {
-        Some(stage) => println!("{}  build v{version} failed ({stage})", error_mark()),
-        None => println!("{}  build v{version} failed", error_mark()),
-    }
-
-    if let Some(error) = error {
-        println!("   {error}");
+fn print_failure(ctx: &MainContext, name: &UnitName, build: &BuildResult) {
+    if let Some(error) = &build.error {
+        print_field("Error", error);
     }
 
     // A runtime failure (the health check) lives in the container's own log;
     // every earlier stage is in the build log.
-    if stage == Some(Stage::Runtime) {
-        let runtime_log = format!("/var/log/podman/{}.log", name.scoped_unit_name());
-        println!("   runtime log: {}", runtime_log);
+    println!();
+    if build.stage == Some(Stage::Runtime) {
+        let runtime_log_name = format!("{}.log", name.scoped_unit_name());
+        let runtime_log_path = Path::new(crate::podman::PODMAN_LOG_DIR).join(runtime_log_name);
+        print_field("Runtime log", runtime_log_path.display());
     } else {
-        let build_log = ctx.build_log_path(name);
-        println!("   build log: {}", build_log.display());
+        let build_log_path = ctx.build_log_path(name);
+        print_field("Build log", build_log_path.display());
+    }
+}
+
+fn print_field(key: &str, value: impl fmt::Display) {
+    let key = format!("{key}:");
+    println!("{key:<20} {value}")
+}
+
+/// How long ago `then` was relative to `now`: "just now", "2 min ago",
+/// "3 hours ago", "5 days ago".
+fn fmt_ago(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
+    let secs = (now - then).num_seconds();
+    if secs < 60 {
+        "just now".to_string()
+    } else if secs < 3600 {
+        format!("{} min ago", secs / 60)
+    } else if secs < 86_400 {
+        let h = secs / 3600;
+        format!("{h} hour{} ago", if h == 1 { "" } else { "s" })
+    } else {
+        let d = secs / 86_400;
+        format!("{d} day{} ago", if d == 1 { "" } else { "s" })
     }
 }
 
@@ -219,4 +253,27 @@ fn load_unit(ctx: &MainContext, name: &UnitName) -> Result<UnitConfig> {
         .with_context(|| format!("unit '{name}': broken reference chain"))?;
 
     Ok(unit)
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Duration;
+
+    use super::*;
+
+    #[test]
+    fn fmt_ago_buckets() {
+        let now = DateTime::parse_from_rfc3339("2026-05-31T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let ago = |secs: i64| fmt_ago(now, now - Duration::seconds(secs));
+
+        assert_eq!(ago(0), "just now");
+        assert_eq!(ago(30), "just now");
+        assert_eq!(ago(120), "2 min ago");
+        assert_eq!(ago(3600), "1 hour ago");
+        assert_eq!(ago(7200), "2 hours ago");
+        assert_eq!(ago(86_400), "1 day ago");
+        assert_eq!(ago(3 * 86_400), "3 days ago");
+    }
 }

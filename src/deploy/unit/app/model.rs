@@ -325,7 +325,7 @@ mod tests {
         fs::create_dir_all(&unit_dir).unwrap();
         fs::write(
             unit_dir.join(".state.json"),
-            r#"{"active_version":3,"latest_build":{"version":3,"status":"ready"}}"#,
+            r#"{"active_version":3,"latest_build":{"version":3,"status":"ready","updated_at":"2026-05-31T07:00:00.000000Z"}}"#,
         )
         .unwrap();
 
