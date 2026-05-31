@@ -7,8 +7,8 @@ use thiserror::Error;
 
 use crate::{
     config::{
-        UnitName,
         SecretName,
+        UnitName,
     },
     secret::{
         MasterKey,
@@ -18,6 +18,13 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum ContextError {
+    #[error("resolve base directory '{}'", path.display())]
+    Base {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
     #[error(transparent)]
     Secret(#[from] SecretError),
 }
@@ -39,15 +46,18 @@ impl Default for MainContext {
 
 impl MainContext {
     pub fn load(base: &Path) -> Result<Self, ContextError> {
-        let master_key = match MasterKey::load(base) {
+        let base = std::path::absolute(base).map_err(|source| ContextError::Base {
+            path: base.to_path_buf(),
+            source,
+        })?;
+
+        let master_key = match MasterKey::load(&base) {
             Ok(v) => Some(v),
             Err(SecretError::KeyNotFound) => None,
             Err(err) => return Err(err.into()),
         };
-        Ok(MainContext {
-            base: base.to_path_buf(),
-            master_key,
-        })
+
+        Ok(MainContext { base, master_key })
     }
 
     pub fn base(&self) -> &Path {
