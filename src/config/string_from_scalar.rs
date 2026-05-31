@@ -45,6 +45,18 @@ where
     deserializer.deserialize_any(ScalarVisitor)
 }
 
+/// Optional variant of [`deserialize_string_from_scalar`] for `Option<String>`
+/// fields. Pair it with `#[serde(default)]` so an absent key becomes `None`,
+/// while a present scalar (`version: 18`) is coerced to `Some(String)`.
+pub fn deserialize_optional_string_from_scalar<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_string_from_scalar(deserializer).map(Some)
+}
+
 #[cfg(test)]
 mod tests {
     use serde::Deserialize;

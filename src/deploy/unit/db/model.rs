@@ -11,9 +11,9 @@ use serde::{
 use crate::{
     MainContext,
     config::{
-        UnitName,
         SecretName,
-        deserialize_string_from_scalar,
+        UnitName,
+        deserialize_optional_string_from_scalar,
     },
     deploy::unit::UnitConfig,
     error::{
@@ -33,8 +33,16 @@ const USERINFO: &AsciiSet = &NON_ALPHANUMERIC
 #[serde(deny_unknown_fields)]
 pub struct DbServerConfig {
     pub engine: DbServerEngine,
-    #[serde(deserialize_with = "deserialize_string_from_scalar")]
-    pub version: String,
+
+    /// Image tag for the engine's default image. When unset, the engine's
+    /// `default_version()` is used. Ignored when `image` is set.
+    #[serde(default, deserialize_with = "deserialize_optional_string_from_scalar")]
+    pub version: Option<String>,
+
+    /// Override the container image.
+    #[serde(default)]
+    pub image: Option<String>,
+
     pub secret: SecretName,
 }
 
@@ -201,6 +209,21 @@ impl DbServerEngine {
 }
 
 impl DbServerConfig {
+    /// The container image to run: the explicit `image` override when set,
+    /// otherwise the engine's default image for `version` (or the engine's
+    /// `default_version()` when `version` is unset too).
+    pub fn image(&self) -> String {
+        if let Some(image) = &self.image {
+            return image.clone();
+        }
+
+        let version = self
+            .version
+            .as_deref()
+            .unwrap_or_else(|| self.engine.default_version());
+        self.engine.image(version)
+    }
+
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
         self.resolve_password(ctx)?;
         Ok(())
@@ -230,8 +253,53 @@ secret: pg-pass
         .unwrap();
 
         assert_eq!(config.engine, DbServerEngine::Postgresql);
-        assert_eq!(config.version, "18");
+        assert_eq!(config.version.as_deref(), Some("18"));
         assert_eq!(config.secret.as_str(), "pg-pass");
+        assert_eq!(config.image, None);
+        // Falls back to the engine's default image when no override is set.
+        assert_eq!(config.image(), "docker.io/library/postgres:18");
+    }
+
+    #[test]
+    fn version_defaults_when_omitted() {
+        let config: DbServerConfig = serde_yaml::from_str(
+            r#"
+engine: postgresql
+secret: pg-pass
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.version, None);
+        assert_eq!(config.image, None);
+        // No version and no image override: fall back to the engine default.
+        assert_eq!(
+            config.image(),
+            format!(
+                "docker.io/library/postgres:{}",
+                DbServerEngine::Postgresql.default_version()
+            )
+        );
+    }
+
+    #[test]
+    fn image_override_wins() {
+        let config: DbServerConfig = serde_yaml::from_str(
+            r#"
+engine: postgresql
+version: "18"
+secret: pg-pass
+image: ghcr.io/example/postgres:custom
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.image.as_deref(),
+            Some("ghcr.io/example/postgres:custom")
+        );
+        // The explicit override is used instead of engine.image(version).
+        assert_eq!(config.image(), "ghcr.io/example/postgres:custom");
     }
 
     #[test]

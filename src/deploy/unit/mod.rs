@@ -225,7 +225,7 @@ secret: pg-pass
         let UnitConfig::DbServer(db) = &config else {
             panic!("expected db-server variant");
         };
-        assert_eq!(db.version, "18");
+        assert_eq!(db.version.as_deref(), Some("18"));
         assert_eq!(db.secret.as_str(), "pg-pass");
     }
 

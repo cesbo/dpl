@@ -79,7 +79,7 @@ impl<'a> DbServerUnit<'a> {
             systemd_dir,
             self.name,
             self.config.engine,
-            &self.config.version,
+            &self.config.image(),
             &root_password,
         )
         .map_err(|e| DeployError::step_install("render db-server service", e))?;
