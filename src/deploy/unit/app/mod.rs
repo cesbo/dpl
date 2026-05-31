@@ -209,7 +209,7 @@ impl<'a> AppUnit<'a> {
             let _phase = log::phase(&phase_name);
             if let Err(err) = health::check(self.name, runtime.port) {
                 error!("{err}");
-                return Err(DeployError::step_runtime(phase_name, err));
+                return Err(DeployError::step_startup(phase_name, err));
             }
 
             systemd_ctx

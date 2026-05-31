@@ -73,7 +73,7 @@ pub enum Stage {
     /// restoring databases, writing rendered config into volumes.
     Install,
     /// Waiting for the deployed unit to become healthy (its port/ping check).
-    Runtime,
+    Startup,
 }
 
 impl fmt::Display for Stage {
@@ -82,7 +82,7 @@ impl fmt::Display for Stage {
             Stage::Prepare => "prepare",
             Stage::Build => "build",
             Stage::Install => "install",
-            Stage::Runtime => "runtime",
+            Stage::Startup => "startup",
         };
         f.write_str(name)
     }
@@ -315,14 +315,14 @@ mod tests {
     fn set_error_records_stage_and_detail() {
         let dir = tempfile::tempdir().unwrap();
         let mut state = state_at(dir.path());
-        let err = DeployError::step_runtime(
+        let err = DeployError::step_startup(
             "waiting for app",
             io::Error::other("container exited with code 1 (ran 2s)"),
         );
         state.set_error(&err);
         assert_eq!(state.latest_build.status, DeployStatus::Failed);
         let failure = state.latest_build.failure.as_ref().unwrap();
-        assert_eq!(failure.stage, Stage::Runtime);
+        assert_eq!(failure.stage, Stage::Startup);
         assert_eq!(
             failure.error,
             "waiting for app: container exited with code 1 (ran 2s)"

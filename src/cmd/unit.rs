@@ -157,9 +157,14 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
             print_field(LATEST_DEPLOY, info);
         }
         DeployStatus::Failed => {
+            let stage = match build.failure {
+                Some(BuildFailure { stage, .. }) => format!(" during {}", stage),
+                None => String::new(),
+            };
             let info = format!(
-                "Version {} build failed · {}",
+                "Version {} build failed{} · {}",
                 build.version,
+                stage,
                 fmt_ago(now, build.updated_at)
             );
             print_field(LATEST_DEPLOY, info);
@@ -198,7 +203,7 @@ fn print_failure(ctx: &MainContext, name: &UnitName, failure: &BuildFailure) {
     // A runtime failure (the health check) lives in the container's own log;
     // every earlier stage is in the build log.
     println!();
-    if failure.stage == Stage::Runtime {
+    if failure.stage == Stage::Startup {
         let runtime_log_name = format!("{}.log", name.scoped_unit_name());
         let runtime_log_path = Path::new(crate::podman::PODMAN_LOG_DIR).join(runtime_log_name);
         print_field("Runtime log", runtime_log_path.display());

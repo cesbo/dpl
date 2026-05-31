@@ -55,12 +55,12 @@ impl DeployError {
         }
     }
 
-    pub fn step_runtime(
+    pub fn step_startup(
         info: impl Into<String>,
         source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
     ) -> Self {
         DeployError::Step {
-            stage: Stage::Runtime,
+            stage: Stage::Startup,
             info: info.into(),
             source: source.into(),
         }

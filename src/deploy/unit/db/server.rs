@@ -113,7 +113,7 @@ impl<'a> DbServerUnit<'a> {
                 return Ok(());
             }
             if Instant::now() >= deadline {
-                return Err(DeployError::step_runtime(
+                return Err(DeployError::step_startup(
                     format!("waiting for db-server '{}'", self.name),
                     std::io::Error::other("timeout"),
                 ));
