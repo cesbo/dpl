@@ -9,7 +9,7 @@ pub mod unit;
 use env::EnvList;
 pub use error::DeployError;
 pub use state::{
-    BuildResult,
+    BuildFailure,
     DeployState,
     DeployStatus,
     Stage,

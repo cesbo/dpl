@@ -88,23 +88,24 @@ impl fmt::Display for Stage {
     }
 }
 
+/// Where and why the latest build failed.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct BuildFailure {
+    /// Deploy stage the attempt failed in.
+    pub stage: Stage,
+
+    /// Human-readable cause (the failing step plus its source chain).
+    pub error: String,
+}
+
 #[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BuildResult {
     pub version: u32,
     pub status: DeployStatus,
-
-    /// When the lataest build last changed status.
     pub updated_at: DateTime<Utc>,
 
-    /// Deploy stage the last attempt failed in. Set only on failure; selects
-    /// the relevant log and reads back in `dpl inspect`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stage: Option<Stage>,
-
-    /// Human-readable cause of the last failure (the failing step plus its
-    /// source chain). Set only on failure.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+    pub failure: Option<BuildFailure>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -208,8 +209,7 @@ impl DeployState {
         self.latest_build.version = next;
         self.latest_build.status = DeployStatus::Building;
         self.latest_build.updated_at = Utc::now();
-        self.latest_build.stage = None;
-        self.latest_build.error = None;
+        self.latest_build.failure = None;
         self.save()?;
 
         Ok(next)
@@ -240,11 +240,12 @@ impl DeployState {
             }
             let message = messages.join(": ");
 
-            self.latest_build.stage = Some(*stage);
-            self.latest_build.error = Some(message);
+            self.latest_build.failure = Some(BuildFailure {
+                stage: *stage,
+                error: message,
+            });
         } else {
-            self.latest_build.stage = None;
-            self.latest_build.error = None;
+            self.latest_build.failure = None;
         }
 
         let _ = self.save();
@@ -255,8 +256,7 @@ impl DeployState {
         self.active_version = Some(self.latest_build.version);
         self.latest_build.status = DeployStatus::Ready;
         self.latest_build.updated_at = Utc::now();
-        self.latest_build.stage = None;
-        self.latest_build.error = None;
+        self.latest_build.failure = None;
         let _ = self.save();
     }
 }
@@ -321,10 +321,11 @@ mod tests {
         );
         state.set_error(&err);
         assert_eq!(state.latest_build.status, DeployStatus::Failed);
-        assert_eq!(state.latest_build.stage, Some(Stage::Runtime));
+        let failure = state.latest_build.failure.as_ref().unwrap();
+        assert_eq!(failure.stage, Stage::Runtime);
         assert_eq!(
-            state.latest_build.error.as_deref(),
-            Some("waiting for app: container exited with code 1 (ran 2s)")
+            failure.error,
+            "waiting for app: container exited with code 1 (ran 2s)"
         );
     }
 }

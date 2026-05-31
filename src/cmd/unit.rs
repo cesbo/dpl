@@ -22,7 +22,7 @@ use crate::{
     MainContext,
     config::UnitName,
     deploy::{
-        BuildResult,
+        BuildFailure,
         DeployError,
         DeployState,
         DeployStatus,
@@ -163,7 +163,10 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
                 fmt_ago(now, build.updated_at)
             );
             print_field(LATEST_DEPLOY, info);
-            print_failure(ctx, name, build);
+
+            if let Some(failure) = &build.failure {
+                print_failure(ctx, name, failure);
+            }
         }
         DeployStatus::Ready => {}
     }
@@ -189,15 +192,13 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
 }
 
 /// Print the failure line for a `Failed` build and point at the relevant log.
-fn print_failure(ctx: &MainContext, name: &UnitName, build: &BuildResult) {
-    if let Some(error) = &build.error {
-        print_field("Error", error);
-    }
+fn print_failure(ctx: &MainContext, name: &UnitName, failure: &BuildFailure) {
+    print_field("Error", &failure.error);
 
     // A runtime failure (the health check) lives in the container's own log;
     // every earlier stage is in the build log.
     println!();
-    if build.stage == Some(Stage::Runtime) {
+    if failure.stage == Stage::Runtime {
         let runtime_log_name = format!("{}.log", name.scoped_unit_name());
         let runtime_log_path = Path::new(crate::podman::PODMAN_LOG_DIR).join(runtime_log_name);
         print_field("Runtime log", runtime_log_path.display());
