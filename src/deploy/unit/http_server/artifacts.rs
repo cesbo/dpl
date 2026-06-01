@@ -50,9 +50,6 @@ pub fn create_service_file(
 ) -> Result<String, ArtifactError> {
     let container_name = unit.name.scoped_unit_name();
 
-    // The service only delegates to `dpl start`/`dpl stop` (plus the nginx
-    // `ExecReload` hook); ports, volumes, and the image are resolved at runtime
-    // by `dpl start`.
     let dpl_bin = std::env::current_exe().map_err(ArtifactError::CurrentExe)?;
 
     let content = render_template(
@@ -62,7 +59,6 @@ pub fn create_service_file(
             dpl_bin => dpl_bin.to_string_lossy(),
             dpl_base => unit.ctx.base().to_string_lossy(),
             name => unit.name.as_str(),
-            container_name => container_name,
         },
     )?;
 
@@ -120,13 +116,13 @@ mod tests {
         assert_eq!(file_name, "dpl--web.service");
 
         let body = fs::read_to_string(systemd_dir.join(&file_name)).unwrap();
-        // The service only delegates; ports, volumes, and the image (including
-        // the https toggle) are resolved at runtime by `dpl start`.
-        assert!(body.contains("start web"), "missing start delegation:\n{body}");
-        assert!(body.contains("stop web"), "missing stop delegation:\n{body}");
         assert!(
-            body.contains("ExecReload=/usr/bin/podman exec dpl--web nginx -s reload"),
-            "nginx reload hook must be kept:\n{body}"
+            body.contains("start web"),
+            "missing start delegation:\n{body}"
+        );
+        assert!(
+            body.contains("stop web"),
+            "missing stop delegation:\n{body}"
         );
         assert!(
             !body.contains("podman run") && !body.contains("-p 80:80"),

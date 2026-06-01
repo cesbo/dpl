@@ -124,6 +124,13 @@ pub fn inspect_container(name: &UnitName, sized: bool) -> Option<ContainerState>
     serde_json::from_str(&out).ok()
 }
 
+/// Returns `true` if the unit's container is currently running.
+pub fn is_running(name: &UnitName) -> bool {
+    inspect_container(name, false)
+        .map(|c| c.state.status == "running")
+        .unwrap_or(false)
+}
+
 /// Live resource usage from `podman stats --no-stream`. The fields are
 /// podman's own pre-formatted strings (e.g. `"0.50%"`, `"12.3MB / 4.0GB"`),
 /// surfaced verbatim.

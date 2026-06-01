@@ -10,7 +10,6 @@ Delegate=yes
 KillMode=mixed
 TimeoutStopFailureMode=abort
 ExecStart={{ dpl_bin }} --base {{ dpl_base }} start {{ name }}
-ExecReload=/usr/bin/podman exec {{ container_name }} nginx -s reload
 ExecStop={{ dpl_bin }} --base {{ dpl_base }} stop {{ name }}
 Restart=always
 RestartSec=2

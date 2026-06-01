@@ -24,10 +24,6 @@ pub fn reload() -> io::Result<()> {
     run_systemctl(&["-q", "daemon-reload"])
 }
 
-pub fn reload_service(name: &str) -> io::Result<()> {
-    run_systemctl(&["-q", "reload", name])
-}
-
 pub fn restart_service(name: &str) -> io::Result<()> {
     run_systemctl(&["-q", "restart", name])
 }

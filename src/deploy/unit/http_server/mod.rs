@@ -53,13 +53,14 @@ impl<'a> HttpServerUnit<'a> {
     ///   - otherwise run a full deploy under the unit's own DeployState lock,
     ///     so a dependent unit (e.g. a domain) can trigger the chain.
     pub fn reload_or_deploy(self) -> Result<(), DeployError> {
-        let service_name = format!("{}.service", self.name.scoped_unit_name());
-
-        if systemd::is_active(&service_name) {
+        if crate::podman::is_running(self.name) {
             let _phase = log::phase(format!("reloading http-server '{}'", self.name));
-            return systemd::reload_service(&service_name).map_err(|e| {
-                DeployError::step_install(format!("reload service '{service_name}'"), e)
-            });
+            let container = self.name.scoped_unit_name();
+            crate::podman::run_podman(&["exec", &container, "nginx", "-s", "reload"]).map_err(
+                |e| DeployError::step_install(format!("reload http-server '{}'", self.name), e),
+            )?;
+
+            return Ok(());
         }
 
         let (_guard, mut state) = DeployState::acquire(self.ctx, self.name).map_err(|e| {
