@@ -10,6 +10,7 @@ use std::{
         Read,
     },
     path::Path,
+    time::Duration,
 };
 
 use podman::PodmanContext;
@@ -40,6 +41,9 @@ use crate::{
     log,
 };
 
+/// How long `dpl start` waits for each database dependency before giving up.
+const DB_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
+
 #[derive(Debug)]
 pub struct AppUnit<'a> {
     pub ctx: &'a MainContext,
@@ -52,7 +56,7 @@ impl<'a> AppUnit<'a> {
         Self { ctx, name, config }
     }
 
-    fn prepare<R: Read>(&self, version: u32, archive: R) -> Result<TempDir, DeployError> {
+    fn prepare<R: Read>(&self, archive: R) -> Result<TempDir, DeployError> {
         let _phase = log::phase("preparing");
 
         let temp_dir = tempfile::tempdir_in(self.ctx.unit_dir(self.name))
@@ -68,7 +72,6 @@ impl<'a> AppUnit<'a> {
             ctx: self.ctx,
             name: self.name,
             config: &self.config,
-            version,
         };
 
         artifacts
@@ -86,7 +89,7 @@ impl<'a> AppUnit<'a> {
         version: u32,
         archive: R,
     ) -> Result<(), DeployError> {
-        let temp_dir = self.prepare(version, archive)?;
+        let temp_dir = self.prepare(archive)?;
         self.deploy_worker(version, temp_dir.path(), state)?;
 
         state.set_ready();
@@ -244,6 +247,69 @@ impl<'a> AppUnit<'a> {
         crate::podman::inspect::print_container_state(self.name);
 
         Ok(())
+    }
+
+    /// Run the app container in the foreground.
+    pub fn start(&self) -> Result<(), DeployError> {
+        if self.config.runtime.is_none() {
+            return Err(DeployError::step_start(
+                format!("app '{}' is a static unit with no container", self.name),
+                io::Error::other("nothing to start"),
+            ));
+        }
+
+        let version = {
+            let state = DeployState::load(self.ctx, self.name).map_err(|e| {
+                DeployError::step_start(format!("load state for '{}'", self.name), e)
+            })?;
+            state.active_version.unwrap_or(state.latest_build.version)
+        };
+
+        if version == 0 {
+            return Err(DeployError::step_start(
+                format!("app '{}' has not been deployed", self.name),
+                io::Error::other("no deployed version"),
+            ));
+        }
+
+        let container = self.name.scoped_unit_name();
+        let mut cmd = crate::podman::PodmanRun::new(&container).map_err(|e| {
+            DeployError::step_start(format!("prepare podman to run '{}'", self.name), e)
+        })?;
+
+        let databases = self
+            .config
+            .database_deps(self.ctx)
+            .map_err(|e| DeployError::step_start("resolve database dependencies", e))?;
+
+        for db in databases {
+            crate::deploy::unit::db::wait_until_ready(self.ctx, &db, DB_WAIT_TIMEOUT)
+                .map_err(|e| DeployError::step_start(format!("wait for database '{db}'"), e))?;
+        }
+
+        for volume in &self.config.volumes {
+            cmd.volume(&volume.source, &volume.path);
+        }
+
+        // `exec_run` only returns when the exec itself fails.
+        let err = cmd.exec(format!("localhost/{}:{}", self.name, version));
+        Err(DeployError::step_start("exec podman run", err))
+    }
+
+    /// Stop and remove the app container.
+    pub fn stop(&self) -> Result<(), DeployError> {
+        if self.config.runtime.is_none() {
+            return Err(DeployError::step_stop(
+                format!(
+                    "app '{}' is a static export unit with no container",
+                    self.name
+                ),
+                io::Error::other("nothing to stop"),
+            ));
+        }
+
+        crate::podman::stop_and_remove(self.name)
+            .map_err(|e| DeployError::step_stop(format!("stop container '{}'", self.name), e))
     }
 }
 

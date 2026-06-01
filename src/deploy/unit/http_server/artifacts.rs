@@ -10,15 +10,9 @@ use minijinja::{
 };
 
 use super::HttpServerUnit;
-use crate::{
-    deploy::artifacts::{
-        ArtifactError,
-        render_template,
-    },
-    podman::{
-        NGINX_WWW_MOUNT,
-        NGINX_WWW_VOLUME,
-    },
+use crate::deploy::artifacts::{
+    ArtifactError,
+    render_template,
 };
 
 const SERVICE_TEMPLATE: &str = "http-server-service";
@@ -55,20 +49,20 @@ pub fn create_service_file(
     unit: &HttpServerUnit,
 ) -> Result<String, ArtifactError> {
     let container_name = unit.name.scoped_unit_name();
-    let conf_volume = unit.conf_volume();
+
+    // The service only delegates to `dpl start`/`dpl stop` (plus the nginx
+    // `ExecReload` hook); ports, volumes, and the image are resolved at runtime
+    // by `dpl start`.
+    let dpl_bin = std::env::current_exe().map_err(ArtifactError::CurrentExe)?;
 
     let content = render_template(
         &TEMPLATES,
         SERVICE_TEMPLATE,
         context! {
+            dpl_bin => dpl_bin.to_string_lossy(),
+            dpl_base => unit.ctx.base().to_string_lossy(),
             name => unit.name.as_str(),
             container_name => container_name,
-            image => &unit.config.image,
-            https => unit.config.https,
-            conf_volume => conf_volume,
-            www_volume => NGINX_WWW_VOLUME,
-            www_mount => NGINX_WWW_MOUNT,
-            podman_log_dir => crate::podman::PODMAN_LOG_DIR,
         },
     )?;
 
@@ -108,7 +102,7 @@ mod tests {
     }
 
     #[test]
-    fn render_service_https_off() {
+    fn render_service_delegates() {
         let temp_dir = tempdir().unwrap();
         let systemd_dir = temp_dir.path();
         let name = UnitName::new("web").unwrap();
@@ -126,37 +120,18 @@ mod tests {
         assert_eq!(file_name, "dpl--web.service");
 
         let body = fs::read_to_string(systemd_dir.join(&file_name)).unwrap();
-        assert!(body.contains("--name dpl--web"));
-        assert!(body.contains("-p 80:80"));
-        assert!(!body.contains("443:443"));
-        assert!(body.contains("-v dpl--web-conf:/etc/nginx/conf.d"));
-        assert!(body.contains("-v dpl-www:/var/www"));
-        assert!(body.contains("docker.io/library/nginx:stable"));
-        assert!(body.contains("ExecReload=/usr/bin/podman exec dpl--web nginx -s reload"));
-        assert!(body.contains("/var/log/podman/dpl--web.log"));
-        assert!(body.contains("--log-opt=max-size=20mb"));
-        assert!(body.contains("Description=DPL HTTP server for web"));
-    }
-
-    #[test]
-    fn render_service_https_on() {
-        let temp_dir = tempdir().unwrap();
-        let systemd_dir = temp_dir.path();
-        let name = UnitName::new("web").unwrap();
-        let ctx = MainContext::default();
-        let unit = HttpServerUnit::new(
-            &ctx,
-            &name,
-            HttpServerConfig {
-                image: "registry.example/custom-nginx:1.27".into(),
-                https: true,
-            },
+        // The service only delegates; ports, volumes, and the image (including
+        // the https toggle) are resolved at runtime by `dpl start`.
+        assert!(body.contains("start web"), "missing start delegation:\n{body}");
+        assert!(body.contains("stop web"), "missing stop delegation:\n{body}");
+        assert!(
+            body.contains("ExecReload=/usr/bin/podman exec dpl--web nginx -s reload"),
+            "nginx reload hook must be kept:\n{body}"
         );
-
-        let file_name = create_service_file(systemd_dir, &unit).unwrap();
-        let body = fs::read_to_string(systemd_dir.join(&file_name)).unwrap();
-        assert!(body.contains("-p 80:80"));
-        assert!(body.contains("-p 443:443"));
-        assert!(body.contains("registry.example/custom-nginx:1.27"));
+        assert!(
+            !body.contains("podman run") && !body.contains("-p 80:80"),
+            "service must not embed container logic:\n{body}"
+        );
+        assert!(body.contains("Description=DPL HTTP server for web"));
     }
 }

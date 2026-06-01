@@ -60,6 +60,16 @@ enum Command {
         /// Unit name
         name: config::UnitName,
     },
+    /// Start a unit's container (the systemd service's ExecStart)
+    Start {
+        /// Unit name
+        name: config::UnitName,
+    },
+    /// Stop a unit's container (the systemd service's ExecStop)
+    Stop {
+        /// Unit name
+        name: config::UnitName,
+    },
     /// Manage encrypted runtime secrets
     Secret(cmd::secret::Args),
 }
@@ -93,6 +103,8 @@ fn run() -> Result<()> {
         Command::Db(args) => cmd::db::run(&ctx, args),
         Command::Deploy { name, path } => cmd::unit::deploy(&ctx, &name, path.as_deref()),
         Command::Inspect { name } => cmd::unit::inspect(&ctx, &name),
+        Command::Start { name } => cmd::unit::start(&ctx, &name),
+        Command::Stop { name } => cmd::unit::stop(&ctx, &name),
         Command::Secret(args) => cmd::secret::run(&ctx, args),
     }
 }

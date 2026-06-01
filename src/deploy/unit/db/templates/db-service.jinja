@@ -9,24 +9,8 @@ NotifyAccess=all
 Delegate=yes
 KillMode=mixed
 TimeoutStopFailureMode=abort
-Environment="{{ env_var }}={{ password }}"
-ExecStartPre=/bin/mkdir -p {{ podman_log_dir }}
-ExecStartPre=/usr/bin/podman network create --ignore dpl
-ExecStartPre=-/usr/bin/rm -f %t/%N.cid
-ExecStart=/usr/bin/podman run \
-  --name {{ container_name }} \
-  --cidfile=%t/%N.cid \
-  --replace --rm \
-  --cgroups=split \
-  --sdnotify=conmon \
-  -e {{ env_var }} \
-  --network=dpl \
-  -v {{ container_name }}-data:{{ data_path }} \
-  --log-driver=k8s-file --log-opt=path={{ podman_log_dir }}/{{ container_name }}.log \
-  {{ image }}
-ExecStop=/usr/bin/podman stop --cidfile=%t/%N.cid --ignore
-ExecStopPost=-/usr/bin/podman rm -v -f --cidfile=%t/%N.cid --ignore
-ExecStopPost=-/usr/bin/rm -f %t/%N.cid
+ExecStart={{ dpl_bin }} --base {{ dpl_base }} start {{ name }}
+ExecStop={{ dpl_bin }} --base {{ dpl_base }} stop {{ name }}
 Restart=always
 RestartSec=2
 TimeoutStartSec=120

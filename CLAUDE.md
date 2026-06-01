@@ -23,8 +23,12 @@ cargo run -- --base /path/to/base <command> ...
 ### Separation of Concerns
 
 - **`cmd/`** (`cmd/unit.rs`, `cmd/db.rs`, `cmd/secret.rs`) - clap subcommand
-  surface (top-level `deploy`/`check`/`inspect` live in `cmd/unit.rs`). Parses
-  flags, prompts for missing input, calls into the unit/secret layer.
+  surface (top-level `deploy`/`check`/`inspect`/`start`/`stop` live in
+  `cmd/unit.rs`). Parses flags, prompts for missing input, calls into the
+  unit/secret layer. `start`/`stop` are the container-lifecycle commands the
+  generated systemd service invokes via `ExecStart`/`ExecStop`; they route
+  through per-unit `start()`/`stop()` methods (which build the `podman run`
+  argv and `exec` it, so the service file carries no podman logic).
 - **Unit implementations** (`deploy/unit/app/`, `deploy/unit/db/`,
   `deploy/unit/domain/`) - "what does a deploy / install of this kind actually
   do". All build, render, and systemd logic lives here. For db units,
@@ -72,12 +76,18 @@ Keep this split when adding functionality.
 - Unit types implemented: `app`, `db-server`, `db`, `domain`.
 - Auth is out of scope - `dpl` runs locally (typically as root). Sensitive
   values live in `{base}/.secrets/` encrypted with an AES-256-GCM master key.
-- Entry points are CLI subcommands (`dpl deploy`, `dpl db ...`,
-  `dpl secret ...`). No HTTP surface.
+- Entry points are CLI subcommands (`dpl deploy`, `dpl start`, `dpl stop`,
+  `dpl db ...`, `dpl secret ...`). No HTTP surface.
 - `dpl deploy` installs and starts the generated systemd unit for app
   and db-server units, and creates the database (via `podman exec` against
   the running server) for db units. Other unit types render artifacts but
   don't yet install services.
+- The systemd service is a thin supervisor: its `ExecStart`/`ExecStop` only
+  call `dpl start <name>` / `dpl stop <name>`. Those commands own the
+  container lifecycle (log dir + `dpl` network setup, db-dependency wait
+  gates, the `podman run` argv which `dpl start` `exec`s to stay the
+  `MAINPID` for `Type=notify`, and `podman stop`/`rm`). No `ExecStartPre`,
+  inline `podman run`, or secret `Environment=` lives in the unit file.
 - `dpl db backup [path]` streams SQL via `podman exec` as the `db` unit's
   login user (`deploy/unit/db/backup.rs`). `path` defaults to `-` (stdout); a
   `.gz` destination or `-z` gzips the output.
@@ -91,6 +101,11 @@ Keep this split when adding functionality.
 ## Coding Style
 
 - Use `thiserror` for error types; include file paths in error context where applicable.
+- `anyhow` is confined to the console layer (`src/cmd/*`). Everywhere else
+  (`deploy/`, `podman/`, `config/`, `secret/`, …) functions return typed errors
+  (`thiserror` enums or `io::Result`); map foreign errors with
+  `.map_err(io::Error::other)` rather than reaching for `anyhow`. `src/cmd`
+  lifts those into `anyhow::Result` with `.with_context(...)` at the CLI edge.
 - Prefer `tracing` macros (`info!`, `error!`, `debug!`) over `println!`.
 - Keep modules focused: one concern per file.
 - Function argument order: context/destination (`&Path`, config refs) → subject/data → mutable/owned state → options/callbacks.

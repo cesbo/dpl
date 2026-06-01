@@ -1,5 +1,3 @@
-{% set image_name = "localhost/" ~ name ~ ":" ~ version -%}
-
 [Unit]
 Description=DPL Service for {{ name }}
 After=network-online.target
@@ -11,27 +9,8 @@ NotifyAccess=all
 Delegate=yes
 KillMode=mixed
 TimeoutStopFailureMode=abort
-ExecStartPre=/bin/mkdir -p {{ podman_log_dir }}
-ExecStartPre=/usr/bin/podman network create --ignore dpl
-ExecStartPre=-/usr/bin/rm -f %t/%N.cid
-{% for database in databases %}
-ExecStartPre={{ dpl_bin }} --base {{ dpl_base }} db wait {{ database }}
-{% endfor %}
-ExecStart=/usr/bin/podman run \
-  --name {{ container_name }} \
-  --cidfile=%t/%N.cid \
-  --replace --rm \
-  --cgroups=split \
-  --sdnotify=conmon \
-  --network=dpl \
-{% for volume in volumes %}
-  -v {{ volume.source }}:{{ volume.path }} \
-{% endfor %}
-  --log-driver=k8s-file --log-opt=path={{ podman_log_dir }}/{{ container_name }}.log \
-  {{ image_name }}
-ExecStop=/usr/bin/podman stop --cidfile=%t/%N.cid --ignore
-ExecStopPost=-/usr/bin/podman rm -v -f -i --cidfile=%t/%N.cid --ignore
-ExecStopPost=-/usr/bin/rm -f %t/%N.cid
+ExecStart={{ dpl_bin }} --base {{ dpl_base }} start {{ name }}
+ExecStop={{ dpl_bin }} --base {{ dpl_base }} stop {{ name }}
 Restart=no {#- will be changed to "always" after health check #}
 RestartSec=2
 

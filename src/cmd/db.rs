@@ -8,18 +8,13 @@ use std::{
         BufWriter,
         Write,
     },
-    thread::sleep,
-    time::{
-        Duration,
-        Instant,
-    },
+    time::Duration,
 };
 
 use anyhow::{
     Context,
     Result,
     bail,
-    ensure,
 };
 use chrono::Utc;
 use clap::Subcommand;
@@ -41,6 +36,7 @@ use crate::{
         unit::db::{
             DbConfig,
             DbServerConfig,
+            wait_until_ready,
         },
     },
     log::success_mark,
@@ -98,31 +94,8 @@ pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
 }
 
 fn wait(ctx: &MainContext, name: &UnitName, timeout_secs: u64) -> Result<()> {
-    let db_config = load_db(ctx, name)?;
-    let server_config = load_db_server(ctx, &db_config.server)?;
-
-    let root_password = ctx.resolve_secret(&server_config.secret)?;
-
-    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
-    let interval = Duration::from_millis(800);
-
-    loop {
-        let result =
-            server_config
-                .engine
-                .ping(&db_config.server, &root_password, Some(name.as_str()));
-
-        if result.is_ok() {
-            return Ok(());
-        }
-
-        ensure!(
-            Instant::now() < deadline,
-            "timeout waiting for database '{name}'"
-        );
-
-        sleep(interval);
-    }
+    wait_until_ready(ctx, name, Duration::from_secs(timeout_secs))
+        .with_context(|| format!("wait for database '{name}'"))
 }
 
 fn console(ctx: &MainContext, name: &UnitName, root: bool) -> Result<()> {

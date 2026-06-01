@@ -2,8 +2,13 @@ pub mod health;
 pub mod inspect;
 
 use std::{
+    ffi::OsStr,
     io,
-    path::PathBuf,
+    os::unix::process::CommandExt,
+    path::{
+        Path,
+        PathBuf,
+    },
     process::{
         Command,
         Stdio,
@@ -13,6 +18,9 @@ use std::{
 use serde::Deserialize;
 
 use crate::config::UnitName;
+
+/// The shared podman network every dpl container joins.
+pub const NETWORK: &str = "dpl";
 
 /// Podman volume for app static exports; mounts to [`NGINX_WWW_MOUNT`] in the
 /// nginx container. Holds `<name>_<version>/…` directories at its root.
@@ -47,6 +55,82 @@ pub fn run_podman(args: &[&str]) -> io::Result<String> {
             "podman exited with {}",
             output.status
         )))
+    }
+}
+
+/// Stop and remove a unit's container. Idempotent: `--ignore` makes a missing
+/// container a no-op. This is the body of `dpl stop`.
+pub fn stop_and_remove(name: &UnitName) -> io::Result<()> {
+    let container = name.scoped_unit_name();
+    run_podman(&["stop", "--ignore", &container])?;
+    run_podman(&["rm", "-f", "-v", "--ignore", &container])?;
+    Ok(())
+}
+
+pub struct PodmanRun(Command);
+
+impl PodmanRun {
+    pub fn new(container: &str) -> io::Result<Self> {
+        run_podman(&["network", "create", "--ignore", NETWORK]).map(|_| ())?;
+        std::fs::create_dir_all(PODMAN_LOG_DIR)?;
+
+        let mut cmd = Command::new("podman");
+
+        cmd.args([
+            "run",
+            "--name",
+            container,
+            "--replace",
+            "--rm",
+            "--cgroups=split",
+            "--sdnotify=conmon",
+        ]);
+
+        // Network
+        cmd.arg(format!("--network={}", crate::podman::NETWORK));
+
+        // Log
+        let log_name = format!("{container}.log");
+        let log_path = Path::new(crate::podman::PODMAN_LOG_DIR).join(log_name);
+        let log_arg = format!("--log-opt=path={}", log_path.display());
+        cmd.args(["--log-driver=k8s-file", &log_arg, "--log-opt=max-size=20mb"]);
+
+        Ok(PodmanRun(cmd))
+    }
+
+    /// Adds an argument to pass to the program.
+    fn arg(&mut self, arg: impl AsRef<OsStr>) {
+        self.0.arg(arg);
+    }
+
+    /// Sets environment variables.
+    /// Adds argument `--env={key}` to pass to the podman.
+    /// Adds an environment variable to the spawned process.
+    pub fn env(&mut self, key: &str, value: impl AsRef<str>) {
+        self.0.env(key, value.as_ref());
+        self.arg(format!("--env={key}"));
+    }
+
+    /// Creates a bind mount.
+    /// Adds arguemnt `--volume={src}:{dst}` to pass to the podman.
+    /// - `src` - volume name or absolute path to the host dir
+    /// - `dst` - absolute path to the container dir
+    pub fn volume(&mut self, src: impl AsRef<str>, dst: impl AsRef<str>) {
+        let src = src.as_ref();
+        let dst = dst.as_ref();
+        self.arg(format!("--volume={src}:{dst}"));
+    }
+
+    /// Publish a container’s port, or range of ports, to the host.
+    pub fn publish(&mut self, host_port: u16, container_port: u16) {
+        self.arg(format!("--publish={host_port}:{container_port}"))
+    }
+
+    pub fn exec(&mut self, image: impl AsRef<str>) -> io::Error {
+        self.arg(image.as_ref());
+
+        let err = self.0.exec();
+        podman_spawn_error(err)
     }
 }
 

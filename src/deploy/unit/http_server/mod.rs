@@ -13,6 +13,7 @@ use crate::{
     },
     log,
     podman::{
+        NGINX_WWW_MOUNT,
         NGINX_WWW_VOLUME,
         ensure_volume,
         health,
@@ -130,5 +131,31 @@ impl<'a> HttpServerUnit<'a> {
 
     pub fn inspect(&self) {
         crate::podman::inspect::print_container_state(self.name);
+    }
+
+    /// Run the nginx container in the foreground.
+    pub fn start(&self) -> Result<(), DeployError> {
+        let container = self.name.scoped_unit_name();
+        let mut cmd = crate::podman::PodmanRun::new(&container).map_err(|e| {
+            DeployError::step_start(format!("prepare podman to run '{}'", self.name), e)
+        })?;
+
+        cmd.publish(HTTP_PORT, HTTP_PORT);
+        if self.config.https {
+            cmd.publish(443, 443);
+        }
+
+        cmd.volume(NGINX_WWW_VOLUME, NGINX_WWW_MOUNT);
+        cmd.volume(self.conf_volume(), "/etc/nginx/conf.d");
+
+        // `exec_run` only returns when the exec itself fails.
+        let err = cmd.exec(&self.config.image);
+        Err(DeployError::step_start("exec podman run", err))
+    }
+
+    /// Stop and remove the http-server container.
+    pub fn stop(&self) -> Result<(), DeployError> {
+        crate::podman::stop_and_remove(self.name)
+            .map_err(|e| DeployError::step_stop(format!("stop container '{}'", self.name), e))
     }
 }

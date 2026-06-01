@@ -74,6 +74,11 @@ pub enum Stage {
     Install,
     /// Waiting for the deployed unit to become healthy (its port/ping check).
     Startup,
+    /// Bringing the unit's container up (`dpl start`, the service `ExecStart`):
+    /// prerequisites, db-dependency waits, and the foreground `podman run`.
+    Start,
+    /// Tearing the unit's container down (`dpl stop`, the service `ExecStop`).
+    Stop,
 }
 
 impl fmt::Display for Stage {
@@ -83,6 +88,8 @@ impl fmt::Display for Stage {
             Stage::Build => "build",
             Stage::Install => "install",
             Stage::Startup => "startup",
+            Stage::Start => "start",
+            Stage::Stop => "stop",
         };
         f.write_str(name)
     }

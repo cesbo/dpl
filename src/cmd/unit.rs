@@ -203,6 +203,39 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
     Ok(())
 }
 
+/// Start a unit's container.
+/// Units without a runtime container error out.
+pub fn start(ctx: &MainContext, name: &UnitName) -> Result<()> {
+    let unit = load_unit(ctx, name)?;
+
+    let result = match unit {
+        UnitConfig::App(config) => AppUnit::new(ctx, name, config).start(),
+        UnitConfig::DbServer(config) => DbServerUnit::new(ctx, name, config).start(),
+        UnitConfig::HttpServer(config) => HttpServerUnit::new(ctx, name, config).start(),
+        UnitConfig::Db(_) | UnitConfig::Domain(_) => {
+            bail!("{} unit has no runtime container", unit.kind())
+        }
+    };
+
+    result.with_context(|| format!("start unit '{name}'"))
+}
+
+/// Stop a unit's container.
+pub fn stop(ctx: &MainContext, name: &UnitName) -> Result<()> {
+    let unit = load_unit(ctx, name)?;
+
+    let result = match unit {
+        UnitConfig::App(config) => AppUnit::new(ctx, name, config).stop(),
+        UnitConfig::DbServer(config) => DbServerUnit::new(ctx, name, config).stop(),
+        UnitConfig::HttpServer(config) => HttpServerUnit::new(ctx, name, config).stop(),
+        UnitConfig::Db(_) | UnitConfig::Domain(_) => {
+            bail!("{} unit has no runtime container", unit.kind())
+        }
+    };
+
+    result.with_context(|| format!("stop unit '{name}'"))
+}
+
 /// Print the failure line for a `Failed` build and point at the relevant log.
 fn print_failure(ctx: &MainContext, name: &UnitName, failure: &BuildFailure) {
     print_field("Error", &failure.error);

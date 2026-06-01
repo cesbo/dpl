@@ -10,6 +10,7 @@ use minijinja::{
 };
 
 use crate::{
+    MainContext,
     config::UnitName,
     deploy::{
         artifacts::{
@@ -39,26 +40,25 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
 
 pub fn create_service_file(
     dst: &Path,
+    ctx: &MainContext,
     name: &UnitName,
     engine: DbServerEngine,
-    image: &str,
-    password: &str,
 ) -> Result<String, ArtifactError> {
-    let scoped_service_name = name.scoped_unit_name();
-    let file_name = format!("{}.service", scoped_service_name);
+    let file_name = format!("{}.service", name.scoped_unit_name());
+
+    // The service only delegates to `dpl start`/`dpl stop`; the image, data
+    // volume, and root secret are resolved at runtime by those commands, so the
+    // unit file no longer carries the password in an `Environment=` directive.
+    let dpl_bin = std::env::current_exe().map_err(ArtifactError::CurrentExe)?;
 
     let content = render_template(
         &TEMPLATES,
         DB_SERVICE_TEMPLATE,
         context! {
+            dpl_bin => dpl_bin.to_string_lossy(),
+            dpl_base => ctx.base().to_string_lossy(),
             name => name,
-            container_name => scoped_service_name,
             engine => engine.as_str(),
-            image => image,
-            data_path => engine.data_path(),
-            env_var => engine.password_env(),
-            password => escape_systemd_env_value(password),
-            podman_log_dir => crate::podman::PODMAN_LOG_DIR,
         },
     )?;
 
@@ -66,21 +66,6 @@ pub fn create_service_file(
     fs::write(&path, content).map_err(ArtifactError::Write)?;
 
     Ok(file_name)
-}
-
-/// Escapes a value for use inside a quoted systemd `Environment="KEY=value"`
-/// directive: backslashes and double quotes are backslash-escaped. The caller
-/// is responsible for the surrounding `"…"`.
-fn escape_systemd_env_value(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for ch in value.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            _ => out.push(ch),
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -95,22 +80,25 @@ mod tests {
         let name = UnitName::new("pg-main").unwrap();
         let temp_dir = tempdir().unwrap();
         let dst = temp_dir.path();
+        let ctx = MainContext::default();
 
-        let image = DbServerEngine::Postgresql.image("18");
-        create_service_file(dst, &name, DbServerEngine::Postgresql, &image, r#"a\b"c"#).unwrap();
+        create_service_file(dst, &ctx, &name, DbServerEngine::Postgresql).unwrap();
 
         let service_path = dst.join("dpl--pg-main.service");
         assert!(service_path.exists());
 
         let body = fs::read_to_string(&service_path).unwrap();
-        assert!(body.contains("--name dpl--pg-main"));
-        assert!(body.contains(r#"Environment="POSTGRES_PASSWORD=a\\b\"c""#));
-        assert!(body.contains("-e POSTGRES_PASSWORD"));
-        assert!(!body.contains("--secret"));
-        assert!(body.contains("-v dpl--pg-main-data:/var/lib/postgresql"));
-        assert!(body.contains("docker.io/library/postgres:18"));
-        assert!(!body.contains("postgres:18-alpine"));
-        assert!(body.contains("/var/log/podman/dpl--pg-main.log"));
+        // The service only delegates; no podman flags or secrets in the file.
+        assert!(body.contains("start pg-main"), "missing start delegation:\n{body}");
+        assert!(body.contains("stop pg-main"), "missing stop delegation:\n{body}");
+        assert!(
+            !body.contains("Environment="),
+            "secret must not be inlined into the unit file:\n{body}"
+        );
+        assert!(
+            !body.contains("POSTGRES_PASSWORD") && !body.contains("podman run"),
+            "service must not embed container logic:\n{body}"
+        );
         assert!(body.contains("Description=DPL Database for pg-main (postgresql)"));
     }
 }
