@@ -46,9 +46,7 @@ impl<'a> DbServerUnit<'a> {
     /// Bring the db-server up if it isn't already running.
     /// When the systemd service is active this is a no-op.
     pub fn reload_or_deploy(self) -> Result<(), DeployError> {
-        let service_name = format!("{}.service", self.name.scoped_unit_name());
-
-        if systemd::is_active(&service_name) {
+        if crate::podman::is_running(self.name) {
             return Ok(());
         }
 
