@@ -80,7 +80,7 @@ impl<'a> HttpServerUnit<'a> {
     }
 
     /// Render this unit's `00-dpl.conf` into its conf volume, render the
-    /// systemd service, then (re)start the container — restart forces
+    /// systemd service, then (re)start the container - restart forces
     /// `podman run --replace --rm` to recreate it.
     fn install_inner(&self, systemd_dir: &Path) -> Result<(), DeployError> {
         let container_name = self.name.scoped_unit_name();

@@ -24,6 +24,10 @@ use std::{
     },
 };
 
+use chrono::{
+    DateTime,
+    Utc,
+};
 use indicatif::ProgressBar;
 use tracing::{
     Dispatch,
@@ -333,6 +337,40 @@ pub fn fmt_stamp(d: Duration) -> String {
     }
 }
 
+/// How long ago `then` was relative to `now`: "just now", "2 min ago",
+/// "3 hours ago", "5 days ago".
+pub fn fmt_ago(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
+    let secs = (now - then).num_seconds();
+    if secs < 60 {
+        "just now".to_string()
+    } else if secs < 3600 {
+        format!("{} min ago", secs / 60)
+    } else if secs < 86_400 {
+        let h = secs / 3600;
+        format!("{h} hour{} ago", if h == 1 { "" } else { "s" })
+    } else {
+        let d = secs / 86_400;
+        format!("{d} day{} ago", if d == 1 { "" } else { "s" })
+    }
+}
+
+/// Human-readable byte size in decimal (SI) units - `734 B`, `12.0 kB`, `21.5 MB`.
+/// Matching podman decimal formatting in `stats`/`images`.
+pub fn fmt_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "kB", "MB", "GB", "TB"];
+    let mut size = bytes as f64;
+    let mut unit = 0;
+    while size >= 1000.0 && unit < UNITS.len() - 1 {
+        size /= 1000.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{size:.1} {}", UNITS[unit])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,5 +459,32 @@ mod tests {
     fn fmt_stamp_with_hours() {
         assert_eq!(fmt_stamp(Duration::from_secs(3600)), "01:00:00");
         assert_eq!(fmt_stamp(Duration::from_secs(3725)), "01:02:05");
+    }
+
+    #[test]
+    fn fmt_ago_buckets() {
+        let now = DateTime::parse_from_rfc3339("2026-05-31T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let ago = |secs: i64| fmt_ago(now, now - chrono::Duration::seconds(secs));
+
+        assert_eq!(ago(0), "just now");
+        assert_eq!(ago(30), "just now");
+        assert_eq!(ago(120), "2 min ago");
+        assert_eq!(ago(3600), "1 hour ago");
+        assert_eq!(ago(7200), "2 hours ago");
+        assert_eq!(ago(86_400), "1 day ago");
+        assert_eq!(ago(3 * 86_400), "3 days ago");
+    }
+
+    #[test]
+    fn fmt_bytes_scales_by_decimal_units() {
+        assert_eq!(fmt_bytes(0), "0 B");
+        assert_eq!(fmt_bytes(734), "734 B");
+        assert_eq!(fmt_bytes(999), "999 B");
+        assert_eq!(fmt_bytes(1_000), "1.0 kB");
+        assert_eq!(fmt_bytes(4_718_592), "4.7 MB");
+        assert_eq!(fmt_bytes(210_542_080), "210.5 MB");
+        assert_eq!(fmt_bytes(4_000_000_000), "4.0 GB");
     }
 }

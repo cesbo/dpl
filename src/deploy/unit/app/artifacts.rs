@@ -234,7 +234,7 @@ mod tests {
                     env: EnvList::new(),
                     script: Some("npm ci".to_owned()),
                 },
-                // without script — its db references still feed the wait-gate
+                // without script - its db references still feed the wait-gate
                 // but are never resolved (script-less layers skip rendering).
                 BuildConfig {
                     description: None,
@@ -406,7 +406,7 @@ mod tests {
         assert!(!artifacts_dir.join("dpl--site--cleanup.service").exists());
         assert!(!artifacts_dir.join("dpl--site--cleanup.timer").exists());
 
-        // The image has no EXPOSE or CMD — it exists only to be exported from.
+        // The image has no EXPOSE or CMD - it exists only to be exported from.
         let containerfile = fs::read_to_string(artifacts_dir.join("containerfile")).unwrap();
         assert!(
             !containerfile.contains("EXPOSE"),

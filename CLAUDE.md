@@ -1,4 +1,4 @@
-# dpl — Deploy CLI
+# dpl - Deploy CLI
 
 CLI tool that manages local units (`app`, `db-server`, `db`, `domain`),
 renders build artifacts from MiniJinja templates, runs `podman build`,
@@ -15,24 +15,24 @@ cargo clippy         # Lint
 cargo run -- --base /path/to/base <command> ...
 ```
 
-- Never run `cargo fmt` — the project uses custom rustfmt rules.
+- Never run `cargo fmt` - the project uses custom rustfmt rules.
 - Rust edition is `2024`.
 
 ## Architecture
 
 ### Separation of Concerns
 
-- **`cmd/`** (`cmd/unit.rs`, `cmd/db.rs`, `cmd/secret.rs`) — clap subcommand
+- **`cmd/`** (`cmd/unit.rs`, `cmd/db.rs`, `cmd/secret.rs`) - clap subcommand
   surface (top-level `deploy`/`check`/`inspect` live in `cmd/unit.rs`). Parses
   flags, prompts for missing input, calls into the unit/secret layer.
 - **Unit implementations** (`deploy/unit/app/`, `deploy/unit/db/`,
-  `deploy/unit/domain/`) — "what does a deploy / install of this kind actually
+  `deploy/unit/domain/`) - "what does a deploy / install of this kind actually
   do". All build, render, and systemd logic lives here. For db units,
-  `DbServerEngine` owns every `podman exec` invocation — `ping`/`create_database`
+  `DbServerEngine` owns every `podman exec` invocation - `ping`/`create_database`
   (`sql.rs`), `dump`/`restore` (`backup.rs`), `console` (`console.rs`); `cmd/db.rs`
   only resolves config/secrets and picks the login (e.g. `--root`), never spawns
   the client itself.
-- **Deploy state** (`deploy/state.rs`) — on-disk `.state.json` and the
+- **Deploy state** (`deploy/state.rs`) - on-disk `.state.json` and the
   `.deploy.lock` advisory `flock`. Acquired before any unit deploy runs.
 
 Keep this split when adding functionality.
@@ -70,7 +70,7 @@ Keep this split when adding functionality.
 ### Current Limitations
 
 - Unit types implemented: `app`, `db-server`, `db`, `domain`.
-- Auth is out of scope — `dpl` runs locally (typically as root). Sensitive
+- Auth is out of scope - `dpl` runs locally (typically as root). Sensitive
   values live in `{base}/.secrets/` encrypted with an AES-256-GCM master key.
 - Entry points are CLI subcommands (`dpl deploy`, `dpl db ...`,
   `dpl secret ...`). No HTTP surface.

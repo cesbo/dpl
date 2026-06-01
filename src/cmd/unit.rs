@@ -12,10 +12,7 @@ use anyhow::{
     Result,
     bail,
 };
-use chrono::{
-    DateTime,
-    Utc,
-};
+use chrono::Utc;
 
 use crate::{
     MainContext,
@@ -39,6 +36,7 @@ use crate::{
     },
     log::{
         DeployLog,
+        fmt_ago,
         print_field,
     },
 };
@@ -216,23 +214,6 @@ fn print_failure(ctx: &MainContext, name: &UnitName, failure: &BuildFailure) {
     }
 }
 
-/// How long ago `then` was relative to `now`: "just now", "2 min ago",
-/// "3 hours ago", "5 days ago".
-fn fmt_ago(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
-    let secs = (now - then).num_seconds();
-    if secs < 60 {
-        "just now".to_string()
-    } else if secs < 3600 {
-        format!("{} min ago", secs / 60)
-    } else if secs < 86_400 {
-        let h = secs / 3600;
-        format!("{h} hour{} ago", if h == 1 { "" } else { "s" })
-    } else {
-        let d = secs / 86_400;
-        format!("{d} day{} ago", if d == 1 { "" } else { "s" })
-    }
-}
-
 /// Open `path` as a deploy input. `-` means stdin.
 fn open_input(path: Option<&Path>) -> Result<Option<Box<dyn Read>>, DeployError> {
     let Some(path) = path else {
@@ -257,27 +238,4 @@ fn load_unit(ctx: &MainContext, name: &UnitName) -> Result<UnitConfig> {
         .with_context(|| format!("unit '{name}': broken reference chain"))?;
 
     Ok(unit)
-}
-
-#[cfg(test)]
-mod tests {
-    use chrono::Duration;
-
-    use super::*;
-
-    #[test]
-    fn fmt_ago_buckets() {
-        let now = DateTime::parse_from_rfc3339("2026-05-31T12:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc);
-        let ago = |secs: i64| fmt_ago(now, now - Duration::seconds(secs));
-
-        assert_eq!(ago(0), "just now");
-        assert_eq!(ago(30), "just now");
-        assert_eq!(ago(120), "2 min ago");
-        assert_eq!(ago(3600), "1 hour ago");
-        assert_eq!(ago(7200), "2 hours ago");
-        assert_eq!(ago(86_400), "1 day ago");
-        assert_eq!(ago(3 * 86_400), "3 days ago");
-    }
 }

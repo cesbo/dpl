@@ -147,7 +147,7 @@ impl<'a> SystemdContext<'a> {
         tmp.flush()?;
         tmp.persist(&path)?;
 
-        // Reload without log access — only used internally during install_app,
+        // Reload without log access - only used internally during install_app,
         // which already logs its own reload.
         let _ = crate::systemd::reload();
 

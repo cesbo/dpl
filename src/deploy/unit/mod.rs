@@ -293,7 +293,7 @@ secret: pg-pass
         //   app `foo` → runtime.env.X = "${db-test:password}"
         //   db  `db-test` → server: pg-main, secret: foo-db-test-password
         //   db-server `pg-main` (referenced by db-test, with its own secret to satisfy
-        //   recursive validation — gets a real secret on disk so the only missing
+        //   recursive validation - gets a real secret on disk so the only missing
         //   piece is `foo-db-test-password`).
         let base = TempDir::new().unwrap();
 
@@ -326,7 +326,7 @@ secret: pg-pass
         // Provide pg-main's password so recursive server-validation succeeds.
         key.encrypt_to_file(&SecretName::new("pg-pass").unwrap(), "pg-secret")
             .unwrap();
-        // `foo-db-test-password` is intentionally absent — this is the leaf failure.
+        // `foo-db-test-password` is intentionally absent - this is the leaf failure.
 
         let ctx = MainContext {
             base: base.path().to_path_buf(),

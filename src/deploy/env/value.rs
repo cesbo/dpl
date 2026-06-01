@@ -9,8 +9,8 @@ use thiserror::Error;
 use crate::{
     MainContext,
     config::{
-        UnitName,
         SecretName,
+        UnitName,
     },
     deploy::unit,
     error::{
@@ -160,7 +160,7 @@ impl Value {
     /// (duplicates possible).
     ///
     /// Drops `${secret:…}` refs; use [`Value::references`] for all of them.
-    /// This is purely syntactic — it does not load or classify the referenced
+    /// This is purely syntactic - it does not load or classify the referenced
     /// units.
     pub fn unit_refs(&self) -> impl Iterator<Item = &UnitName> {
         self.references().filter_map(|(ns, _)| match ns {

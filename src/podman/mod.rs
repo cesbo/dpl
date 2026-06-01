@@ -76,6 +76,10 @@ pub struct ContainerState {
     pub restart_count: u32,
     #[serde(rename = "ImageName")]
     pub image_name: String,
+    /// Writable-layer size in bytes.
+    /// How much the container has grown on top of its image.
+    #[serde(rename = "SizeRw", default)]
+    pub size_rw: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,13 +96,63 @@ pub struct ContainerStatus {
     pub exit_code: i32,
 }
 
-/// Inspect a container by name. `None` when it does not exist (podman
-/// inspect exits non-zero)
-pub fn inspect_container(name: &UnitName) -> Option<ContainerState> {
+/// Inspect a container by name.
+/// `None` when it does not exist (podman inspect exits non-zero).
+/// `sized` to compute the writeable-layer size, used for the inspect report
+pub fn inspect_container(name: &UnitName, sized: bool) -> Option<ContainerState> {
     let name = name.scoped_unit_name();
-    let out = run_podman(&["container", "inspect", &name, "--format", "{{json .}}"]).ok()?;
-    let state = serde_json::from_str(&out).ok()?;
-    Some(state)
+    let mut args = vec!["container", "inspect", &name, "--format", "{{json .}}"];
+    if sized {
+        args.push("--size");
+    }
+    let out = run_podman(&args).ok()?;
+    serde_json::from_str(&out).ok()
+}
+
+/// Live resource usage from `podman stats --no-stream`. The fields are
+/// podman's own pre-formatted strings (e.g. `"0.50%"`, `"12.3MB / 4.0GB"`),
+/// surfaced verbatim.
+#[derive(Debug)]
+pub struct ContainerStats {
+    pub cpu_perc: String,
+    pub mem_usage: String,
+    pub mem_perc: String,
+    pub net_io: String,
+}
+
+/// Sample live resource stats for a running container. `None` when the
+/// container is not running or stats are unavailable (e.g. rootless cgroup v1).
+pub fn container_stats(name: &UnitName) -> Option<ContainerStats> {
+    let out = run_podman(&[
+        "stats",
+        "--no-stream",
+        "--format",
+        "{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}",
+        &name.scoped_unit_name(),
+    ])
+    .ok()?;
+    parse_stats(&out)
+}
+
+/// Parse a single tab-separated `podman stats --format` row. Pure, so the
+/// field layout can be tested without spawning podman.
+fn parse_stats(out: &str) -> Option<ContainerStats> {
+    let mut f = out.split('\t');
+    Some(ContainerStats {
+        cpu_perc: f.next()?.trim().to_string(),
+        mem_usage: f.next()?.trim().to_string(),
+        mem_perc: f.next()?.trim().to_string(),
+        net_io: f.next()?.trim().to_string(),
+    })
+}
+
+/// Size of an image in bytes, via `podman image inspect`. `None` when the image
+/// is unknown or the size is unparseable.
+pub fn image_size(image: &str) -> Option<u64> {
+    run_podman(&["image", "inspect", image, "--format", "{{.Size}}"])
+        .ok()?
+        .parse()
+        .ok()
 }
 
 #[cfg(test)]
@@ -138,5 +192,38 @@ mod tests {
         assert_eq!(state.state.exit_code, 0);
         assert_eq!(state.restart_count, 2);
         assert_eq!(state.image_name, "localhost/dpl-web:3");
+        // No `--size`, so the writable layer is absent.
+        assert_eq!(state.size_rw, None);
+    }
+
+    #[test]
+    fn parses_sized_container_inspect_json() {
+        // `podman container inspect --size` adds SizeRw (writable layer bytes).
+        let json = r#"{
+            "State": {
+                "Status": "running",
+                "StartedAt": "2026-05-20T10:11:12Z",
+                "ExitCode": 0
+            },
+            "RestartCount": 0,
+            "ImageName": "localhost/dpl-web:3",
+            "SizeRw": 4718592,
+            "SizeRootFs": 215257088
+        }"#;
+
+        let state: ContainerState = serde_json::from_str(json).unwrap();
+        assert_eq!(state.size_rw, Some(4_718_592));
+    }
+
+    #[test]
+    fn parses_stats_row() {
+        let s = parse_stats("0.50%\t12.3MB / 4.0GB\t0.30%\t1.2kB / 800B").unwrap();
+        assert_eq!(s.cpu_perc, "0.50%");
+        assert_eq!(s.mem_usage, "12.3MB / 4.0GB");
+        assert_eq!(s.mem_perc, "0.30%");
+        assert_eq!(s.net_io, "1.2kB / 800B");
+
+        // A short/garbled row (fewer columns than expected) yields `None`.
+        assert!(parse_stats("0.50%\t12.3MB / 4.0GB").is_none());
     }
 }

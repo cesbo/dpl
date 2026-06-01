@@ -22,7 +22,7 @@ const INTERVAL: Duration = Duration::from_millis(800);
 /// the caller can show it and persist it to `.state.json`.
 #[derive(Debug, Error)]
 pub enum HealthCheckError {
-    /// The container is no longer running — it exited before opening the port.
+    /// The container is no longer running - it exited before opening the port.
     #[error("container exited with code {exit_code} (ran {uptime})")]
     Exited { exit_code: i32, uptime: String },
 
@@ -71,7 +71,7 @@ fn is_ready(table: &str, port: u16) -> bool {
 
 /// Diagnosis when the container exited; `None` while it is still coming up.
 fn exited(name: &UnitName) -> Option<HealthCheckError> {
-    let c = inspect_container(name)?;
+    let c = inspect_container(name, false)?;
     match c.state.status.as_str() {
         // Still starting (or up): not an exit.
         "running" | "created" => None,
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn not_ready_on_loopback_target_port() {
-        // 127.0.0.1:8080 listening — reachable from inside the container only,
+        // 127.0.0.1:8080 listening - reachable from inside the container only,
         // not by the reverse proxy. Must NOT be treated as healthy.
         let t = table(&[
             "   0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1234 1 0000000000000000 100 0 0 10 0",
@@ -255,10 +255,7 @@ mod tests {
             "2s"
         );
         assert_eq!(
-            uptime(
-                "2026-05-20T10:11:12Z",
-                "2026-05-20T10:12:15Z"
-            ),
+            uptime("2026-05-20T10:11:12Z", "2026-05-20T10:12:15Z"),
             "1m3s"
         );
         // Unparseable, or a zero-value FinishedAt (before StartedAt).

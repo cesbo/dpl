@@ -257,19 +257,19 @@ mod tests {
     fn dependent_domains_selects_only_referencing_domains() {
         let base = TempDir::new().unwrap();
 
-        // Serves this app's static export — should be selected.
+        // Serves this app's static export - should be selected.
         write_unit(
             base.path(),
             "site",
             "type: domain\nserver: nginx\nhosts: [\"example.com\"]\nroutes:\n  - location: /\n    kind: serve_files\n    root: \"${web:export}\"\n",
         );
-        // References a different app — should be skipped.
+        // References a different app - should be skipped.
         write_unit(
             base.path(),
             "other-site",
             "type: domain\nserver: nginx\nhosts: [\"other.com\"]\nroutes:\n  - location: /\n    kind: reverse_proxy\n    target: \"${api:url}\"\n",
         );
-        // A non-domain unit — must not match the domain predicate.
+        // A non-domain unit - must not match the domain predicate.
         write_unit(
             base.path(),
             "web-db",

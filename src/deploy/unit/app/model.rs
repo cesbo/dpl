@@ -390,7 +390,7 @@ mod tests {
         let name = UnitName::new("web").unwrap();
 
         // A static unit has no runtime, so the port-backed keys are unknown
-        // exports for it — only `export` is valid.
+        // exports for it - only `export` is valid.
         for key in ["url", "socket"] {
             let err = config.resolve_export(&ctx, &name, key).unwrap_err();
             assert!(

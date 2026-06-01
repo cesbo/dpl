@@ -91,7 +91,7 @@ timers:
 ### Static sites (no runtime)
 
 Omit `runtime` to make a build-and-export unit. It runs its `builds` inside a
-podman image and copies `exports` into the shared nginx web volume — there is
+podman image and copies `exports` into the shared nginx web volume - there is
 no command, no port, no service, and no health check. Use it for static site
 generators (e.g. `npm run build`) whose output a `domain` unit then serves via
 `${<unit>:export}`. Without a runtime, `timers` are skipped and
