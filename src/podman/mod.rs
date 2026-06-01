@@ -1,4 +1,5 @@
 pub mod health;
+pub mod inspect;
 
 use std::{
     io,

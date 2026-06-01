@@ -121,4 +121,8 @@ impl<'a> DbServerUnit<'a> {
             sleep(PING_INTERVAL);
         }
     }
+
+    pub fn inspect(&self) {
+        crate::podman::inspect::print_container_state(self.name);
+    }
 }

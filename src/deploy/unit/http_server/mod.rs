@@ -127,4 +127,8 @@ impl<'a> HttpServerUnit<'a> {
 
         Ok(())
     }
+
+    pub fn inspect(&self) {
+        crate::podman::inspect::print_container_state(self.name);
+    }
 }

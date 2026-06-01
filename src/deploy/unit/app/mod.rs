@@ -1,5 +1,4 @@
 mod artifacts;
-mod inspect;
 mod model;
 mod podman;
 mod systemd;
@@ -39,7 +38,6 @@ use crate::{
         state::DeployState,
     },
     log,
-    podman::health,
 };
 
 #[derive(Debug)]
@@ -207,7 +205,7 @@ impl<'a> AppUnit<'a> {
         {
             let phase_name = "waiting for app".to_string();
             let _phase = log::phase(&phase_name);
-            if let Err(err) = health::check(self.name, runtime.port) {
+            if let Err(err) = crate::podman::health::check(self.name, runtime.port) {
                 error!("{err}");
                 return Err(DeployError::step_startup(phase_name, err));
             }
@@ -231,6 +229,21 @@ impl<'a> AppUnit<'a> {
         let podman_ctx = PodmanContext::new(self.name, version);
         podman_ctx.remove_exports();
         podman_ctx.remove();
+    }
+
+    pub fn inspect(&self) -> Result<(), DeployError> {
+        // A static build-and-export unit never runs a container.
+        if self.config.runtime.is_none() {
+            log::print_field(
+                "Container",
+                format!("{} static export (no container)", log::success_mark()),
+            );
+            return Ok(());
+        }
+
+        crate::podman::inspect::print_container_state(self.name);
+
+        Ok(())
     }
 }
 

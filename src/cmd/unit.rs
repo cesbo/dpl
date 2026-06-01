@@ -188,10 +188,16 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
                 .inspect()
                 .with_context(|| format!("inspect unit '{name}'"))?;
         }
+        UnitConfig::DbServer(db_server_config) => {
+            println!();
+            DbServerUnit::new(ctx, name, db_server_config).inspect();
+        }
+        UnitConfig::HttpServer(http_config) => {
+            println!();
+            HttpServerUnit::new(ctx, name, http_config).inspect();
+        }
         UnitConfig::Db(_) => {}
-        UnitConfig::DbServer(_) => {}
         UnitConfig::Domain(_) => {}
-        UnitConfig::HttpServer(_) => {}
     }
 
     Ok(())
