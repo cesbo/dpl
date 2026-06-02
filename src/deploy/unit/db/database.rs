@@ -17,7 +17,7 @@ use crate::{
     deploy::{
         DeployError,
         UnitConfig,
-        state::DeployState,
+        state::UnitState,
     },
     error::RefError,
     log,
@@ -37,7 +37,7 @@ impl<'a> DbUnit<'a> {
 
     pub fn deploy(
         self,
-        state: &mut DeployState,
+        state: &mut UnitState,
         backup: Option<Box<dyn Read>>,
     ) -> Result<(), DeployError> {
         let unit = UnitConfig::load(self.ctx, &self.config.server).map_err(|e| {

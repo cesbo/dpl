@@ -73,7 +73,7 @@ impl MainContext {
     }
 
     pub fn lock_path(&self, unit: &UnitName) -> PathBuf {
-        self.unit_dir(unit).join(".deploy.lock")
+        self.unit_dir(unit).join(".unit.lock")
     }
 
     pub fn state_path(&self, unit: &UnitName) -> PathBuf {

@@ -32,7 +32,7 @@ use crate::{
 };
 
 #[derive(Debug, Error)]
-pub enum DeployStateError {
+pub enum UnitStateError {
     #[error("lock unit")]
     Lock(#[source] io::Error),
 
@@ -125,9 +125,6 @@ pub struct BuildResult {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TimerStatus {
-    /// The script is still executing (set before `podman exec`, overwritten
-    /// with the result once it returns). A stale `Running` (left by a crashed
-    /// `dpl timer`) is cosmetic only and self-heals on the timer's next run.
     Running,
     Success,
     Failed,
@@ -177,7 +174,7 @@ impl TimerState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct DeployState {
+pub struct UnitState {
     #[serde(skip)]
     path: PathBuf,
 
@@ -193,73 +190,70 @@ pub struct DeployState {
     pub timers: BTreeMap<String, TimerState>,
 }
 
-impl DeployState {
+impl UnitState {
     /// Acquire the unit-level busy lock and load its state.
     pub fn acquire(
         ctx: &MainContext,
         name: &UnitName,
-    ) -> Result<(DeployStateGuard, DeployState), DeployStateError> {
+    ) -> Result<(DeployStateGuard, UnitState), UnitStateError> {
         let guard = DeployStateGuard::lock(ctx, name)?;
-        let state = DeployState::load(ctx, name)?;
+        let state = UnitState::load(ctx, name)?;
         if state.latest_build.status == DeployStatus::Building {
-            return Err(DeployStateError::Busy);
+            return Err(UnitStateError::Busy);
         }
 
         Ok((guard, state))
     }
 
-    pub fn load(ctx: &MainContext, name: &UnitName) -> Result<Self, DeployStateError> {
+    pub fn load(ctx: &MainContext, name: &UnitName) -> Result<Self, UnitStateError> {
         let path = ctx.state_path(name);
 
         let content = match read_to_string(&path) {
             Ok(content) => content,
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                return Ok(DeployState {
+                return Ok(UnitState {
                     path,
                     active_version: None,
                     latest_build: BuildResult::default(),
                     timers: BTreeMap::new(),
                 });
             }
-            Err(err) => return Err(DeployStateError::Read(err)),
+            Err(err) => return Err(UnitStateError::Read(err)),
         };
 
-        let mut state: DeployState = serde_json::from_str(&content).map_err(|err| {
-            DeployStateError::Read(io::Error::new(io::ErrorKind::InvalidData, err))
-        })?;
+        let mut state: UnitState = serde_json::from_str(&content)
+            .map_err(|err| UnitStateError::Read(io::Error::new(io::ErrorKind::InvalidData, err)))?;
 
         state.path = path;
 
         Ok(state)
     }
 
-    fn save(&self) -> Result<(), DeployStateError> {
+    fn save(&self) -> Result<(), UnitStateError> {
         let content = serde_json::to_string_pretty(self).map_err(|err| {
-            DeployStateError::Write(io::Error::new(io::ErrorKind::InvalidData, err))
+            UnitStateError::Write(io::Error::new(io::ErrorKind::InvalidData, err))
         })?;
 
         let mut tmp = match self.path.parent() {
             Some(parent) => tempfile::NamedTempFile::new_in(parent),
             None => tempfile::NamedTempFile::new(),
         }
-        .map_err(DeployStateError::Write)?;
+        .map_err(UnitStateError::Write)?;
 
         tmp.write_all(content.as_bytes())
-            .map_err(DeployStateError::Write)?;
+            .map_err(UnitStateError::Write)?;
         tmp.as_file_mut()
             .sync_all()
-            .map_err(DeployStateError::Write)?;
+            .map_err(UnitStateError::Write)?;
         tmp.persist(&self.path)
-            .map_err(|err| DeployStateError::Write(err.error))?;
+            .map_err(|err| UnitStateError::Write(err.error))?;
         Ok(())
     }
 
     /// Returns currently running version
-    pub fn get_active_version(ctx: &MainContext, name: &UnitName) -> Result<u32, DeployStateError> {
+    pub fn get_active_version(ctx: &MainContext, name: &UnitName) -> Result<u32, UnitStateError> {
         let state = Self::load(ctx, name)?;
-        state
-            .active_version
-            .ok_or(DeployStateError::NoActiveVersion)
+        state.active_version.ok_or(UnitStateError::NoActiveVersion)
     }
 
     /// Returns currently running version before uninstall
@@ -273,12 +267,12 @@ impl DeployState {
 
     /// Checked version addition.
     /// Sets the latest build status to `Building` and clears previous error.
-    pub fn bump_version(&mut self) -> Result<u32, DeployStateError> {
+    pub fn bump_version(&mut self) -> Result<u32, UnitStateError> {
         let next = self
             .latest_build
             .version
             .checked_add(1)
-            .ok_or(DeployStateError::VersionOverflow)?;
+            .ok_or(UnitStateError::VersionOverflow)?;
         self.latest_build.version = next;
         self.latest_build.status = DeployStatus::Building;
         self.latest_build.updated_at = Utc::now();
@@ -351,19 +345,19 @@ pub struct DeployStateGuard {
 }
 
 impl DeployStateGuard {
-    fn lock(ctx: &MainContext, name: &UnitName) -> Result<Self, DeployStateError> {
+    fn lock(ctx: &MainContext, name: &UnitName) -> Result<Self, UnitStateError> {
         let path = ctx.lock_path(name);
         let file = OpenOptions::new()
             .create(true)
             .truncate(true)
             .write(true)
             .open(&path)
-            .map_err(DeployStateError::Lock)?;
+            .map_err(UnitStateError::Lock)?;
 
         match file.try_lock_exclusive() {
             Ok(true) => Ok(DeployStateGuard { file, path }),
-            Ok(false) => Err(DeployStateError::Busy),
-            Err(err) => Err(DeployStateError::Lock(err)),
+            Ok(false) => Err(UnitStateError::Busy),
+            Err(err) => Err(UnitStateError::Lock(err)),
         }
     }
 }
@@ -382,8 +376,8 @@ impl Drop for DeployStateGuard {
 mod tests {
     use super::*;
 
-    fn state_at(dir: &std::path::Path) -> DeployState {
-        DeployState {
+    fn state_at(dir: &std::path::Path) -> UnitState {
+        UnitState {
             path: dir.join(".state.json"),
             active_version: None,
             latest_build: BuildResult::default(),
@@ -444,7 +438,7 @@ mod tests {
         let on_disk = read_to_string(dir.path().join(".state.json")).unwrap();
         assert!(on_disk.contains("\"status\": \"success\""), "{on_disk}");
         assert!(on_disk.contains("\"status\": \"failed\""), "{on_disk}");
-        let reloaded: DeployState = serde_json::from_str(&on_disk).unwrap();
+        let reloaded: UnitState = serde_json::from_str(&on_disk).unwrap();
         assert_eq!(reloaded.timers, state.timers);
     }
 

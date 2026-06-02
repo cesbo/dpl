@@ -31,8 +31,8 @@ use crate::{
     MainContext,
     config::UnitName,
     deploy::{
-        DeployState,
         UnitConfig,
+        UnitState,
         unit::db::{
             DbConfig,
             DbServerConfig,
@@ -171,7 +171,7 @@ fn drop(ctx: &MainContext, name: &UnitName) -> Result<()> {
     let server_config = load_db_server(ctx, &db_config.server)?;
 
     let (_guard, _state) =
-        DeployState::acquire(ctx, name).with_context(|| format!("acquire unit '{name}'"))?;
+        UnitState::acquire(ctx, name).with_context(|| format!("acquire unit '{name}'"))?;
 
     loop {
         let confirm: String = Input::with_theme(&crate::cmd::prompt_theme())

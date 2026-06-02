@@ -43,7 +43,7 @@ use crate::{
     deploy::{
         DeployError,
         TimerState,
-        state::DeployState,
+        state::UnitState,
     },
     log,
 };
@@ -92,7 +92,7 @@ impl<'a> AppUnit<'a> {
     /// build image, install service.
     pub fn deploy<R: Read>(
         self,
-        state: &mut DeployState,
+        state: &mut UnitState,
         version: u32,
         archive: R,
     ) -> Result<(), DeployError> {
@@ -109,7 +109,7 @@ impl<'a> AppUnit<'a> {
         &self,
         version: u32,
         deploy_dir: &Path,
-        state: &mut DeployState,
+        state: &mut UnitState,
     ) -> Result<(), DeployError> {
         self.build_inner(deploy_dir, version)?;
 
@@ -148,7 +148,7 @@ impl<'a> AppUnit<'a> {
 
         let _phase = log::phase("updating dependent domains");
         for (name, config) in domains {
-            let (_guard, mut state) = match DeployState::acquire(self.ctx, self.name) {
+            let (_guard, mut state) = match UnitState::acquire(self.ctx, self.name) {
                 Ok(v) => v,
                 Err(err) => {
                     error!("skip domain '{name}': {err}");
@@ -266,7 +266,7 @@ impl<'a> AppUnit<'a> {
         }
 
         let version = {
-            let state = DeployState::load(self.ctx, self.name).map_err(|e| {
+            let state = UnitState::load(self.ctx, self.name).map_err(|e| {
                 DeployError::step_start(format!("load state for '{}'", self.name), e)
             })?;
             state.active_version.unwrap_or(state.latest_build.version)
@@ -320,7 +320,7 @@ impl<'a> AppUnit<'a> {
     }
 
     /// Run one of the unit's timers once.
-    pub fn run_timer(&self, state: &mut DeployState, timer_name: &str) -> Result<(), DeployError> {
+    pub fn run_timer(&self, state: &mut UnitState, timer_name: &str) -> Result<(), DeployError> {
         let timer = self
             .config
             .timers

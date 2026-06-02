@@ -21,12 +21,12 @@ use crate::{
     deploy::{
         BuildFailure,
         DeployError,
-        DeployState,
-        DeployStateError,
         DeployStatus,
         Stage,
         TimerStatus,
         UnitConfig,
+        UnitState,
+        UnitStateError,
         unit::{
             app::AppUnit,
             db::{
@@ -73,7 +73,7 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
     };
 
     let (_guard, mut state) =
-        DeployState::acquire(ctx, name).with_context(|| format!("acquire unit '{name}'"))?;
+        UnitState::acquire(ctx, name).with_context(|| format!("acquire unit '{name}'"))?;
 
     let version = state
         .bump_version()
@@ -126,7 +126,7 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
 pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
     let unit = load_unit(ctx, name)?;
 
-    let state = DeployState::load(ctx, name).with_context(|| format!("inspect unit '{name}'"))?;
+    let state = UnitState::load(ctx, name).with_context(|| format!("inspect unit '{name}'"))?;
     let build = &state.latest_build;
     let now = Utc::now();
 
@@ -204,13 +204,13 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
         UnitConfig::Domain(_) => {}
     }
 
-    print_timer_runs(now, &state);
+    print_timers(now, &state);
 
     Ok(())
 }
 
 /// Print the last run of each timer (only app units record any).
-fn print_timer_runs(now: chrono::DateTime<Utc>, state: &DeployState) {
+fn print_timers(now: chrono::DateTime<Utc>, state: &UnitState) {
     if state.timers.is_empty() {
         return;
     }
@@ -287,9 +287,9 @@ pub fn timer(ctx: &MainContext, name: &UnitName, timer_name: &str) -> Result<()>
         bail!("{} unit has no timers", unit.kind());
     };
 
-    let (_guard, mut state) = match DeployState::acquire(ctx, name) {
+    let (_guard, mut state) = match UnitState::acquire(ctx, name) {
         Ok(acquired) => acquired,
-        Err(DeployStateError::Busy) => {
+        Err(UnitStateError::Busy) => {
             tracing::info!("unit '{name}' busy, skipping timer '{timer_name}'");
             return Ok(());
         }

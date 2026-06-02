@@ -14,7 +14,7 @@ use crate::{
     config::UnitName,
     deploy::{
         DeployError,
-        state::DeployState,
+        state::UnitState,
     },
     log,
     podman::{
@@ -35,7 +35,7 @@ impl<'a> DomainUnit<'a> {
         Self { ctx, name, config }
     }
 
-    pub fn deploy(self, state: &mut DeployState) -> Result<(), DeployError> {
+    pub fn deploy(self, state: &mut UnitState) -> Result<(), DeployError> {
         self.install_inner()?;
         state.set_ready();
         Ok(())

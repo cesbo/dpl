@@ -11,7 +11,7 @@ use crate::{
     deploy::{
         EnvList,
         UnitConfig,
-        state::DeployState,
+        state::UnitState,
     },
     error::{
         Location,
@@ -176,7 +176,7 @@ impl AppConfig {
             }
             // Absolute path of this app's static export inside the nginx container.
             "export" => {
-                let version = DeployState::get_active_version(ctx, unit_name)
+                let version = UnitState::get_active_version(ctx, unit_name)
                     .map_err(|_| RefError::not_deployed(unit_name.as_str()))?;
                 Ok(format!("{NGINX_WWW_MOUNT}/{unit_name}_{version}"))
             }
