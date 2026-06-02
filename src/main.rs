@@ -70,6 +70,13 @@ enum Command {
         /// Unit name
         name: config::UnitName,
     },
+    /// Run one of a unit's timers (the timer service's ExecStart)
+    Timer {
+        /// Unit name
+        name: config::UnitName,
+        /// Timer name
+        timer: String,
+    },
     /// Manage encrypted runtime secrets
     Secret(cmd::secret::Args),
 }
@@ -105,6 +112,7 @@ fn run() -> Result<()> {
         Command::Inspect { name } => cmd::unit::inspect(&ctx, &name),
         Command::Start { name } => cmd::unit::start(&ctx, &name),
         Command::Stop { name } => cmd::unit::stop(&ctx, &name),
+        Command::Timer { name, timer } => cmd::unit::timer(&ctx, &name, &timer),
         Command::Secret(args) => cmd::secret::run(&ctx, args),
     }
 }

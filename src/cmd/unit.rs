@@ -5,6 +5,7 @@ use std::{
         Read,
     },
     path::Path,
+    time::Duration,
 };
 
 use anyhow::{
@@ -21,8 +22,10 @@ use crate::{
         BuildFailure,
         DeployError,
         DeployState,
+        DeployStateError,
         DeployStatus,
         Stage,
+        TimerStatus,
         UnitConfig,
         unit::{
             app::AppUnit,
@@ -37,6 +40,7 @@ use crate::{
     log::{
         DeployLog,
         fmt_ago,
+        fmt_stamp,
         print_field,
     },
 };
@@ -200,7 +204,46 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
         UnitConfig::Domain(_) => {}
     }
 
+    print_timer_runs(now, &state);
+
     Ok(())
+}
+
+/// Print the last run of each timer (only app units record any).
+fn print_timer_runs(now: chrono::DateTime<Utc>, state: &DeployState) {
+    if state.timers.is_empty() {
+        return;
+    }
+
+    println!();
+    print_field("Timers", "");
+    for (timer, run) in &state.timers {
+        let info = match run.status {
+            TimerStatus::Running => {
+                let mark = console::style("running").yellow();
+                let ago = fmt_ago(now, run.started_at);
+                format!("{mark} · started {ago}")
+            }
+            TimerStatus::Success | TimerStatus::Failed => {
+                let mark = if run.status == TimerStatus::Success {
+                    console::style("success").green()
+                } else {
+                    console::style("failed").red()
+                };
+                let ago = fmt_ago(now, run.started_at);
+                let duration = match run.duration_ms {
+                    Some(ms) => {
+                        let v = Duration::from_millis(ms);
+                        let v = fmt_stamp(v);
+                        format!(" · duration {v}")
+                    }
+                    None => String::new(),
+                };
+                format!("{mark} · started {ago}{duration}")
+            }
+        };
+        print_field(timer, info);
+    }
 }
 
 /// Start a unit's container.
@@ -234,6 +277,30 @@ pub fn stop(ctx: &MainContext, name: &UnitName) -> Result<()> {
     };
 
     result.with_context(|| format!("stop unit '{name}'"))
+}
+
+/// Run one of a unit's timers.
+pub fn timer(ctx: &MainContext, name: &UnitName, timer_name: &str) -> Result<()> {
+    let unit = load_unit(ctx, name)?;
+
+    let UnitConfig::App(config) = unit else {
+        bail!("{} unit has no timers", unit.kind());
+    };
+
+    let (_guard, mut state) = match DeployState::acquire(ctx, name) {
+        Ok(acquired) => acquired,
+        Err(DeployStateError::Busy) => {
+            tracing::info!("unit '{name}' busy, skipping timer '{timer_name}'");
+            return Ok(());
+        }
+        Err(err) => {
+            return Err(anyhow::Error::new(err).context(format!("acquire unit '{name}'")));
+        }
+    };
+
+    AppUnit::new(ctx, name, config)
+        .run_timer(&mut state, timer_name)
+        .with_context(|| format!("run timer '{timer_name}' on unit '{name}'"))
 }
 
 /// Print the failure line for a `Failed` build and point at the relevant log.

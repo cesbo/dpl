@@ -10,15 +10,21 @@ use std::{
         Read,
     },
     path::Path,
-    time::Duration,
+    process::Command,
+    time::{
+        Duration,
+        Instant,
+    },
 };
 
+use chrono::Utc;
 use podman::PodmanContext;
 use systemd::SystemdContext;
 use tempfile::TempDir;
 use tracing::{
     debug,
     error,
+    info,
 };
 
 use self::artifacts::ArtifactsContext;
@@ -36,6 +42,7 @@ use crate::{
     config::UnitName,
     deploy::{
         DeployError,
+        TimerState,
         state::DeployState,
     },
     log,
@@ -310,6 +317,70 @@ impl<'a> AppUnit<'a> {
 
         crate::podman::stop_and_remove(self.name)
             .map_err(|e| DeployError::step_stop(format!("stop container '{}'", self.name), e))
+    }
+
+    /// Run one of the unit's timers once.
+    pub fn run_timer(&self, state: &mut DeployState, timer_name: &str) -> Result<(), DeployError> {
+        let timer = self
+            .config
+            .timers
+            .iter()
+            .find(|t| t.name == timer_name && !t.disabled)
+            .ok_or_else(|| {
+                DeployError::step_timer(
+                    format!(
+                        "unknown or disabled timer '{timer_name}' on '{}'",
+                        self.name
+                    ),
+                    io::Error::other("timer not found"),
+                )
+            })?;
+
+        if !crate::podman::is_running(self.name) {
+            info!(
+                "container for '{}' not running; skipping timer '{timer_name}'",
+                self.name
+            );
+            return Ok(());
+        }
+
+        let container = self.name.scoped_unit_name();
+        let command = format!("timer--{}", timer.name);
+
+        let started_at = Utc::now();
+        state.set_timer_state(timer_name, TimerState::running(started_at));
+
+        let clock = Instant::now();
+        let status = Command::new("podman")
+            .args(["exec", &container, "/bin/sh", "/opt/dpl/run.sh", &command])
+            .status();
+        let elapsed = clock.elapsed();
+
+        match status {
+            Ok(status) if status.success() => {
+                state.set_timer_state(timer_name, TimerState::success(started_at, elapsed));
+                Ok(())
+            }
+            Ok(status) => {
+                let cause = format!("timer script exited with {status}");
+                state.set_timer_state(timer_name, TimerState::failed(started_at, elapsed, &cause));
+                Err(DeployError::step_timer(
+                    format!("timer '{timer_name}' on '{}'", self.name),
+                    io::Error::other(cause),
+                ))
+            }
+            Err(err) => {
+                let err = crate::podman::podman_spawn_error(err);
+                state.set_timer_state(
+                    timer_name,
+                    TimerState::failed(started_at, elapsed, err.to_string()),
+                );
+                Err(DeployError::step_timer(
+                    format!("run timer '{timer_name}' on '{}'", self.name),
+                    err,
+                ))
+            }
+        }
     }
 }
 

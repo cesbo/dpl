@@ -170,6 +170,8 @@ impl<'a> ArtifactsContext<'a> {
                 path,
                 TIMER_SERVICE_TEMPLATE,
                 context! {
+                    dpl_bin => dpl_bin.to_string_lossy(),
+                    dpl_base => self.ctx.base().to_string_lossy(),
                     name => &self.name,
                     timer_name => &timer.name,
                 },
@@ -333,6 +335,18 @@ mod tests {
         // disabled timer is skipped entirely
         assert!(!artifacts_dir.join("dpl--my-app--purge.service").exists());
         assert!(!artifacts_dir.join("dpl--my-app--purge.timer").exists());
+
+        // The timer service delegates to `dpl timer` and embeds no podman logic.
+        let timer_service =
+            fs::read_to_string(artifacts_dir.join("dpl--my-app--cleanup.service")).unwrap();
+        assert!(
+            timer_service.contains("timer my-app cleanup"),
+            "missing `dpl timer` delegation:\n{timer_service}"
+        );
+        assert!(
+            !timer_service.contains("podman exec") && !timer_service.contains("ExecCondition"),
+            "timer service must not embed podman logic:\n{timer_service}"
+        );
 
         // The service only delegates to `dpl start`/`dpl stop`; container logic
         // (db wait gates, the podman run, volumes) is resolved at runtime.

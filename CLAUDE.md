@@ -77,7 +77,7 @@ Keep this split when adding functionality.
 - Auth is out of scope - `dpl` runs locally (typically as root). Sensitive
   values live in `{base}/.secrets/` encrypted with an AES-256-GCM master key.
 - Entry points are CLI subcommands (`dpl deploy`, `dpl start`, `dpl stop`,
-  `dpl db ...`, `dpl secret ...`). No HTTP surface.
+  `dpl timer`, `dpl db ...`, `dpl secret ...`). No HTTP surface.
 - `dpl deploy` installs and starts the generated systemd unit for app
   and db-server units, and creates the database (via `podman exec` against
   the running server) for db units. Other unit types render artifacts but
@@ -88,6 +88,12 @@ Keep this split when adding functionality.
   gates, the `podman run` argv which `dpl start` `exec`s to stay the
   `MAINPID` for `Type=notify`, and `podman stop`/`rm`). No `ExecStartPre`,
   inline `podman run`, or secret `Environment=` lives in the unit file.
+  Timer services follow the same shape: their `ExecStart` calls
+  `dpl timer <unit> <timer>` (no inline `podman exec`), which takes the unit's
+  deploy lock, runs the timer script in the live container, and records the
+  last run into `.state.json` under `timers` for `dpl inspect` — marked
+  `running` while in flight, then overwritten with `success`/`failed` and the
+  run's duration.
 - `dpl db backup [path]` streams SQL via `podman exec` as the `db` unit's
   login user (`deploy/unit/db/backup.rs`). `path` defaults to `-` (stdout); a
   `.gz` destination or `-z` gzips the output.

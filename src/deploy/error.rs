@@ -87,4 +87,15 @@ impl DeployError {
             source: source.into(),
         }
     }
+
+    pub fn step_timer(
+        info: impl Into<String>,
+        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+    ) -> Self {
+        DeployError::Step {
+            stage: Stage::Timer,
+            info: info.into(),
+            source: source.into(),
+        }
+    }
 }

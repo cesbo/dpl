@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fmt,
     fs::{
         File,
@@ -10,6 +11,7 @@ use std::{
         Write,
     },
     path::PathBuf,
+    time::Duration,
 };
 
 use chrono::{
@@ -79,6 +81,9 @@ pub enum Stage {
     Start,
     /// Tearing the unit's container down (`dpl stop`, the service `ExecStop`).
     Stop,
+    /// Running one of a unit's timers (`dpl timer`, the timer service's
+    /// `ExecStart`): `podman exec` of the timer script in the live container.
+    Timer,
 }
 
 impl fmt::Display for Stage {
@@ -90,6 +95,7 @@ impl fmt::Display for Stage {
             Stage::Startup => "startup",
             Stage::Start => "start",
             Stage::Stop => "stop",
+            Stage::Timer => "timer",
         };
         f.write_str(name)
     }
@@ -115,6 +121,61 @@ pub struct BuildResult {
     pub failure: Option<BuildFailure>,
 }
 
+/// Outcome of a single timer run.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimerStatus {
+    /// The script is still executing (set before `podman exec`, overwritten
+    /// with the result once it returns). A stale `Running` (left by a crashed
+    /// `dpl timer`) is cosmetic only and self-heals on the timer's next run.
+    Running,
+    Success,
+    Failed,
+}
+
+/// The most recent run of one of a unit's timers (`dpl timer`).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TimerState {
+    /// When the timer started.
+    pub started_at: DateTime<Utc>,
+    pub status: TimerStatus,
+    /// Duration of the last timer run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    /// Failure cause, set only when `status` is `Failed`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl TimerState {
+    pub fn running(started_at: DateTime<Utc>) -> Self {
+        TimerState {
+            started_at,
+            status: TimerStatus::Running,
+            duration_ms: None,
+            error: None,
+        }
+    }
+
+    pub fn success(started_at: DateTime<Utc>, duration: Duration) -> Self {
+        TimerState {
+            started_at,
+            status: TimerStatus::Success,
+            duration_ms: Some(duration.as_millis() as u64),
+            error: None,
+        }
+    }
+
+    pub fn failed(started_at: DateTime<Utc>, duration: Duration, error: impl Into<String>) -> Self {
+        TimerState {
+            started_at,
+            status: TimerStatus::Failed,
+            duration_ms: Some(duration.as_millis() as u64),
+            error: Some(error.into()),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DeployState {
     #[serde(skip)]
@@ -126,6 +187,10 @@ pub struct DeployState {
 
     /// Version for last attempt
     pub latest_build: BuildResult,
+
+    /// Most recent run of each timer, keyed by timer name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub timers: BTreeMap<String, TimerState>,
 }
 
 impl DeployState {
@@ -153,6 +218,7 @@ impl DeployState {
                     path,
                     active_version: None,
                     latest_build: BuildResult::default(),
+                    timers: BTreeMap::new(),
                 });
             }
             Err(err) => return Err(DeployStateError::Read(err)),
@@ -266,6 +332,12 @@ impl DeployState {
         self.latest_build.failure = None;
         let _ = self.save();
     }
+
+    /// Records the latest run of a timer, replacing any previous record for it.
+    pub fn set_timer_state(&mut self, timer: &str, run: TimerState) {
+        self.timers.insert(timer.to_string(), run);
+        let _ = self.save();
+    }
 }
 
 /// Holds an OS-level exclusive `flock` on `{unit_dir}/.deploy.lock` for the
@@ -315,6 +387,7 @@ mod tests {
             path: dir.join(".state.json"),
             active_version: None,
             latest_build: BuildResult::default(),
+            timers: BTreeMap::new(),
         }
     }
 
@@ -334,5 +407,75 @@ mod tests {
             failure.error,
             "waiting for app: container exited with code 1 (ran 2s)"
         );
+    }
+
+    #[test]
+    fn record_timer_run_persists_last_run_per_timer() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = state_at(dir.path());
+
+        let t0 = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap();
+        state.set_timer_state(
+            "cleanup",
+            TimerState::success(t0, Duration::from_millis(1840)),
+        );
+        state.set_timer_state(
+            "sync",
+            TimerState::failed(t0, Duration::from_secs(2), "exit code 1"),
+        );
+
+        // A second run of the same timer replaces the first.
+        let t1 = DateTime::<Utc>::from_timestamp(1_700_000_060, 0).unwrap();
+        state.set_timer_state(
+            "cleanup",
+            TimerState::success(t1, Duration::from_millis(990)),
+        );
+
+        assert_eq!(state.timers.len(), 2);
+        let cleanup = &state.timers["cleanup"];
+        assert_eq!(cleanup.status, TimerStatus::Success);
+        assert_eq!(cleanup.started_at, t1);
+        assert_eq!(cleanup.duration_ms, Some(990));
+        assert!(cleanup.error.is_none());
+        assert_eq!(state.timers["sync"].status, TimerStatus::Failed);
+
+        // record_timer_run's save() wrote `.state.json`; reload it from disk and
+        // confirm the timer map round-trips (incl. snake_case status strings).
+        let on_disk = read_to_string(dir.path().join(".state.json")).unwrap();
+        assert!(on_disk.contains("\"status\": \"success\""), "{on_disk}");
+        assert!(on_disk.contains("\"status\": \"failed\""), "{on_disk}");
+        let reloaded: DeployState = serde_json::from_str(&on_disk).unwrap();
+        assert_eq!(reloaded.timers, state.timers);
+    }
+
+    #[test]
+    fn running_timer_run_omits_duration() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = state_at(dir.path());
+        let t = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap();
+
+        state.set_timer_state("backup", TimerState::running(t));
+        let run = &state.timers["backup"];
+        assert_eq!(run.status, TimerStatus::Running);
+        assert!(run.duration_ms.is_none());
+
+        // A `Running` record serializes without a `duration_ms` field.
+        let json = serde_json::to_string(&state).unwrap();
+        assert!(json.contains("\"status\":\"running\""), "{json}");
+        assert!(!json.contains("duration_ms"), "{json}");
+
+        // Completing the run overwrites the `Running` record in place.
+        state.set_timer_state("backup", TimerState::success(t, Duration::from_millis(500)));
+        assert_eq!(state.timers.len(), 1);
+        assert_eq!(state.timers["backup"].status, TimerStatus::Success);
+        assert_eq!(state.timers["backup"].duration_ms, Some(500));
+    }
+
+    #[test]
+    fn empty_timers_map_is_omitted_from_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state_at(dir.path());
+        let json = serde_json::to_string(&state).unwrap();
+        assert!(!json.contains("timers"), "{json}");
     }
 }

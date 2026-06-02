@@ -11,7 +11,10 @@ pub use error::DeployError;
 pub use state::{
     BuildFailure,
     DeployState,
+    DeployStateError,
     DeployStatus,
     Stage,
+    TimerState,
+    TimerStatus,
 };
 pub use unit::UnitConfig;
