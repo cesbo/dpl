@@ -18,7 +18,6 @@ use crate::{
         disable_service,
         enable_service,
         run_systemctl,
-        stop_service,
     },
 };
 
@@ -75,46 +74,6 @@ impl<'a> SystemdContext<'a> {
         }
     }
 
-    pub fn install_timers(&self, deploy_dir: &Path) {
-        let prefix = format!("{}--", self.name.scoped_unit_name());
-        let artifacts_dir = deploy_dir.join("artifacts");
-
-        let mut timers: Vec<String> = list_timers(&artifacts_dir, &prefix);
-        timers.retain(|p: &String| copy_timer(self.systemd_dir, &artifacts_dir, p));
-        if timers.is_empty() {
-            return;
-        }
-
-        reload_systemd();
-
-        for prefix in &timers {
-            let timer_name = format!("{prefix}.timer");
-            match enable_service(&timer_name) {
-                Ok(_) => {
-                    debug!("timer {timer_name} installed");
-                }
-                Err(err) => {
-                    remove_timer(self.systemd_dir, prefix);
-                    error!("failed to install timer {timer_name}: {err}");
-                }
-            }
-        }
-    }
-
-    pub fn uninstall_timers(&self) {
-        let prefix = format!("{}--", self.name.scoped_unit_name());
-
-        let timers = list_timers(self.systemd_dir, &prefix);
-        if timers.is_empty() {
-            return;
-        }
-
-        timers
-            .iter()
-            .for_each(|t| remove_timer(self.systemd_dir, t));
-        reload_systemd();
-    }
-
     /// Rewrites the installed service file
     pub fn set_restart_value(&self, value: &str) -> io::Result<()> {
         let service_name = format!("{}.service", self.name.scoped_unit_name());
@@ -152,93 +111,6 @@ impl<'a> SystemdContext<'a> {
         let _ = crate::systemd::reload();
 
         Ok(())
-    }
-}
-
-/// Lists all timers in the specified directory with filenames starting with the given prefix
-fn list_timers(dir: &Path, prefix: &str) -> Vec<String> {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(err) => {
-            error!("failed to read directory {}: {err}", dir.display());
-            return Vec::new();
-        }
-    };
-
-    entries
-        .filter_map(|entry| entry.ok())
-        .filter_map(|entry| {
-            entry
-                .path()
-                .file_name()
-                .and_then(|n| n.to_str())
-                .filter(|n| n.starts_with(prefix))
-                .and_then(|n| n.strip_suffix(".timer"))
-                .map(|n| n.to_owned())
-        })
-        .collect()
-}
-
-/// Removes a timer and its associated service from the systemd.
-fn remove_timer(systemd_dir: &Path, prefix: &str) {
-    let timer_unit = format!("{prefix}.timer");
-    let _ = disable_service(&timer_unit);
-    let removed = remove_timer_file(systemd_dir, &timer_unit);
-
-    let timer_service = format!("{prefix}.service");
-    let _ = stop_service(&timer_service);
-    remove_timer_file(systemd_dir, &timer_service);
-
-    if removed {
-        debug!("timer {prefix} removed");
-    }
-}
-
-/// Removes a timer file from the systemd.
-/// Returns `true` if the file was successfully removed.
-fn remove_timer_file(systemd_dir: &Path, file_name: &str) -> bool {
-    let path = systemd_dir.join(file_name);
-    match fs::remove_file(&path) {
-        Ok(_) => true,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {
-            debug!("timer service file {file_name} not found");
-            false
-        }
-        Err(err) => {
-            error!("failed to remove timer service file {file_name}: {err}");
-            false
-        }
-    }
-}
-
-/// Copies a timer and its associated service from the artifacts directory to systemd.
-/// Returns `true` if both were successfully copied.
-fn copy_timer(systemd_dir: &Path, artifacts_dir: &Path, prefix: &str) -> bool {
-    let timer_service = format!("{prefix}.service");
-    if !copy_timer_file(systemd_dir, artifacts_dir, &timer_service) {
-        return false;
-    }
-
-    let timer_unit = format!("{prefix}.timer");
-    if !copy_timer_file(systemd_dir, artifacts_dir, &timer_unit) {
-        remove_timer_file(systemd_dir, &timer_service);
-        return false;
-    }
-
-    true
-}
-
-/// Copies a timer file from the artifacts directory to systemd.
-/// Returns `true` if the file was successfully copied.
-fn copy_timer_file(systemd_dir: &Path, artifacts_dir: &Path, file_name: &str) -> bool {
-    let src = artifacts_dir.join(file_name);
-    let dst = systemd_dir.join(file_name);
-    match fs::copy(&src, &dst) {
-        Ok(_) => true,
-        Err(err) => {
-            error!("failed to copy timer service {file_name}: {err}");
-            false
-        }
     }
 }
 

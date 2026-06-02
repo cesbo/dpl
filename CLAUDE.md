@@ -88,12 +88,14 @@ Keep this split when adding functionality.
   gates, the `podman run` argv which `dpl start` `exec`s to stay the
   `MAINPID` for `Type=notify`, and `podman stop`/`rm`). No `ExecStartPre`,
   inline `podman run`, or secret `Environment=` lives in the unit file.
-  Timer services follow the same shape: their `ExecStart` calls
-  `dpl timer <unit> <timer>` (no inline `podman exec`), which takes the unit's
-  deploy lock, runs the timer script in the live container, and records the
-  last run into `.state.json` under `timers` for `dpl inspect` — marked
-  `running` while in flight, then overwritten with `success`/`failed` and the
-  run's duration.
+  Timers are driven by cron, not systemd: deploying an app with enabled timers
+  writes `/etc/cron.d/{scoped_unit_name}` (one line per timer, no file when
+  there are none), each line calling `dpl timer <unit> <timer>` (no inline
+  `podman exec`). `TimerConfig::schedule` is a standard 5-field cron expression
+  parsed with `croner` at config load. `dpl timer` takes the unit's deploy
+  lock, runs the timer script in the live container, and records the last run
+  into `.state.json` under `timers` for `dpl inspect` — marked `running` while
+  in flight, then overwritten with `success`/`failed` and the run's duration.
 - `dpl db backup [path]` streams SQL via `podman exec` as the `db` unit's
   login user (`deploy/unit/db/backup.rs`). `path` defaults to `-` (stdout); a
   `.gz` destination or `-z` gzips the output.

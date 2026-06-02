@@ -1,6 +1,0 @@
-[Unit]
-Description=DPL Timer {{ timer_name }} for {{ name }}
-
-[Service]
-Type=oneshot
-ExecStart={{ dpl_bin }} --base {{ dpl_base }} timer {{ name }} {{ timer_name }}

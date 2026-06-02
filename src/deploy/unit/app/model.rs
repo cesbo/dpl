@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use croner::Cron;
 use serde::{
     Deserialize,
     Serialize,
@@ -20,7 +21,7 @@ use crate::{
     podman::NGINX_WWW_MOUNT,
 };
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
     pub image: String,
@@ -91,15 +92,15 @@ pub struct ExportConfig {
 }
 
 /// Timers to start scripts periodically in the container
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct TimerConfig {
     /// Name
     pub name: String,
     /// Description
     pub description: Option<String>,
-    /// Schedule in systemd OnCalendar format
-    pub schedule: String,
+    /// Schedule in cron format (standard 5-field).
+    pub schedule: Cron,
     /// Script to run
     pub script: String,
     /// When true, the timer is not rendered or installed

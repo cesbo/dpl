@@ -1,0 +1,6 @@
+# Managed by dpl. Unit: {{ name }}. Do not edit.
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+{% for timer in timers %}
+{{ timer.schedule }} root {{ dpl_bin }} --base {{ dpl_base }} timer {{ name }} {{ timer.name }}
+{% endfor %}

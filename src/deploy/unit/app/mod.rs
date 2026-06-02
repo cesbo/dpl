@@ -1,4 +1,5 @@
 mod artifacts;
+mod cron;
 mod model;
 mod podman;
 mod systemd;
@@ -18,8 +19,6 @@ use std::{
 };
 
 use chrono::Utc;
-use podman::PodmanContext;
-use systemd::SystemdContext;
 use tempfile::TempDir;
 use tracing::{
     debug,
@@ -27,15 +26,12 @@ use tracing::{
     info,
 };
 
-use self::artifacts::ArtifactsContext;
 pub use self::model::AppConfig;
-use super::{
-    UnitConfig,
-    domain::{
-        DomainConfig,
-        DomainUnit,
-    },
-    list_units,
+use self::{
+    artifacts::ArtifactsContext,
+    cron::CronContext,
+    podman::PodmanContext,
+    systemd::SystemdContext,
 };
 use crate::{
     MainContext,
@@ -43,7 +39,15 @@ use crate::{
     deploy::{
         DeployError,
         TimerState,
+        UnitConfig,
         state::UnitState,
+        unit::{
+            domain::{
+                DomainConfig,
+                DomainUnit,
+            },
+            list_units,
+        },
     },
     log,
 };
@@ -226,15 +230,17 @@ impl<'a> AppUnit<'a> {
         }
 
         let _phase = log::phase("installing timers");
-        systemd_ctx.install_timers(deploy_dir);
+        CronContext::new(self.name)
+            .install(deploy_dir)
+            .map_err(|e| DeployError::step_install("install timers", e))?;
 
         Ok(())
     }
 
     fn uninstall_inner(&self, version: u32) {
-        let systemd_ctx = SystemdContext::new(self.name);
-        systemd_ctx.uninstall_timers();
-        systemd_ctx.uninstall_app();
+        CronContext::new(self.name).uninstall();
+
+        SystemdContext::new(self.name).uninstall_app();
 
         let podman_ctx = PodmanContext::new(self.name, version);
         podman_ctx.remove_exports();

@@ -52,11 +52,6 @@ impl UnitName {
     pub fn scoped_unit_name(&self) -> String {
         format!("dpl--{name}", name = self.as_str())
     }
-
-    /// Scoped name of a dpl-managed unit's resource: `dpl--<name>--<resource>`.
-    pub fn scoped_unit_resource(&self, resource: &str) -> String {
-        format!("dpl--{name}--{resource}", name = self.as_str())
-    }
 }
 
 impl std::str::FromStr for UnitName {

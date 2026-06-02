@@ -27,8 +27,7 @@ const CONTAINERFILE_TEMPLATE: &str = "containerfile";
 const BUILD_SH_TEMPLATE: &str = "build-sh";
 const RUN_SH_TEMPLATE: &str = "run-sh";
 const APP_SERVICE_TEMPLATE: &str = "app-service";
-const TIMER_SERVICE_TEMPLATE: &str = "timer-service";
-const TIMER_UNIT_TEMPLATE: &str = "timer-unit";
+const CRON_TEMPLATE: &str = "cron";
 
 static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
     let mut env = Environment::new();
@@ -52,16 +51,8 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
         include_str!("templates/app-service.jinja"),
     )
     .unwrap();
-    env.add_template(
-        TIMER_SERVICE_TEMPLATE,
-        include_str!("templates/timer-service.jinja"),
-    )
-    .unwrap();
-    env.add_template(
-        TIMER_UNIT_TEMPLATE,
-        include_str!("templates/timer-unit.jinja"),
-    )
-    .unwrap();
+    env.add_template(CRON_TEMPLATE, include_str!("templates/cron.jinja"))
+        .unwrap();
 
     env
 });
@@ -157,35 +148,24 @@ impl<'a> ArtifactsContext<'a> {
             },
         )?;
 
-        for timer in &self.config.timers {
-            if timer.disabled {
-                continue;
-            }
-
-            let scoped_timer_name = self.name.scoped_unit_resource(&timer.name);
-
-            let file_name = format!("{}.service", scoped_timer_name);
-            let path = artifacts_dir.join(&file_name);
+        // A single `/etc/cron.d/{scoped}` file drives every enabled timer, each
+        // line invoking `dpl timer`. No file when there are no enabled timers.
+        let timers = self
+            .config
+            .timers
+            .iter()
+            .filter(|t| !t.disabled)
+            .collect::<Vec<_>>();
+        if !timers.is_empty() {
+            let path = artifacts_dir.join(format!("{}.cron", self.name.scoped_unit_name()));
             write_artifact(
                 path,
-                TIMER_SERVICE_TEMPLATE,
+                CRON_TEMPLATE,
                 context! {
                     dpl_bin => dpl_bin.to_string_lossy(),
                     dpl_base => self.ctx.base().to_string_lossy(),
                     name => &self.name,
-                    timer_name => &timer.name,
-                },
-            )?;
-
-            let file_name = format!("{}.timer", scoped_timer_name);
-            let path = artifacts_dir.join(&file_name);
-            write_artifact(
-                path,
-                TIMER_UNIT_TEMPLATE,
-                context! {
-                    name => &self.name,
-                    timer_name => &timer.name,
-                    schedule => &timer.schedule,
+                    timers => timers,
                 },
             )?;
         }
@@ -261,14 +241,14 @@ mod tests {
                 TimerConfig {
                     name: "cleanup".into(),
                     description: None,
-                    schedule: "*-*-* 03:00:00".into(),
+                    schedule: "0 3 * * *".parse().unwrap(),
                     script: "echo cleanup".into(),
                     disabled: false,
                 },
                 TimerConfig {
                     name: "sync".into(),
                     description: None,
-                    schedule: "hourly".into(),
+                    schedule: "0 * * * *".parse().unwrap(),
                     script: "echo sync".into(),
                     disabled: false,
                 },
@@ -276,7 +256,7 @@ mod tests {
                 TimerConfig {
                     name: "purge".into(),
                     description: None,
-                    schedule: "weekly".into(),
+                    schedule: "0 0 * * 0".parse().unwrap(),
                     script: "echo purge".into(),
                     disabled: true,
                 },
@@ -327,26 +307,27 @@ mod tests {
         assert!(artifacts_dir.join("build-4.sh").exists());
         assert!(artifacts_dir.join("dpl--my-app.service").exists());
 
-        // timer service and timer unit files
-        assert!(artifacts_dir.join("dpl--my-app--cleanup.service").exists());
-        assert!(artifacts_dir.join("dpl--my-app--cleanup.timer").exists());
-        assert!(artifacts_dir.join("dpl--my-app--sync.service").exists());
-        assert!(artifacts_dir.join("dpl--my-app--sync.timer").exists());
+        // A single cron.d file drives every enabled timer; each line delegates
+        // to `dpl timer` and embeds no podman logic.
+        let cron = fs::read_to_string(artifacts_dir.join("dpl--my-app.cron")).unwrap();
+        assert!(
+            cron.contains("0 3 * * * root") && cron.contains("timer my-app cleanup"),
+            "missing cleanup cron line:\n{cron}"
+        );
+        assert!(
+            cron.contains("0 * * * * root") && cron.contains("timer my-app sync"),
+            "missing sync cron line:\n{cron}"
+        );
         // disabled timer is skipped entirely
-        assert!(!artifacts_dir.join("dpl--my-app--purge.service").exists());
-        assert!(!artifacts_dir.join("dpl--my-app--purge.timer").exists());
-
-        // The timer service delegates to `dpl timer` and embeds no podman logic.
-        let timer_service =
-            fs::read_to_string(artifacts_dir.join("dpl--my-app--cleanup.service")).unwrap();
         assert!(
-            timer_service.contains("timer my-app cleanup"),
-            "missing `dpl timer` delegation:\n{timer_service}"
+            !cron.contains("timer my-app purge"),
+            "disabled timer must not be rendered:\n{cron}"
         );
         assert!(
-            !timer_service.contains("podman exec") && !timer_service.contains("ExecCondition"),
-            "timer service must not embed podman logic:\n{timer_service}"
+            !cron.contains("podman"),
+            "cron file must not embed podman logic:\n{cron}"
         );
+        assert!(cron.ends_with('\n'), "cron file must end with a newline:\n{cron}");
 
         // The service only delegates to `dpl start`/`dpl stop`; container logic
         // (db wait gates, the podman run, volumes) is resolved at runtime.
@@ -391,7 +372,7 @@ mod tests {
             timers: vec![TimerConfig {
                 name: "cleanup".into(),
                 description: None,
-                schedule: "hourly".into(),
+                schedule: "0 * * * *".parse().unwrap(),
                 script: "echo cleanup".into(),
                 disabled: false,
             }],
@@ -418,11 +399,10 @@ mod tests {
         // The build still runs: containerfile + build scripts are rendered.
         assert!(artifacts_dir.join("containerfile").exists());
         assert!(artifacts_dir.join("build-1.sh").exists());
-        // No runtime → no entrypoint, service, or timer files.
+        // No runtime → no entrypoint, service, or cron file.
         assert!(!artifacts_dir.join("run.sh").exists());
         assert!(!artifacts_dir.join("dpl--site.service").exists());
-        assert!(!artifacts_dir.join("dpl--site--cleanup.service").exists());
-        assert!(!artifacts_dir.join("dpl--site--cleanup.timer").exists());
+        assert!(!artifacts_dir.join("dpl--site.cron").exists());
 
         // The image has no EXPOSE or CMD - it exists only to be exported from.
         let containerfile = fs::read_to_string(artifacts_dir.join("containerfile")).unwrap();
