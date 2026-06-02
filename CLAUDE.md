@@ -37,7 +37,7 @@ cargo run -- --base /path/to/base <command> ...
   only resolves config/secrets and picks the login (e.g. `--root`), never spawns
   the client itself.
 - **Deploy state** (`deploy/state.rs`) - on-disk `.state.json` and the
-  `.deploy.lock` advisory `flock`. Acquired before any unit deploy runs.
+  `.unit.lock` advisory `flock`. Acquired before any unit deploy runs.
 
 Keep this split when adding functionality.
 
@@ -45,7 +45,7 @@ Keep this split when adding functionality.
 
 1. `dpl deploy <name> [path]` loads `UnitConfig`, calls
    `validate_references` against the current secrets and referenced units,
-   then `DeployState::acquire` takes the `flock` on `{unit_dir}/.deploy.lock`.
+   then `UnitState::acquire` takes the `flock` on `{unit_dir}/.unit.lock`.
 2. `AppUnit::deploy` bumps the version, writes the archive to
    `{deploy_dir}/app.tar.gz`, renders artifacts (`containerfile`, `run.sh`,
    `build-N.sh`, systemd service), runs `podman build`, optionally exports
@@ -53,7 +53,7 @@ Keep this split when adding functionality.
    with no `runtime` is a static build-and-export unit: it builds + exports
    only, skipping `run.sh`, the systemd service, the health check, and timers
    (the `port` lives inside `runtime`, so static units have none).
-3. `DeployState` is rewritten to `{unit_dir}/.state.json` at each phase
+3. `UnitState` is rewritten to `{unit_dir}/.state.json` at each phase
    transition; failures land as `status: failed`, with `phase` recording the
    `log::phase` active at the failure (e.g. `building app image` →
    `{unit_dir}/build.log`, `waiting for app` → `/var/log/podman/{scoped}.log`).
@@ -67,7 +67,7 @@ Keep this split when adding functionality.
 | minijinja | Template rendering for build artifacts |
 | serde / serde_yaml | Config and model (de)serialization |
 | aes-gcm | AES-256-GCM for the secrets store |
-| fs4 | Advisory `flock(2)` for `.deploy.lock` |
+| fs4 | Advisory `flock(2)` for `.unit.lock` |
 | thiserror / anyhow | Error types (`thiserror` for library, `anyhow` for CLI) |
 | tracing | Structured logging |
 
@@ -77,7 +77,7 @@ Keep this split when adding functionality.
 - Auth is out of scope - `dpl` runs locally (typically as root). Sensitive
   values live in `{base}/.secrets/` encrypted with an AES-256-GCM master key.
 - Entry points are CLI subcommands (`dpl deploy`, `dpl start`, `dpl stop`,
-  `dpl timer`, `dpl db ...`, `dpl secret ...`). No HTTP surface.
+  `dpl timer`, `dpl db ...`, `dpl secret ...`).
 - `dpl deploy` installs and starts the generated systemd unit for app
   and db-server units, and creates the database (via `podman exec` against
   the running server) for db units. Other unit types render artifacts but
