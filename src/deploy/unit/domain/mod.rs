@@ -12,15 +12,13 @@ use super::http_server::HttpServerUnit;
 use crate::{
     MainContext,
     config::UnitName,
-    deploy::{
-        DeployError,
-        state::UnitState,
-    },
+    deploy::DeployError,
     log,
     podman::{
         ensure_volume,
         volume_mountpoint,
     },
+    state::DeployState,
 };
 
 #[derive(Debug)]
@@ -35,7 +33,7 @@ impl<'a> DomainUnit<'a> {
         Self { ctx, name, config }
     }
 
-    pub fn deploy(self, state: &mut UnitState) -> Result<(), DeployError> {
+    pub fn deploy(self, state: &mut DeployState) -> Result<(), DeployError> {
         self.install_inner()?;
         state.set_ready();
         Ok(())

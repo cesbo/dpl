@@ -8,7 +8,9 @@ mod log;
 mod podman;
 mod secret;
 mod spinner;
+mod state;
 mod systemd;
+mod timers;
 
 use std::{
     path::PathBuf,

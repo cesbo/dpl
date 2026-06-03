@@ -19,16 +19,8 @@ use crate::{
     MainContext,
     config::UnitName,
     deploy::{
-        BuildFailure,
         DeployError,
-        DeployStateGuard,
-        DeployStatus,
-        Stage,
-        TimerState,
-        TimerStatus,
-        TimersState,
         UnitConfig,
-        UnitState,
         unit::{
             app::AppUnit,
             db::{
@@ -44,6 +36,18 @@ use crate::{
         fmt_ago,
         fmt_duration,
         print_field,
+    },
+    state::{
+        BuildFailure,
+        DeployState,
+        DeployStateGuard,
+        DeployStatus,
+        Stage,
+    },
+    timers::{
+        TimerState,
+        TimerStatus,
+        TimersState,
     },
 };
 
@@ -75,7 +79,7 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
     };
 
     let (_guard, mut state) =
-        UnitState::acquire(ctx, name).with_context(|| format!("acquire unit '{name}'"))?;
+        DeployState::acquire(ctx, name).with_context(|| format!("acquire unit '{name}'"))?;
 
     let version = state
         .bump_version()
@@ -132,8 +136,7 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
 pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
     let unit = load_unit(ctx, name)?;
 
-    let state = UnitState::load(ctx, name).with_context(|| format!("inspect unit '{name}'"))?;
-    let build = &state.latest_build;
+    let state = DeployState::load(ctx, name).with_context(|| format!("inspect unit '{name}'"))?;
     let now = Utc::now();
 
     const ACTIVE_VERSION: &str = "Active version";
@@ -142,18 +145,19 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
     print_field("Unit", unit.kind());
     match state.active_version {
         Some(active) => {
-            let deployed = if build.status == DeployStatus::Ready && build.version == active {
-                format!(" deployed {}", fmt_ago(now, build.updated_at))
-            } else {
-                String::new()
-            };
+            let deployed =
+                if state.last_status == DeployStatus::Ready && state.last_version == active {
+                    format!(" deployed {}", fmt_ago(now, state.updated_at))
+                } else {
+                    String::new()
+                };
             let info = format!("{}{}", console::style(active).green(), deployed);
             print_field(ACTIVE_VERSION, info);
         }
         None => print_field(ACTIVE_VERSION, console::style("-").red()),
     }
 
-    match build.status {
+    match state.last_status {
         DeployStatus::Idle => {
             print_field(LATEST_DEPLOY, "No deploys yet");
             return Ok(());
@@ -161,25 +165,25 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
         DeployStatus::Building => {
             let info = format!(
                 "Version {} in progress · started {}",
-                build.version,
-                fmt_ago(now, build.updated_at)
+                state.last_version,
+                fmt_ago(now, state.updated_at)
             );
             print_field(LATEST_DEPLOY, info);
         }
         DeployStatus::Failed => {
-            let stage = match build.failure {
+            let stage = match &state.failure {
                 Some(BuildFailure { stage, .. }) => format!(" during {}", stage),
                 None => String::new(),
             };
             let info = format!(
                 "Version {} build failed{} · {}",
-                build.version,
+                state.last_version,
                 stage,
-                fmt_ago(now, build.updated_at)
+                fmt_ago(now, state.updated_at)
             );
             print_field(LATEST_DEPLOY, info);
 
-            if let Some(failure) = &build.failure {
+            if let Some(failure) = &state.failure {
                 print_failure(ctx, name, failure);
             }
         }

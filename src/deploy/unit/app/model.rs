@@ -12,13 +12,13 @@ use crate::{
     deploy::{
         EnvList,
         UnitConfig,
-        state::UnitState,
     },
     error::{
         Location,
         RefError,
     },
     podman::NGINX_WWW_MOUNT,
+    state::DeployState,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -177,7 +177,7 @@ impl AppConfig {
             }
             // Absolute path of this app's static export inside the nginx container.
             "export" => {
-                let version = UnitState::get_active_version(ctx, unit_name)
+                let version = DeployState::get_active_version(ctx, unit_name)
                     .map_err(|_| RefError::not_deployed(unit_name.as_str()))?;
                 Ok(format!("{NGINX_WWW_MOUNT}/{unit_name}_{version}"))
             }
@@ -325,8 +325,8 @@ mod tests {
         let unit_dir = base.path().join("web");
         fs::create_dir_all(&unit_dir).unwrap();
         fs::write(
-            unit_dir.join(".unit.state"),
-            r#"{"active_version":3,"latest_build":{"version":3,"status":"ready","updated_at":"2026-05-31T07:00:00.000000Z"}}"#,
+            unit_dir.join(".deploy.state"),
+            r#"{"active_version":3,"last_version":3,"last_status":"ready","updated_at":"2026-05-31T07:00:00.000000Z"}"#,
         )
         .unwrap();
 
@@ -353,7 +353,7 @@ mod tests {
             base: base.path().to_path_buf(),
             master_key: None,
         };
-        // No .unit.state on disk → no active deployment to export from.
+        // No .deploy.state on disk → no active deployment to export from.
         let err = sample_config()
             .resolve_export(&ctx, &UnitName::new("web").unwrap(), "export")
             .unwrap_err();

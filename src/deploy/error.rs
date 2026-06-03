@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use super::state::Stage;
+use crate::state::Stage;
 
 #[derive(Debug, Error)]
 pub enum DeployError {

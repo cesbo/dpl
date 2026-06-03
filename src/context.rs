@@ -73,11 +73,11 @@ impl MainContext {
     }
 
     pub fn lock_path(&self, unit: &UnitName) -> PathBuf {
-        self.unit_dir(unit).join(".unit.lock")
+        self.unit_dir(unit).join(".deploy.lock")
     }
 
     pub fn state_path(&self, unit: &UnitName) -> PathBuf {
-        self.unit_dir(unit).join(".unit.state")
+        self.unit_dir(unit).join(".deploy.state")
     }
 
     pub fn timers_path(&self, unit: &UnitName) -> PathBuf {

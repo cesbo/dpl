@@ -104,38 +104,37 @@ pub struct BuildFailure {
     pub error: String,
 }
 
-#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct BuildResult {
-    pub version: u32,
-    pub status: DeployStatus,
-    pub updated_at: DateTime<Utc>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failure: Option<BuildFailure>,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct UnitState {
+pub struct DeployState {
     #[serde(skip)]
     path: PathBuf,
+
+    /// Timestamp of the most recent deploy attempt event.
+    pub updated_at: DateTime<Utc>,
 
     /// Currently running version
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_version: Option<u32>,
 
+    /// Increments on each deploy attempt
+    pub last_version: u32,
+
     /// Version for last attempt
-    pub latest_build: BuildResult,
+    pub last_status: DeployStatus,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<BuildFailure>,
 }
 
-impl UnitState {
+impl DeployState {
     /// Acquire the unit-level busy lock and load its state.
     pub fn acquire(
         ctx: &MainContext,
         name: &UnitName,
-    ) -> Result<(DeployStateGuard, UnitState), UnitStateError> {
+    ) -> Result<(DeployStateGuard, DeployState), UnitStateError> {
         let guard = DeployStateGuard::lock(ctx, name)?;
-        let state = UnitState::load(ctx, name)?;
-        if state.latest_build.status == DeployStatus::Building {
+        let state = DeployState::load(ctx, name)?;
+        if state.last_status == DeployStatus::Building {
             return Err(UnitStateError::Busy);
         }
 
@@ -148,16 +147,19 @@ impl UnitState {
         let content = match read_to_string(&path) {
             Ok(content) => content,
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                return Ok(UnitState {
+                return Ok(DeployState {
                     path,
+                    updated_at: Utc::now(),
                     active_version: None,
-                    latest_build: BuildResult::default(),
+                    last_version: 0,
+                    last_status: Default::default(),
+                    failure: None,
                 });
             }
             Err(err) => return Err(UnitStateError::Read(err)),
         };
 
-        let mut state: UnitState = serde_json::from_str(&content)
+        let mut state: DeployState = serde_json::from_str(&content)
             .map_err(|err| UnitStateError::Read(io::Error::new(io::ErrorKind::InvalidData, err)))?;
 
         state.path = path;
@@ -204,26 +206,25 @@ impl UnitState {
     /// Checked version addition.
     /// Sets the latest build status to `Building` and clears previous error.
     pub fn bump_version(&mut self) -> Result<u32, UnitStateError> {
-        let next = self
-            .latest_build
-            .version
+        let next_version = self
+            .last_version
             .checked_add(1)
             .ok_or(UnitStateError::VersionOverflow)?;
-        self.latest_build.version = next;
-        self.latest_build.status = DeployStatus::Building;
-        self.latest_build.updated_at = Utc::now();
-        self.latest_build.failure = None;
+        self.last_version = next_version;
+        self.last_status = DeployStatus::Building;
+        self.updated_at = Utc::now();
+        self.failure = None;
         self.save()?;
 
-        Ok(next)
+        Ok(next_version)
     }
 
     /// Marks the latest build failed, recording the [`Stage`] it failed in and
     /// the human-readable `message` cause for later inspection.
     pub fn set_failed(&mut self, stage: Stage, message: String) {
-        self.latest_build.status = DeployStatus::Failed;
-        self.latest_build.updated_at = Utc::now();
-        self.latest_build.failure = Some(BuildFailure {
+        self.last_status = DeployStatus::Failed;
+        self.updated_at = Utc::now();
+        self.failure = Some(BuildFailure {
             stage,
             error: message,
         });
@@ -232,10 +233,10 @@ impl UnitState {
 
     /// Sets build status to ready, sets build version as active version
     pub fn set_ready(&mut self) {
-        self.active_version = Some(self.latest_build.version);
-        self.latest_build.status = DeployStatus::Ready;
-        self.latest_build.updated_at = Utc::now();
-        self.latest_build.failure = None;
+        self.active_version = Some(self.last_version);
+        self.last_status = DeployStatus::Ready;
+        self.updated_at = Utc::now();
+        self.failure = None;
         let _ = self.save();
     }
 }
@@ -246,6 +247,8 @@ impl UnitState {
 /// race, acceptable since `dpl` deploys are serialized on a single host).
 pub struct DeployStateGuard {
     // Held for the flock; the lock is released when this is dropped.
+    // Never read directly, just keep the fd and lock alive.
+    #[allow(dead_code)]
     file: File,
     path: PathBuf,
 }
@@ -292,11 +295,14 @@ impl Drop for DeployStateGuard {
 mod tests {
     use super::*;
 
-    fn state_at(dir: &std::path::Path) -> UnitState {
-        UnitState {
-            path: dir.join(".unit.state"),
+    fn state_at(dir: &std::path::Path) -> DeployState {
+        DeployState {
+            path: dir.join(".deploy.state"),
+            updated_at: Utc::now(),
             active_version: None,
-            latest_build: BuildResult::default(),
+            last_version: 0,
+            last_status: Default::default(),
+            failure: None,
         }
     }
 
@@ -308,8 +314,8 @@ mod tests {
             Stage::Startup,
             "waiting for app: container exited with code 1 (ran 2s)".to_owned(),
         );
-        assert_eq!(state.latest_build.status, DeployStatus::Failed);
-        let failure = state.latest_build.failure.as_ref().unwrap();
+        assert_eq!(state.last_status, DeployStatus::Failed);
+        let failure = state.failure.as_ref().unwrap();
         assert_eq!(failure.stage, Stage::Startup);
         assert_eq!(
             failure.error,

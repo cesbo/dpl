@@ -222,6 +222,8 @@ impl TimersState {
 /// (carrying the usual flock-unlink race, acceptable on a single host).
 pub struct TimerLockGuard {
     // Held for the flock; the lock is released when this is dropped.
+    // Never read directly, just keep the fd and lock alive.
+    #[allow(dead_code)]
     file: File,
     path: PathBuf,
 }

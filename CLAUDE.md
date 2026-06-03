@@ -36,10 +36,10 @@ cargo run -- --base /path/to/base <command> ...
   (`sql.rs`), `dump`/`restore` (`backup.rs`), `console` (`console.rs`); `cmd/db.rs`
   only resolves config/secrets and picks the login (e.g. `--root`), never spawns
   the client itself.
-- **Deploy state** (`deploy/state.rs`) - on-disk `.unit.state` (JSON) and the
-  `.unit.lock` advisory `flock`. Acquired before any unit deploy runs. Timer
+- **Deploy state** (`state.rs`) - on-disk `.deploy.state` (JSON) and the
+  `.deploy.lock` advisory `flock`. Acquired before any unit deploy runs. Timer
   run records live separately in `.timers.state` with their own `.timers.lock`
-  (`deploy/timers.rs`).
+  (`timers.rs`).
 
 Keep this split when adding functionality.
 
@@ -47,7 +47,7 @@ Keep this split when adding functionality.
 
 1. `dpl deploy <name> [path]` loads `UnitConfig`, calls
    `validate_references` against the current secrets and referenced units,
-   then `UnitState::acquire` takes the `flock` on `{unit_dir}/.unit.lock`.
+   then `DeployState::acquire` takes the `flock` on `{unit_dir}/.deploy.lock`.
 2. `AppUnit::deploy` bumps the version, writes the archive to
    `{deploy_dir}/app.tar.gz`, renders artifacts (`containerfile`, `run.sh`,
    `build-N.sh`, systemd service), runs `podman build`, optionally exports
@@ -55,7 +55,7 @@ Keep this split when adding functionality.
    with no `runtime` is a static build-and-export unit: it builds + exports
    only, skipping `run.sh`, the systemd service, the health check, and timers
    (the `port` lives inside `runtime`, so static units have none).
-3. `UnitState` is rewritten to `{unit_dir}/.unit.state` at each phase
+3. `DeployState` is rewritten to `{unit_dir}/.deploy.state` at each phase
    transition; failures land as `status: failed`, with `phase` recording the
    `log::phase` active at the failure (e.g. `building app image` →
    `{unit_dir}/build.log`, `waiting for app` → `/var/log/podman/{scoped}.log`).
@@ -69,7 +69,7 @@ Keep this split when adding functionality.
 | minijinja | Template rendering for build artifacts |
 | serde / serde_yaml | Config and model (de)serialization |
 | aes-gcm | AES-256-GCM for the secrets store |
-| fs4 | Advisory `flock(2)` for `.unit.lock` |
+| fs4 | Advisory `flock(2)` for `.deploy.lock` |
 | thiserror / anyhow | Error types (`thiserror` for library, `anyhow` for CLI) |
 | tracing | Structured logging |
 

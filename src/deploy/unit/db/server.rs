@@ -14,11 +14,9 @@ use super::{
 use crate::{
     MainContext,
     config::UnitName,
-    deploy::{
-        DeployError,
-        state::UnitState,
-    },
+    deploy::DeployError,
     log,
+    state::DeployState,
     systemd,
 };
 
@@ -37,7 +35,7 @@ impl<'a> DbServerUnit<'a> {
         Self { ctx, name, config }
     }
 
-    pub fn deploy(self, state: &mut UnitState) -> Result<(), DeployError> {
+    pub fn deploy(self, state: &mut DeployState) -> Result<(), DeployError> {
         self.install_inner(Path::new(systemd::SYSTEMD_DIR))?;
         state.set_ready();
         Ok(())
@@ -50,7 +48,7 @@ impl<'a> DbServerUnit<'a> {
             return Ok(());
         }
 
-        let (_guard, mut state) = UnitState::acquire(self.ctx, self.name).map_err(|e| {
+        let (_guard, mut state) = DeployState::acquire(self.ctx, self.name).map_err(|e| {
             DeployError::step_prepare(format!("acquire db-server '{}'", self.name), e)
         })?;
 

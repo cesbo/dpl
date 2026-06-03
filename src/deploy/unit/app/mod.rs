@@ -38,11 +38,7 @@ use crate::{
     config::UnitName,
     deploy::{
         DeployError,
-        TimerError,
-        TimerState,
-        TimersState,
         UnitConfig,
-        state::UnitState,
         unit::{
             domain::{
                 DomainConfig,
@@ -52,6 +48,12 @@ use crate::{
         },
     },
     log,
+    state::DeployState,
+    timers::{
+        TimerError,
+        TimerState,
+        TimersState,
+    },
 };
 
 /// How long `dpl start` waits for each database dependency before giving up.
@@ -98,7 +100,7 @@ impl<'a> AppUnit<'a> {
     /// build image, install service.
     pub fn deploy<R: Read>(
         self,
-        state: &mut UnitState,
+        state: &mut DeployState,
         version: u32,
         archive: R,
     ) -> Result<(), DeployError> {
@@ -115,7 +117,7 @@ impl<'a> AppUnit<'a> {
         &self,
         version: u32,
         deploy_dir: &Path,
-        state: &mut UnitState,
+        state: &mut DeployState,
     ) -> Result<(), DeployError> {
         self.build_inner(deploy_dir, version)?;
 
@@ -154,7 +156,7 @@ impl<'a> AppUnit<'a> {
 
         let _phase = log::phase("updating dependent domains");
         for (name, config) in domains {
-            let (_guard, mut state) = match UnitState::acquire(self.ctx, self.name) {
+            let (_guard, mut state) = match DeployState::acquire(self.ctx, self.name) {
                 Ok(v) => v,
                 Err(err) => {
                     error!("skip domain '{name}': {err}");
@@ -276,10 +278,10 @@ impl<'a> AppUnit<'a> {
         }
 
         let version = {
-            let state = UnitState::load(self.ctx, self.name).map_err(|e| {
+            let state = DeployState::load(self.ctx, self.name).map_err(|e| {
                 DeployError::step_start(format!("load state for '{}'", self.name), e)
             })?;
-            state.active_version.unwrap_or(state.latest_build.version)
+            state.active_version.unwrap_or(state.last_version)
         };
 
         if version == 0 {
