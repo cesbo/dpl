@@ -88,17 +88,6 @@ impl DeployError {
         }
     }
 
-    pub fn step_timer(
-        info: impl Into<String>,
-        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
-    ) -> Self {
-        DeployError::Step {
-            stage: Stage::Timer,
-            info: info.into(),
-            source: source.into(),
-        }
-    }
-
     /// Stage and flattened cause (the failing step plus its source chain,
     /// joined by `": "`) for a `Step` error. `None` for `Reported`, which
     /// carries no detail.

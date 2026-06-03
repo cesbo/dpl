@@ -41,6 +41,26 @@ pub enum TimerStateError {
     Write(#[source] io::Error),
 }
 
+/// A timer run failed. The full cause is also recorded into [`TimersState`]
+/// (keyed by timer name) for `dpl inspect`; this is the value returned to the
+/// CLI so the process exits non-zero. A timer run is its own cron-driven
+/// operation, not a deploy phase, so it carries its own error rather than a
+/// `DeployError`.
+#[derive(Debug, Error)]
+pub enum TimerError {
+    /// The named timer doesn't exist on the unit, or is disabled.
+    #[error("unknown or disabled timer '{0}'")]
+    Unknown(String),
+
+    /// The timer's command failed to spawn or exited non-zero.
+    #[error("timer '{name}' failed")]
+    Run {
+        name: String,
+        #[source]
+        source: io::Error,
+    },
+}
+
 /// Outcome of a single timer run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

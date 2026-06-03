@@ -38,6 +38,7 @@ use crate::{
     config::UnitName,
     deploy::{
         DeployError,
+        TimerError,
         TimerState,
         TimersState,
         UnitConfig,
@@ -329,21 +330,13 @@ impl<'a> AppUnit<'a> {
     }
 
     /// Run one of the unit's timers once.
-    pub fn run_timer(&self, timers: &mut TimersState, timer_name: &str) -> Result<(), DeployError> {
+    pub fn run_timer(&self, timers: &mut TimersState, timer_name: &str) -> Result<(), TimerError> {
         let timer = self
             .config
             .timers
             .iter()
             .find(|t| t.name == timer_name && !t.disabled)
-            .ok_or_else(|| {
-                DeployError::step_timer(
-                    format!(
-                        "unknown or disabled timer '{timer_name}' on '{}'",
-                        self.name
-                    ),
-                    io::Error::other("timer not found"),
-                )
-            })?;
+            .ok_or_else(|| TimerError::Unknown(timer_name.to_string()))?;
 
         // Carry-forward fields (last success, consecutive failures) are derived
         // from the timer's prior record; capture it once before overwriting.
@@ -382,10 +375,10 @@ impl<'a> AppUnit<'a> {
                     timer_name,
                     TimerState::failed(prev.as_ref(), started_at, elapsed, &cause),
                 );
-                Err(DeployError::step_timer(
-                    format!("timer '{timer_name}' on '{}'", self.name),
-                    io::Error::other(cause),
-                ))
+                Err(TimerError::Run {
+                    name: timer_name.to_string(),
+                    source: io::Error::other(cause),
+                })
             }
             Err(err) => {
                 let err = crate::podman::podman_spawn_error(err);
@@ -393,10 +386,10 @@ impl<'a> AppUnit<'a> {
                     timer_name,
                     TimerState::failed(prev.as_ref(), started_at, elapsed, err.to_string()),
                 );
-                Err(DeployError::step_timer(
-                    format!("run timer '{timer_name}' on '{}'", self.name),
-                    err,
-                ))
+                Err(TimerError::Run {
+                    name: timer_name.to_string(),
+                    source: err,
+                })
             }
         }
     }

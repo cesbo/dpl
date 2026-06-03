@@ -78,9 +78,6 @@ pub enum Stage {
     Start,
     /// Tearing the unit's container down (`dpl stop`, the service `ExecStop`).
     Stop,
-    /// Running one of a unit's timers (`dpl timer`, the timer service's
-    /// `ExecStart`): `podman exec` of the timer script in the live container.
-    Timer,
 }
 
 impl fmt::Display for Stage {
@@ -92,7 +89,6 @@ impl fmt::Display for Stage {
             Stage::Startup => "startup",
             Stage::Start => "start",
             Stage::Stop => "stop",
-            Stage::Timer => "timer",
         };
         f.write_str(name)
     }

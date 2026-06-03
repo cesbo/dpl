@@ -17,6 +17,7 @@ pub use state::{
     UnitState,
 };
 pub use timers::{
+    TimerError,
     TimerState,
     TimerStatus,
     TimersState,
