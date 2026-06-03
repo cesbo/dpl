@@ -7,7 +7,10 @@ pub use self::model::HttpServerConfig;
 use crate::{
     MainContext,
     config::UnitName,
-    deploy::DeployError,
+    deploy::{
+        DeployError,
+        RunError,
+    },
     log,
     podman::{
         NGINX_WWW_MOUNT,
@@ -135,11 +138,10 @@ impl<'a> HttpServerUnit<'a> {
     }
 
     /// Run the nginx container in the foreground.
-    pub fn start(&self) -> Result<(), DeployError> {
+    pub fn start(&self) -> Result<(), RunError> {
         let container = self.name.scoped_unit_name();
-        let mut cmd = crate::podman::PodmanRun::new(&container).map_err(|e| {
-            DeployError::step_start(format!("prepare podman to run '{}'", self.name), e)
-        })?;
+        let mut cmd = crate::podman::PodmanRun::new(&container)
+            .map_err(|e| RunError::new(format!("prepare podman to run '{}'", self.name), e))?;
 
         cmd.publish(HTTP_PORT, HTTP_PORT);
         if self.config.https {
@@ -151,12 +153,12 @@ impl<'a> HttpServerUnit<'a> {
 
         // `exec_run` only returns when the exec itself fails.
         let err = cmd.exec(&self.config.image);
-        Err(DeployError::step_start("exec podman run", err))
+        Err(RunError::new("exec podman run", err))
     }
 
     /// Stop and remove the http-server container.
-    pub fn stop(&self) -> Result<(), DeployError> {
+    pub fn stop(&self) -> Result<(), RunError> {
         crate::podman::stop_and_remove(self.name)
-            .map_err(|e| DeployError::step_stop(format!("stop container '{}'", self.name), e))
+            .map_err(|e| RunError::new(format!("stop container '{}'", self.name), e))
     }
 }

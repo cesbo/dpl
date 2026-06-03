@@ -73,11 +73,6 @@ pub enum DeployStage {
     Install,
     /// Waiting for the deployed unit to become healthy (its port/ping check).
     Startup,
-    /// Bringing the unit's container up (`dpl start`, the service `ExecStart`):
-    /// prerequisites, db-dependency waits, and the foreground `podman run`.
-    Start,
-    /// Tearing the unit's container down (`dpl stop`, the service `ExecStop`).
-    Stop,
 }
 
 impl fmt::Display for DeployStage {
@@ -87,8 +82,6 @@ impl fmt::Display for DeployStage {
             DeployStage::Build => "build",
             DeployStage::Install => "install",
             DeployStage::Startup => "startup",
-            DeployStage::Start => "start",
-            DeployStage::Stop => "stop",
         };
         f.write_str(name)
     }
@@ -222,8 +215,8 @@ impl DeployState {
         Ok(next_version)
     }
 
-    /// Marks the latest build failed, recording the [`Stage`] it failed in and
-    /// the human-readable `message` cause for later inspection.
+    /// Marks the latest deploy attempt failed, recording the [`DeployStage`] it
+    /// failed in and the human-readable `message` cause for later inspection.
     pub fn set_failed(&mut self, stage: DeployStage, message: String) {
         self.last_status = DeployStatus::Failed;
         self.updated_at = Utc::now();

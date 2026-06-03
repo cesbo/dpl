@@ -14,7 +14,10 @@ use super::{
 use crate::{
     MainContext,
     config::UnitName,
-    deploy::DeployError,
+    deploy::{
+        DeployError,
+        RunError,
+    },
     log,
     state::DeployState,
     systemd,
@@ -119,15 +122,14 @@ impl<'a> DbServerUnit<'a> {
     }
 
     /// Run the db-server container in the foreground.
-    pub fn start(&self) -> Result<(), DeployError> {
+    pub fn start(&self) -> Result<(), RunError> {
         let password = self.ctx.resolve_secret(&self.config.secret).map_err(|e| {
-            DeployError::step_start(format!("resolve secret '{}'", &self.config.secret), e)
+            RunError::new(format!("resolve secret '{}'", &self.config.secret), e)
         })?;
 
         let container = self.name.scoped_unit_name();
-        let mut cmd = crate::podman::PodmanRun::new(&container).map_err(|e| {
-            DeployError::step_start(format!("prepare podman to run '{}'", self.name), e)
-        })?;
+        let mut cmd = crate::podman::PodmanRun::new(&container)
+            .map_err(|e| RunError::new(format!("prepare podman to run '{}'", self.name), e))?;
 
         let engine = self.config.engine;
         cmd.env(engine.password_env(), password);
@@ -136,12 +138,12 @@ impl<'a> DbServerUnit<'a> {
 
         // `exec_run` only returns when the exec itself fails.
         let err = cmd.exec(self.config.image());
-        Err(DeployError::step_start("exec podman run", err))
+        Err(RunError::new("exec podman run", err))
     }
 
     /// Stop and remove the db-server container.
-    pub fn stop(&self) -> Result<(), DeployError> {
+    pub fn stop(&self) -> Result<(), RunError> {
         crate::podman::stop_and_remove(self.name)
-            .map_err(|e| DeployError::step_stop(format!("stop container '{}'", self.name), e))
+            .map_err(|e| RunError::new(format!("stop container '{}'", self.name), e))
     }
 }

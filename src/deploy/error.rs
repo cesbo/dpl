@@ -66,28 +66,6 @@ impl DeployError {
         }
     }
 
-    pub fn step_start(
-        info: impl Into<String>,
-        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
-    ) -> Self {
-        DeployError::Step {
-            stage: DeployStage::Start,
-            info: info.into(),
-            source: source.into(),
-        }
-    }
-
-    pub fn step_stop(
-        info: impl Into<String>,
-        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
-    ) -> Self {
-        DeployError::Step {
-            stage: DeployStage::Stop,
-            info: info.into(),
-            source: source.into(),
-        }
-    }
-
     /// Stage and flattened cause (the failing step plus its source chain,
     /// joined by `": "`) for a `Step` error. `None` for `Reported`, which
     /// carries no detail.
@@ -112,5 +90,30 @@ impl DeployError {
         }
 
         Some((*stage, messages.join(": ")))
+    }
+}
+
+/// A container-lifecycle failure from `dpl start` / `dpl stop`. Unlike
+/// [`DeployError`], these never feed `DeployState` (no version, no build log,
+/// no recorded stage) — the systemd service runs them independently of any
+/// deploy — so the error only carries the failing step and its cause for the
+/// CLI to print.
+#[derive(Debug, Error)]
+#[error("{info}")]
+pub struct RunError {
+    info: String,
+    #[source]
+    source: Box<dyn std::error::Error + Send + Sync>,
+}
+
+impl RunError {
+    pub fn new(
+        info: impl Into<String>,
+        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+    ) -> Self {
+        RunError {
+            info: info.into(),
+            source: source.into(),
+        }
     }
 }
