@@ -28,9 +28,9 @@ use crate::{
         ConfigError,
         UnitName,
     },
-    error::{
+    reference::{
         Location,
-        RefError,
+        ReferenceError,
     },
 };
 
@@ -65,7 +65,7 @@ impl UnitConfig {
         })
     }
 
-    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), ReferenceError> {
         match self {
             UnitConfig::App(config) => config.validate_references(ctx),
             UnitConfig::Db(config) => config.validate_references(ctx),
@@ -90,11 +90,11 @@ impl UnitConfig {
         ctx: &MainContext,
         unit_name: &UnitName,
         key: &str,
-    ) -> Result<String, RefError> {
+    ) -> Result<String, ReferenceError> {
         match self {
             UnitConfig::App(config) => config.resolve_export(ctx, unit_name, key),
             UnitConfig::Db(config) => config.resolve_export(ctx, unit_name, key),
-            _ => Err(RefError::unknown_export(key)),
+            _ => Err(ReferenceError::unknown_export(key)),
         }
     }
 }
@@ -103,9 +103,9 @@ pub fn resolve_export(
     ctx: &MainContext,
     unit_name: &UnitName,
     key: &str,
-) -> Result<String, RefError> {
+) -> Result<String, ReferenceError> {
     UnitConfig::load(ctx, unit_name)
-        .map_err(RefError::from)
+        .map_err(ReferenceError::from)
         .and_then(|cfg| cfg.resolve_export(ctx, unit_name, key))
         .map_err(|err| err.at(Location::unit(unit_name.as_str())))
 }
@@ -157,7 +157,7 @@ mod tests {
     use super::*;
     use crate::{
         config::SecretName,
-        error::RefErrorKind,
+        reference::ReferenceErrorKind,
     };
 
     #[test]
@@ -272,7 +272,7 @@ secret: pg-pass
             err.trail[2],
         );
         assert!(
-            matches!(err.kind, RefErrorKind::UnknownUnit { ref name } if name == "nope"),
+            matches!(err.kind, ReferenceErrorKind::UnknownUnit { ref name } if name == "nope"),
             "unexpected kind: {:?}",
             err.kind,
         );
@@ -345,7 +345,7 @@ secret: pg-pass
         assert!(matches!(&err.trail[2], Location::Token { raw } if raw == "${db-test:password}"));
         assert!(matches!(&err.trail[3], Location::Field { path } if path == "runtime.env.X"));
         assert!(
-            matches!(err.kind, RefErrorKind::Secret(SecretError::NotFound { ref name }) if name == "foo-db-test-password"),
+            matches!(err.kind, ReferenceErrorKind::Secret(SecretError::NotFound { ref name }) if name == "foo-db-test-password"),
             "unexpected kind: {:?}",
             err.kind,
         );
@@ -417,7 +417,7 @@ secret: pg-pass
         assert!(matches!(&err.trail[1], Location::Unit { name } if name == "pg-main"));
         assert!(matches!(&err.trail[2], Location::Unit { name } if name == "db-test"));
         assert!(
-            matches!(err.kind, RefErrorKind::Secret(SecretError::NotFound { ref name }) if name == "pg-pass"),
+            matches!(err.kind, ReferenceErrorKind::Secret(SecretError::NotFound { ref name }) if name == "pg-pass"),
             "unexpected kind: {:?}",
             err.kind,
         );
@@ -432,7 +432,7 @@ secret: pg-pass
         )
         .unwrap_err();
         assert!(matches!(&err.trail[0], Location::Unit { name } if name == "nope"));
-        assert!(matches!(err.kind, RefErrorKind::UnknownUnit { ref name } if name == "nope"));
+        assert!(matches!(err.kind, ReferenceErrorKind::UnknownUnit { ref name } if name == "nope"));
     }
 
     #[test]
@@ -456,7 +456,7 @@ secret: pg-pass
         };
         let err = resolve_export(&ctx, &UnitName::new("example-com").unwrap(), "host").unwrap_err();
         assert!(matches!(&err.trail[0], Location::Unit { name } if name == "example-com"));
-        assert!(matches!(err.kind, RefErrorKind::UnknownExport { ref key } if key == "host"));
+        assert!(matches!(err.kind, ReferenceErrorKind::UnknownExport { ref key } if key == "host"));
     }
 
     #[test]

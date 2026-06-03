@@ -19,9 +19,9 @@ use crate::{
         UnitConfig,
         http_server::HttpServerConfig,
     },
-    error::{
+    reference::{
         Location,
-        RefError,
+        ReferenceError,
     },
 };
 
@@ -94,7 +94,7 @@ impl DomainConfig {
         deps
     }
 
-    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), ReferenceError> {
         self.resolve_server(ctx)?
             .validate_references(ctx)
             .map_err(|err| err.at(Location::unit(self.server.as_str())))?;
@@ -112,12 +112,12 @@ impl DomainConfig {
         Ok(())
     }
 
-    pub fn resolve_server(&self, ctx: &MainContext) -> Result<HttpServerConfig, RefError> {
+    pub fn resolve_server(&self, ctx: &MainContext) -> Result<HttpServerConfig, ReferenceError> {
         UnitConfig::load(ctx, &self.server)
-            .map_err(RefError::from)
+            .map_err(ReferenceError::from)
             .and_then(|cfg| match cfg {
                 UnitConfig::HttpServer(server) => Ok(server),
-                _ => Err(RefError::wrong_unit_type(
+                _ => Err(ReferenceError::wrong_unit_type(
                     self.server.to_string(),
                     "http-server",
                 )),
@@ -315,7 +315,7 @@ routes:
 
         use tempfile::TempDir;
 
-        use crate::error::RefErrorKind;
+        use crate::reference::ReferenceErrorKind;
 
         // `server: nginx` resolves to an app unit, not http-server.
         let base = TempDir::new().unwrap();
@@ -339,7 +339,7 @@ routes:
         assert!(
             matches!(
                 &err.kind,
-                RefErrorKind::WrongUnitType { unit, expected }
+                ReferenceErrorKind::WrongUnitType { unit, expected }
                     if unit == "nginx" && *expected == "http-server",
             ),
             "unexpected error: {err:?}",

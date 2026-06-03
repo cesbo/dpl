@@ -15,9 +15,9 @@ pub use self::{
 use crate::{
     MainContext,
     config::UnitName,
-    error::{
+    reference::{
         Location,
-        RefError,
+        ReferenceError,
     },
 };
 
@@ -29,7 +29,7 @@ impl EnvList {
         &self,
         ctx: &MainContext,
         prefix: &str,
-    ) -> Result<BTreeMap<String, String>, RefError> {
+    ) -> Result<BTreeMap<String, String>, ReferenceError> {
         self.0
             .iter()
             .map(|(k, v)| {

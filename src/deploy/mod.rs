@@ -1,8 +1,10 @@
 mod error;
-pub mod unit;
+mod unit;
 
-pub use error::{
-    DeployError,
-    RunError,
+pub use self::{
+    error::{
+        DeployError,
+        RunError,
+    },
+    unit::*,
 };
-pub use unit::UnitConfig;

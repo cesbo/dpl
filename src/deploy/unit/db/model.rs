@@ -16,9 +16,9 @@ use crate::{
         deserialize_optional_string_from_scalar,
     },
     deploy::unit::UnitConfig,
-    error::{
+    reference::{
         Location,
-        RefError,
+        ReferenceError,
     },
 };
 
@@ -55,7 +55,7 @@ pub struct DbConfig {
 }
 
 impl DbConfig {
-    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), ReferenceError> {
         self.resolve_password(ctx)?;
         self.resolve_server(ctx)?
             .validate_references(ctx)
@@ -68,7 +68,7 @@ impl DbConfig {
         ctx: &MainContext,
         unit_name: &UnitName,
         key: &str,
-    ) -> Result<String, RefError> {
+    ) -> Result<String, ReferenceError> {
         match key {
             "user" => Ok(self.user.clone()),
             "name" => Ok(unit_name.to_string()),
@@ -90,22 +90,22 @@ impl DbConfig {
                     db = unit_name,
                 ))
             }
-            _ => Err(RefError::unknown_export(key)),
+            _ => Err(ReferenceError::unknown_export(key)),
         }
     }
 
-    fn resolve_password(&self, ctx: &MainContext) -> Result<String, RefError> {
+    fn resolve_password(&self, ctx: &MainContext) -> Result<String, ReferenceError> {
         ctx.resolve_secret(&self.secret)
-            .map_err(RefError::from)
+            .map_err(ReferenceError::from)
             .map_err(|err| err.at(Location::field("secret")))
     }
 
-    fn resolve_server(&self, ctx: &MainContext) -> Result<DbServerConfig, RefError> {
+    fn resolve_server(&self, ctx: &MainContext) -> Result<DbServerConfig, ReferenceError> {
         UnitConfig::load(ctx, &self.server)
-            .map_err(RefError::from)
+            .map_err(ReferenceError::from)
             .and_then(|cfg| match cfg {
                 UnitConfig::DbServer(server) => Ok(server),
-                _ => Err(RefError::wrong_unit_type(
+                _ => Err(ReferenceError::wrong_unit_type(
                     self.server.to_string(),
                     "db-server",
                 )),
@@ -224,14 +224,14 @@ impl DbServerConfig {
         self.engine.image(version)
     }
 
-    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), ReferenceError> {
         self.resolve_password(ctx)?;
         Ok(())
     }
 
-    fn resolve_password(&self, ctx: &MainContext) -> Result<String, RefError> {
+    fn resolve_password(&self, ctx: &MainContext) -> Result<String, ReferenceError> {
         ctx.resolve_secret(&self.secret)
-            .map_err(RefError::from)
+            .map_err(ReferenceError::from)
             .map_err(|err| err.at(Location::field("secret")))
     }
 }
@@ -239,7 +239,7 @@ impl DbServerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::RefErrorKind;
+    use crate::reference::ReferenceErrorKind;
 
     #[test]
     fn parse_db_config() {
@@ -359,7 +359,7 @@ secret: app1-pass
             .resolve_export(&MainContext::default(), &unit, "unknown")
             .unwrap_err();
         assert!(
-            matches!(&err.kind, RefErrorKind::UnknownExport { key } if key == "unknown"),
+            matches!(&err.kind, ReferenceErrorKind::UnknownExport { key } if key == "unknown"),
             "unexpected error: {err:?}"
         );
     }

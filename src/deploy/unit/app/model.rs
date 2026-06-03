@@ -13,9 +13,9 @@ use crate::{
         UnitName,
     },
     deploy::UnitConfig,
-    error::{
+    reference::{
         Location,
-        RefError,
+        ReferenceError,
     },
     podman::NGINX_WWW_MOUNT,
     state::DeployState,
@@ -124,19 +124,19 @@ impl AppConfig {
         deps
     }
 
-    pub fn database_deps(&self, ctx: &MainContext) -> Result<Vec<UnitName>, RefError> {
+    pub fn database_deps(&self, ctx: &MainContext) -> Result<Vec<UnitName>, ReferenceError> {
         let mut dbs = Vec::new();
         for dep in self.unit_deps() {
             match UnitConfig::load(ctx, &dep) {
                 Ok(UnitConfig::Db(_)) => dbs.push(dep),
                 Ok(_) => continue,
-                Err(err) => return Err(RefError::from(err).at(Location::unit(dep.as_str()))),
+                Err(err) => return Err(ReferenceError::from(err).at(Location::unit(dep.as_str()))),
             }
         }
         Ok(dbs)
     }
 
-    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), RefError> {
+    pub fn validate_references(&self, ctx: &MainContext) -> Result<(), ReferenceError> {
         if let Some(runtime) = &self.runtime {
             runtime.env.resolve(ctx, "runtime.env")?;
         }
@@ -151,7 +151,7 @@ impl AppConfig {
                     .validate_references(ctx)
                     .map_err(|err| err.at(Location::unit(dep.as_str())))?,
                 Ok(_) => continue,
-                Err(err) => return Err(RefError::from(err).at(Location::unit(dep.as_str()))),
+                Err(err) => return Err(ReferenceError::from(err).at(Location::unit(dep.as_str()))),
             }
         }
 
@@ -163,7 +163,7 @@ impl AppConfig {
         ctx: &MainContext,
         unit_name: &UnitName,
         key: &str,
-    ) -> Result<String, RefError> {
+    ) -> Result<String, ReferenceError> {
         match key {
             // `http://host:port` for `proxy_pass`.
             "url" => {
@@ -178,18 +178,18 @@ impl AppConfig {
             // Absolute path of this app's static export inside the nginx container.
             "export" => {
                 let version = DeployState::get_active_version(ctx, unit_name)
-                    .map_err(|_| RefError::not_deployed(unit_name.as_str()))?;
+                    .map_err(|_| ReferenceError::not_deployed(unit_name.as_str()))?;
                 Ok(format!("{NGINX_WWW_MOUNT}/{unit_name}_{version}"))
             }
-            _ => Err(RefError::unknown_export(key)),
+            _ => Err(ReferenceError::unknown_export(key)),
         }
     }
 
-    fn runtime_port(&self, key: &str) -> Result<u16, RefError> {
+    fn runtime_port(&self, key: &str) -> Result<u16, ReferenceError> {
         self.runtime
             .as_ref()
             .map(|runtime| runtime.port)
-            .ok_or_else(|| RefError::unknown_export(key))
+            .ok_or_else(|| ReferenceError::unknown_export(key))
     }
 }
 
@@ -346,7 +346,7 @@ mod tests {
     fn app_resolve_export_not_deployed() {
         use tempfile::TempDir;
 
-        use crate::error::RefErrorKind;
+        use crate::reference::ReferenceErrorKind;
 
         let base = TempDir::new().unwrap();
         let ctx = MainContext {
@@ -357,7 +357,7 @@ mod tests {
         let err = sample_config()
             .resolve_export(&ctx, &UnitName::new("web").unwrap(), "export")
             .unwrap_err();
-        assert!(matches!(err.kind, RefErrorKind::NotDeployed { name } if name == "web"));
+        assert!(matches!(err.kind, ReferenceErrorKind::NotDeployed { name } if name == "web"));
     }
 
     #[test]
@@ -384,7 +384,7 @@ mod tests {
 
     #[test]
     fn static_app_resolve_export_url_and_socket_error() {
-        use crate::error::RefErrorKind;
+        use crate::reference::ReferenceErrorKind;
 
         let ctx = MainContext::default();
         let config = static_config();
@@ -395,7 +395,7 @@ mod tests {
         for key in ["url", "socket"] {
             let err = config.resolve_export(&ctx, &name, key).unwrap_err();
             assert!(
-                matches!(&err.kind, RefErrorKind::UnknownExport { key: k } if k == key),
+                matches!(&err.kind, ReferenceErrorKind::UnknownExport { key: k } if k == key),
                 "expected UnknownExport for {key}, got {:?}",
                 err.kind
             );

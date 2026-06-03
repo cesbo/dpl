@@ -12,10 +12,10 @@ use crate::{
         SecretName,
         UnitName,
     },
-    deploy::unit,
-    error::{
+    deploy::resolve_export,
+    reference::{
         Location,
-        RefError,
+        ReferenceError,
     },
 };
 
@@ -169,7 +169,7 @@ impl Value {
         })
     }
 
-    pub fn render(&self, ctx: &MainContext) -> Result<String, RefError> {
+    pub fn render(&self, ctx: &MainContext) -> Result<String, ReferenceError> {
         let mut out = String::new();
         for seg in &self.0 {
             match seg {
@@ -181,10 +181,10 @@ impl Value {
                         Ns::Secret => {
                             let secret = SecretName::new(name.clone()).expect("validated at parse");
                             ctx.resolve_secret(&secret)
-                                .map_err(RefError::from)
+                                .map_err(ReferenceError::from)
                                 .map_err(|e| e.at(Location::token(&token)))?
                         }
-                        Ns::Unit(unit_name) => unit::resolve_export(ctx, unit_name, name)
+                        Ns::Unit(unit_name) => resolve_export(ctx, unit_name, name)
                             .map_err(|e| e.at(Location::token(&token)))?,
                     };
                     out.push_str(&value);
@@ -281,7 +281,7 @@ impl<'de> Deserialize<'de> for Value {
 mod tests {
     use super::*;
     use crate::{
-        error::RefErrorKind,
+        reference::ReferenceErrorKind,
         secret::SecretError,
     };
 
@@ -521,7 +521,7 @@ mod tests {
         let err = v.render(&ctx).unwrap_err();
         assert!(matches!(&err.trail[0], Location::Token { raw } if raw == "${secret:nope}"));
         assert!(
-            matches!(err.kind, RefErrorKind::Secret(SecretError::NotFound { ref name }) if name == "nope")
+            matches!(err.kind, ReferenceErrorKind::Secret(SecretError::NotFound { ref name }) if name == "nope")
         );
     }
 
@@ -551,7 +551,7 @@ mod tests {
         // Trail innermost-first: unit "nope" → token "${nope:user}".
         assert!(matches!(&err.trail[0], Location::Unit { name } if name == "nope"));
         assert!(matches!(&err.trail[1], Location::Token { raw } if raw == "${nope:user}"));
-        assert!(matches!(err.kind, RefErrorKind::UnknownUnit { ref name } if name == "nope"));
+        assert!(matches!(err.kind, ReferenceErrorKind::UnknownUnit { ref name } if name == "nope"));
     }
 
     #[test]
@@ -571,6 +571,8 @@ mod tests {
         // Trail innermost-first: unit "app-db" → token "${app-db:unknown}".
         assert!(matches!(&err.trail[0], Location::Unit { name } if name == "app-db"));
         assert!(matches!(&err.trail[1], Location::Token { raw } if raw == "${app-db:unknown}"));
-        assert!(matches!(err.kind, RefErrorKind::UnknownExport { ref key } if key == "unknown"));
+        assert!(
+            matches!(err.kind, ReferenceErrorKind::UnknownExport { ref key } if key == "unknown")
+        );
     }
 }

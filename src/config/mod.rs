@@ -4,11 +4,13 @@ mod secret_name;
 mod string_from_scalar;
 mod unit_name;
 
-pub use env::{
-    EnvList,
-    Value,
+pub use self::{
+    env::{
+        EnvList,
+        Value,
+    },
+    error::ConfigError,
+    secret_name::SecretName,
+    string_from_scalar::deserialize_optional_string_from_scalar,
+    unit_name::UnitName,
 };
-pub use error::ConfigError;
-pub use secret_name::SecretName;
-pub use string_from_scalar::deserialize_optional_string_from_scalar;
-pub use unit_name::UnitName;

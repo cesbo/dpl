@@ -5,7 +5,7 @@ use serde::{
 
 use crate::{
     MainContext,
-    error::RefError,
+    reference::ReferenceError,
 };
 
 const DEFAULT_IMAGE: &str = "docker.io/library/nginx:stable";
@@ -25,7 +25,7 @@ fn default_image() -> String {
 }
 
 impl HttpServerConfig {
-    pub fn validate_references(&self, _ctx: &MainContext) -> Result<(), RefError> {
+    pub fn validate_references(&self, _ctx: &MainContext) -> Result<(), ReferenceError> {
         Ok(())
     }
 }

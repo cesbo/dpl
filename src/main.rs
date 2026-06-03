@@ -4,7 +4,7 @@ mod cmd;
 mod config;
 mod context;
 mod deploy;
-mod error;
+mod reference;
 mod log;
 mod podman;
 mod secret;

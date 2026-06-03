@@ -24,7 +24,7 @@ use crate::{
         render_template,
     },
     config::UnitName,
-    error::RefError,
+    reference::ReferenceError,
 };
 
 const NGINX_CONFIG_TEMPLATE: &str = "nginx-config";
@@ -99,7 +99,7 @@ enum RenderRoute<'a> {
 }
 
 impl<'a> RenderRoute<'a> {
-    fn new(ctx: &MainContext, route: &'a RouteConfig) -> Result<RenderRoute<'a>, RefError> {
+    fn new(ctx: &MainContext, route: &'a RouteConfig) -> Result<RenderRoute<'a>, ReferenceError> {
         match &route {
             RouteConfig::ReverseProxy { location, target } => {
                 let render_route = RenderRoute::ReverseProxy {

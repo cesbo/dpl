@@ -28,5 +28,5 @@ pub enum ArtifactError {
     CurrentExe(#[source] io::Error),
 
     #[error("resolve env")]
-    Env(#[from] crate::error::RefError),
+    Env(#[from] crate::reference::ReferenceError),
 }

@@ -32,7 +32,7 @@ use crate::{
     config::UnitName,
     deploy::{
         UnitConfig,
-        unit::db::{
+        db::{
             DbConfig,
             DbServerConfig,
             wait_until_ready,

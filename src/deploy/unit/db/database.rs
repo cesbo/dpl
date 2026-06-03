@@ -18,7 +18,7 @@ use crate::{
         DeployError,
         UnitConfig,
     },
-    error::RefError,
+    reference::ReferenceError,
     log,
     state::DeployState,
 };
@@ -50,7 +50,7 @@ impl<'a> DbUnit<'a> {
         let UnitConfig::DbServer(server_config) = unit else {
             return Err(DeployError::step_prepare(
                 format!("load db-server '{}' config", &self.config.server),
-                RefError::wrong_unit_type(self.config.server.to_string(), "db-server"),
+                ReferenceError::wrong_unit_type(self.config.server.to_string(), "db-server"),
             ));
         };
 

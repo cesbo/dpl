@@ -21,15 +21,13 @@ use crate::{
     deploy::{
         DeployError,
         UnitConfig,
-        unit::{
-            app::AppUnit,
-            db::{
-                DbServerUnit,
-                DbUnit,
-            },
-            domain::DomainUnit,
-            http_server::HttpServerUnit,
+        app::AppUnit,
+        db::{
+            DbServerUnit,
+            DbUnit,
         },
+        domain::DomainUnit,
+        http_server::HttpServerUnit,
     },
     log::{
         DeployLog,
