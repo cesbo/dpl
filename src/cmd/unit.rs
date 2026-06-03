@@ -40,7 +40,7 @@ use crate::{
     log::{
         DeployLog,
         fmt_ago,
-        fmt_stamp,
+        fmt_duration,
         print_field,
     },
 };
@@ -204,45 +204,63 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
         UnitConfig::Domain(_) => {}
     }
 
-    print_timers(now, &state);
+    if !state.timers.is_empty() {
+        println!();
+        print_field("Timers", "");
+        print_timers(now, &state);
+    }
 
     Ok(())
 }
 
 /// Print the last run of each timer (only app units record any).
 fn print_timers(now: chrono::DateTime<Utc>, state: &UnitState) {
-    if state.timers.is_empty() {
-        return;
-    }
-
-    println!();
-    print_field("Timers", "");
     for (timer, run) in &state.timers {
-        let info = match run.status {
+        let mut items = Vec::new();
+
+        match run.status {
             TimerStatus::Running => {
-                let mark = console::style("running").yellow();
-                let ago = fmt_ago(now, run.started_at);
-                format!("{mark} · started {ago}")
+                items.push(format!(
+                    "{} {}",
+                    console::style("started").yellow(),
+                    fmt_ago(now, run.last_run_at)
+                ));
             }
-            TimerStatus::Success | TimerStatus::Failed => {
-                let mark = if run.status == TimerStatus::Success {
-                    console::style("success").green()
-                } else {
-                    console::style("failed").red()
-                };
-                let ago = fmt_ago(now, run.started_at);
-                let duration = match run.duration_ms {
-                    Some(ms) => {
-                        let v = Duration::from_millis(ms);
-                        let v = fmt_stamp(v);
-                        format!(" · duration {v}")
-                    }
-                    None => String::new(),
-                };
-                format!("{mark} · started {ago}{duration}")
+            TimerStatus::Success => {
+                items.push(format!(
+                    "{} {}",
+                    console::style("success").green(),
+                    fmt_ago(now, run.last_run_at)
+                ));
+                if let Some(v) = run.duration_ms {
+                    let v = Duration::from_millis(v);
+                    let v = fmt_duration(v);
+                    items.push(format!("in {v}"));
+                }
             }
-        };
-        print_field(timer, info);
+            TimerStatus::Failed => {
+                items.push(format!(
+                    "{} {}",
+                    console::style("failed").red(),
+                    fmt_ago(now, run.last_run_at)
+                ));
+                if let Some(v) = run.duration_ms {
+                    let v = Duration::from_millis(v);
+                    let v = fmt_duration(v);
+                    items.push(format!("in {v}"));
+                }
+                if let Some(at) = run.last_success_at {
+                    let v = fmt_ago(now, at);
+                    items.push(format!("last success {v}"))
+                }
+                if let Some(failure) = &run.failure {
+                    items.push(format!("fails {}", failure.count));
+                    items.push(failure.error.clone());
+                }
+            }
+        }
+
+        print_field(timer, items.join(" · "));
     }
 }
 

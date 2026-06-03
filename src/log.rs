@@ -337,20 +337,25 @@ pub fn fmt_stamp(d: Duration) -> String {
     }
 }
 
+/// Human-readable duration
+pub fn fmt_duration(duration: Duration) -> String {
+    let s = duration.as_secs();
+    match s {
+        0 .. 100 => format!("{s}s"),
+        _ => format!("{}m", (s + 30) / 60),
+    }
+}
+
 /// How long ago `then` was relative to `now`: "just now", "2 min ago",
 /// "3 hours ago", "5 days ago".
 pub fn fmt_ago(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
-    let secs = (now - then).num_seconds();
-    if secs < 60 {
-        "just now".to_string()
-    } else if secs < 3600 {
-        format!("{} min ago", secs / 60)
-    } else if secs < 86_400 {
-        let h = secs / 3600;
-        format!("{h} hour{} ago", if h == 1 { "" } else { "s" })
-    } else {
-        let d = secs / 86_400;
-        format!("{d} day{} ago", if d == 1 { "" } else { "s" })
+    let s = (now - then).num_seconds();
+    match s {
+        0 .. 10 => "now".to_string(),
+        10 .. 100 => format!("{s}s ago"),
+        100 .. 3600 => format!("{}m ago", s / 60),
+        3600 .. 86400 => format!("{}h ago", s / 3600),
+        _ => format!("{}d ago", s / 86400),
     }
 }
 
@@ -468,13 +473,15 @@ mod tests {
             .with_timezone(&Utc);
         let ago = |secs: i64| fmt_ago(now, now - chrono::Duration::seconds(secs));
 
-        assert_eq!(ago(0), "just now");
-        assert_eq!(ago(30), "just now");
-        assert_eq!(ago(120), "2 min ago");
-        assert_eq!(ago(3600), "1 hour ago");
-        assert_eq!(ago(7200), "2 hours ago");
-        assert_eq!(ago(86_400), "1 day ago");
-        assert_eq!(ago(3 * 86_400), "3 days ago");
+        assert_eq!(ago(0), "now");
+        assert_eq!(ago(9), "now");
+        assert_eq!(ago(30), "30s ago");
+        assert_eq!(ago(90), "90s ago");
+        assert_eq!(ago(120), "2m ago");
+        assert_eq!(ago(3600), "1h ago");
+        assert_eq!(ago(7200), "2h ago");
+        assert_eq!(ago(86400), "1d ago");
+        assert_eq!(ago(3 * 86400), "3d ago");
     }
 
     #[test]

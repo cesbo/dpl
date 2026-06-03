@@ -342,10 +342,17 @@ impl<'a> AppUnit<'a> {
                 )
             })?;
 
+        // Carry-forward fields (last success, consecutive failures) are derived
+        // from the timer's prior record; capture it once before overwriting.
+        let prev = state.timers.get(timer_name).cloned();
+        let started_at = Utc::now();
+
         if !crate::podman::is_running(self.name) {
-            info!(
-                "container for '{}' not running; skipping timer '{timer_name}'",
-                self.name
+            let error = format!("container for '{}' not running", self.name);
+            info!("{error}; skipping timer '{timer_name}'");
+            state.set_timer_state(
+                timer_name,
+                TimerState::failed(prev.as_ref(), started_at, Duration::default(), error),
             );
             return Ok(());
         }
@@ -353,8 +360,7 @@ impl<'a> AppUnit<'a> {
         let container = self.name.scoped_unit_name();
         let command = format!("timer--{}", timer.name);
 
-        let started_at = Utc::now();
-        state.set_timer_state(timer_name, TimerState::running(started_at));
+        state.set_timer_state(timer_name, TimerState::running(prev.as_ref(), started_at));
 
         let clock = Instant::now();
         let status = Command::new("podman")
@@ -369,7 +375,10 @@ impl<'a> AppUnit<'a> {
             }
             Ok(status) => {
                 let cause = format!("timer script exited with {status}");
-                state.set_timer_state(timer_name, TimerState::failed(started_at, elapsed, &cause));
+                state.set_timer_state(
+                    timer_name,
+                    TimerState::failed(prev.as_ref(), started_at, elapsed, &cause),
+                );
                 Err(DeployError::step_timer(
                     format!("timer '{timer_name}' on '{}'", self.name),
                     io::Error::other(cause),
@@ -379,7 +388,7 @@ impl<'a> AppUnit<'a> {
                 let err = crate::podman::podman_spawn_error(err);
                 state.set_timer_state(
                     timer_name,
-                    TimerState::failed(started_at, elapsed, err.to_string()),
+                    TimerState::failed(prev.as_ref(), started_at, elapsed, err.to_string()),
                 );
                 Err(DeployError::step_timer(
                     format!("run timer '{timer_name}' on '{}'", self.name),
