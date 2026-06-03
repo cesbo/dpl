@@ -11,14 +11,12 @@ use minijinja::{
 
 use crate::{
     MainContext,
-    config::UnitName,
-    deploy::{
-        artifacts::{
-            ArtifactError,
-            render_template,
-        },
-        unit::db::DbServerEngine,
+    artifacts::{
+        ArtifactError,
+        render_template,
     },
+    config::UnitName,
+    deploy::unit::db::DbServerEngine,
 };
 
 const DB_SERVICE_TEMPLATE: &str = "db-service";
@@ -89,8 +87,14 @@ mod tests {
 
         let body = fs::read_to_string(&service_path).unwrap();
         // The service only delegates; no podman flags or secrets in the file.
-        assert!(body.contains("start pg-main"), "missing start delegation:\n{body}");
-        assert!(body.contains("stop pg-main"), "missing stop delegation:\n{body}");
+        assert!(
+            body.contains("start pg-main"),
+            "missing start delegation:\n{body}"
+        );
+        assert!(
+            body.contains("stop pg-main"),
+            "missing stop delegation:\n{body}"
+        );
         assert!(
             !body.contains("Environment="),
             "secret must not be inlined into the unit file:\n{body}"

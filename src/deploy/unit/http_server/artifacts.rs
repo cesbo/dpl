@@ -10,7 +10,7 @@ use minijinja::{
 };
 
 use super::HttpServerUnit;
-use crate::deploy::artifacts::{
+use crate::artifacts::{
     ArtifactError,
     render_template,
 };

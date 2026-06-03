@@ -1,4 +1,5 @@
 mod archive;
+mod artifacts;
 mod cmd;
 mod config;
 mod context;

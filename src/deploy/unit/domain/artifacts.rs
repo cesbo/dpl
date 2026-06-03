@@ -19,11 +19,11 @@ use super::{
 };
 use crate::{
     MainContext,
-    config::UnitName,
-    deploy::artifacts::{
+    artifacts::{
         ArtifactError,
         render_template,
     },
+    config::UnitName,
     error::RefError,
 };
 

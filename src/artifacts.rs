@@ -29,7 +29,4 @@ pub enum ArtifactError {
 
     #[error("resolve env")]
     Env(#[from] crate::error::RefError),
-
-    #[error("resolve template data")]
-    Resolve(#[source] Box<dyn std::error::Error + Send + Sync>),
 }

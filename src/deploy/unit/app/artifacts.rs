@@ -16,11 +16,11 @@ use serde::Serialize;
 use super::AppConfig;
 use crate::{
     MainContext,
-    config::UnitName,
-    deploy::artifacts::{
+    artifacts::{
         ArtifactError,
         render_template,
     },
+    config::UnitName,
 };
 
 const CONTAINERFILE_TEMPLATE: &str = "containerfile";
@@ -327,7 +327,10 @@ mod tests {
             !cron.contains("podman"),
             "cron file must not embed podman logic:\n{cron}"
         );
-        assert!(cron.ends_with('\n'), "cron file must end with a newline:\n{cron}");
+        assert!(
+            cron.ends_with('\n'),
+            "cron file must end with a newline:\n{cron}"
+        );
 
         // The service only delegates to `dpl start`/`dpl stop`; container logic
         // (db wait gates, the podman run, volumes) is resolved at runtime.
