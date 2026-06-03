@@ -29,7 +29,7 @@ use crate::{
 };
 
 #[derive(Debug, Error)]
-pub enum UnitStateError {
+pub enum DeployStateError {
     #[error("lock unit")]
     Lock(#[source] io::Error),
 
@@ -62,7 +62,7 @@ pub enum DeployStatus {
 /// Deploy phase for DeployError.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Stage {
+pub enum DeployStage {
     /// Loading/validating config, resolving secrets, acquiring the lock,
     /// bumping the version, staging inputs, rendering build artifacts.
     Prepare,
@@ -80,15 +80,15 @@ pub enum Stage {
     Stop,
 }
 
-impl fmt::Display for Stage {
+impl fmt::Display for DeployStage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = match self {
-            Stage::Prepare => "prepare",
-            Stage::Build => "build",
-            Stage::Install => "install",
-            Stage::Startup => "startup",
-            Stage::Start => "start",
-            Stage::Stop => "stop",
+            DeployStage::Prepare => "prepare",
+            DeployStage::Build => "build",
+            DeployStage::Install => "install",
+            DeployStage::Startup => "startup",
+            DeployStage::Start => "start",
+            DeployStage::Stop => "stop",
         };
         f.write_str(name)
     }
@@ -96,9 +96,9 @@ impl fmt::Display for Stage {
 
 /// Where and why the latest build failed.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct BuildFailure {
+pub struct DeployFailure {
     /// Deploy stage the attempt failed in.
-    pub stage: Stage,
+    pub stage: DeployStage,
 
     /// Human-readable cause (the failing step plus its source chain).
     pub error: String,
@@ -120,7 +120,7 @@ pub struct DeployState {
     pub last_status: DeployStatus,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failure: Option<BuildFailure>,
+    pub failure: Option<DeployFailure>,
 
     #[serde(skip)]
     path: PathBuf,
@@ -131,17 +131,17 @@ impl DeployState {
     pub fn acquire(
         ctx: &MainContext,
         name: &UnitName,
-    ) -> Result<(DeployStateGuard, DeployState), UnitStateError> {
+    ) -> Result<(DeployStateGuard, DeployState), DeployStateError> {
         let guard = DeployStateGuard::lock(ctx, name)?;
         let state = DeployState::load(ctx, name)?;
         if state.last_status == DeployStatus::Building {
-            return Err(UnitStateError::Busy);
+            return Err(DeployStateError::Busy);
         }
 
         Ok((guard, state))
     }
 
-    pub fn load(ctx: &MainContext, name: &UnitName) -> Result<Self, UnitStateError> {
+    pub fn load(ctx: &MainContext, name: &UnitName) -> Result<Self, DeployStateError> {
         let path = ctx.state_path(name);
 
         let content = match read_to_string(&path) {
@@ -156,42 +156,45 @@ impl DeployState {
                     path,
                 });
             }
-            Err(err) => return Err(UnitStateError::Read(err)),
+            Err(err) => return Err(DeployStateError::Read(err)),
         };
 
-        let mut state: DeployState = serde_json::from_str(&content)
-            .map_err(|err| UnitStateError::Read(io::Error::new(io::ErrorKind::InvalidData, err)))?;
+        let mut state: DeployState = serde_json::from_str(&content).map_err(|err| {
+            DeployStateError::Read(io::Error::new(io::ErrorKind::InvalidData, err))
+        })?;
 
         state.path = path;
 
         Ok(state)
     }
 
-    fn save(&self) -> Result<(), UnitStateError> {
+    fn save(&self) -> Result<(), DeployStateError> {
         let content = serde_json::to_string_pretty(self).map_err(|err| {
-            UnitStateError::Write(io::Error::new(io::ErrorKind::InvalidData, err))
+            DeployStateError::Write(io::Error::new(io::ErrorKind::InvalidData, err))
         })?;
 
         let mut tmp = match self.path.parent() {
             Some(parent) => tempfile::NamedTempFile::new_in(parent),
             None => tempfile::NamedTempFile::new(),
         }
-        .map_err(UnitStateError::Write)?;
+        .map_err(DeployStateError::Write)?;
 
         tmp.write_all(content.as_bytes())
-            .map_err(UnitStateError::Write)?;
+            .map_err(DeployStateError::Write)?;
         tmp.as_file_mut()
             .sync_all()
-            .map_err(UnitStateError::Write)?;
+            .map_err(DeployStateError::Write)?;
         tmp.persist(&self.path)
-            .map_err(|err| UnitStateError::Write(err.error))?;
+            .map_err(|err| DeployStateError::Write(err.error))?;
         Ok(())
     }
 
     /// Returns currently running version
-    pub fn get_active_version(ctx: &MainContext, name: &UnitName) -> Result<u32, UnitStateError> {
+    pub fn get_active_version(ctx: &MainContext, name: &UnitName) -> Result<u32, DeployStateError> {
         let state = Self::load(ctx, name)?;
-        state.active_version.ok_or(UnitStateError::NoActiveVersion)
+        state
+            .active_version
+            .ok_or(DeployStateError::NoActiveVersion)
     }
 
     /// Returns currently running version before uninstall
@@ -205,11 +208,11 @@ impl DeployState {
 
     /// Checked version addition.
     /// Sets the latest build status to `Building` and clears previous error.
-    pub fn bump_version(&mut self) -> Result<u32, UnitStateError> {
+    pub fn bump_version(&mut self) -> Result<u32, DeployStateError> {
         let next_version = self
             .last_version
             .checked_add(1)
-            .ok_or(UnitStateError::VersionOverflow)?;
+            .ok_or(DeployStateError::VersionOverflow)?;
         self.last_version = next_version;
         self.last_status = DeployStatus::Building;
         self.updated_at = Utc::now();
@@ -221,10 +224,10 @@ impl DeployState {
 
     /// Marks the latest build failed, recording the [`Stage`] it failed in and
     /// the human-readable `message` cause for later inspection.
-    pub fn set_failed(&mut self, stage: Stage, message: String) {
+    pub fn set_failed(&mut self, stage: DeployStage, message: String) {
         self.last_status = DeployStatus::Failed;
         self.updated_at = Utc::now();
-        self.failure = Some(BuildFailure {
+        self.failure = Some(DeployFailure {
             stage,
             error: message,
         });
@@ -254,28 +257,31 @@ pub struct DeployStateGuard {
 }
 
 impl DeployStateGuard {
-    fn lock(ctx: &MainContext, name: &UnitName) -> Result<Self, UnitStateError> {
+    fn lock(ctx: &MainContext, name: &UnitName) -> Result<Self, DeployStateError> {
         let path = ctx.lock_path(name);
         let file = OpenOptions::new()
             .create(true)
             .truncate(true)
             .write(true)
             .open(&path)
-            .map_err(UnitStateError::Lock)?;
+            .map_err(DeployStateError::Lock)?;
 
         match file.try_lock_exclusive() {
             Ok(true) => Ok(DeployStateGuard { file, path }),
-            Ok(false) => Err(UnitStateError::Busy),
-            Err(err) => Err(UnitStateError::Lock(err)),
+            Ok(false) => Err(DeployStateError::Busy),
+            Err(err) => Err(DeployStateError::Lock(err)),
         }
     }
 
     /// Try to take the unit's deploy lock without blocking.
     /// Returns `None` if a deploy currently holds it.
-    pub fn try_acquire(ctx: &MainContext, name: &UnitName) -> Result<Option<Self>, UnitStateError> {
+    pub fn try_acquire(
+        ctx: &MainContext,
+        name: &UnitName,
+    ) -> Result<Option<Self>, DeployStateError> {
         match Self::lock(ctx, name) {
             Ok(guard) => Ok(Some(guard)),
-            Err(UnitStateError::Busy) => Ok(None),
+            Err(DeployStateError::Busy) => Ok(None),
             Err(err) => Err(err),
         }
     }
@@ -311,12 +317,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut state = state_at(dir.path());
         state.set_failed(
-            Stage::Startup,
+            DeployStage::Startup,
             "waiting for app: container exited with code 1 (ran 2s)".to_owned(),
         );
         assert_eq!(state.last_status, DeployStatus::Failed);
         let failure = state.failure.as_ref().unwrap();
-        assert_eq!(failure.stage, Stage::Startup);
+        assert_eq!(failure.stage, DeployStage::Startup);
         assert_eq!(
             failure.error,
             "waiting for app: container exited with code 1 (ran 2s)"

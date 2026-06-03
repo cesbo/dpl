@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::state::Stage;
+use crate::state::DeployStage;
 
 #[derive(Debug, Error)]
 pub enum DeployError {
@@ -8,7 +8,7 @@ pub enum DeployError {
     /// log hint and the `dpl inspect` readout), `info` names the specific step.
     #[error("{info}")]
     Step {
-        stage: Stage,
+        stage: DeployStage,
         info: String,
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
@@ -27,7 +27,7 @@ impl DeployError {
         source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
     ) -> Self {
         DeployError::Step {
-            stage: Stage::Prepare,
+            stage: DeployStage::Prepare,
             info: info.into(),
             source: source.into(),
         }
@@ -38,7 +38,7 @@ impl DeployError {
         source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
     ) -> Self {
         DeployError::Step {
-            stage: Stage::Build,
+            stage: DeployStage::Build,
             info: info.into(),
             source: source.into(),
         }
@@ -49,7 +49,7 @@ impl DeployError {
         source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
     ) -> Self {
         DeployError::Step {
-            stage: Stage::Install,
+            stage: DeployStage::Install,
             info: info.into(),
             source: source.into(),
         }
@@ -60,7 +60,7 @@ impl DeployError {
         source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
     ) -> Self {
         DeployError::Step {
-            stage: Stage::Startup,
+            stage: DeployStage::Startup,
             info: info.into(),
             source: source.into(),
         }
@@ -71,7 +71,7 @@ impl DeployError {
         source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
     ) -> Self {
         DeployError::Step {
-            stage: Stage::Start,
+            stage: DeployStage::Start,
             info: info.into(),
             source: source.into(),
         }
@@ -82,7 +82,7 @@ impl DeployError {
         source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
     ) -> Self {
         DeployError::Step {
-            stage: Stage::Stop,
+            stage: DeployStage::Stop,
             info: info.into(),
             source: source.into(),
         }
@@ -91,7 +91,7 @@ impl DeployError {
     /// Stage and flattened cause (the failing step plus its source chain,
     /// joined by `": "`) for a `Step` error. `None` for `Reported`, which
     /// carries no detail.
-    pub fn failure(&self) -> Option<(Stage, String)> {
+    pub fn failure(&self) -> Option<(DeployStage, String)> {
         let DeployError::Step {
             stage,
             info,
