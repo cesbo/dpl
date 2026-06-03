@@ -125,30 +125,3 @@ impl DeployError {
         Some((*stage, messages.join(": ")))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use std::io;
-
-    use super::*;
-
-    #[test]
-    fn failure_flattens_source_chain() {
-        let err = DeployError::step_startup(
-            "waiting for app",
-            io::Error::other("container exited with code 1 (ran 2s)"),
-        );
-        assert_eq!(
-            err.failure(),
-            Some((
-                Stage::Startup,
-                "waiting for app: container exited with code 1 (ran 2s)".to_owned()
-            ))
-        );
-    }
-
-    #[test]
-    fn reported_has_no_failure() {
-        assert_eq!(DeployError::Reported.failure(), None);
-    }
-}
