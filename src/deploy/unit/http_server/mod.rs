@@ -88,9 +88,6 @@ impl<'a> HttpServerUnit<'a> {
     /// systemd service, then (re)start the container - restart forces
     /// `podman run --replace --rm` to recreate it.
     fn install_inner(&self, systemd_dir: &Path) -> Result<(), DeployError> {
-        let container_name = self.name.scoped_unit_name();
-        let service_name = format!("{container_name}.service");
-
         let conf_volume = self.conf_volume();
         let conf_dir = ensure_volume(&conf_volume)
             .and_then(|_| volume_mountpoint(&conf_volume))
@@ -111,6 +108,7 @@ impl<'a> HttpServerUnit<'a> {
         systemd::reload().map_err(|e| DeployError::step_install("reload systemd", e))?;
 
         {
+            let service_name = format!("{}.service", self.name.scoped_unit_name());
             let _phase = log::phase(format!("starting http-server '{}'", self.name));
             if systemd::is_active(&service_name) {
                 systemd::restart_service(&service_name).map_err(|e| {

@@ -81,9 +81,8 @@ impl<'a> DbServerUnit<'a> {
 
         systemd::reload().map_err(|e| DeployError::step_install("reload systemd", e))?;
 
-        let service_name = format!("{}.service", self.name.scoped_unit_name());
-
         {
+            let service_name = format!("{}.service", self.name.scoped_unit_name());
             let _phase = log::phase(format!("starting db-server '{}'", self.name));
             if systemd::is_active(&service_name) {
                 systemd::restart_service(&service_name).map_err(|e| {
@@ -123,9 +122,10 @@ impl<'a> DbServerUnit<'a> {
 
     /// Run the db-server container in the foreground.
     pub fn start(&self) -> Result<(), RunError> {
-        let password = self.ctx.resolve_secret(&self.config.secret).map_err(|e| {
-            RunError::new(format!("resolve secret '{}'", &self.config.secret), e)
-        })?;
+        let password = self
+            .ctx
+            .resolve_secret(&self.config.secret)
+            .map_err(|e| RunError::new(format!("resolve secret '{}'", &self.config.secret), e))?;
 
         let container = self.name.scoped_unit_name();
         let mut cmd = crate::podman::PodmanRun::new(&container)
