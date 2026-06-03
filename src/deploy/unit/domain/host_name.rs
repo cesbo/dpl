@@ -26,10 +26,6 @@ impl HostName {
         }
     }
 
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
     pub fn is_valid(value: &str) -> bool {
         if value.is_empty() {
             return false;
@@ -47,7 +43,7 @@ impl HostName {
             return false;
         }
         // No '*' anywhere except possibly position 0.
-        !value[1..].contains('*')
+        !value[1 ..].contains('*')
     }
 }
 

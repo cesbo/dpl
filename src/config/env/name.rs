@@ -26,10 +26,6 @@ impl Name {
         }
     }
 
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
     pub fn is_valid(name: &str) -> bool {
         if name.is_empty() {
             return false;
@@ -102,6 +98,9 @@ mod tests {
     #[test]
     fn name_deserialize_rejects_invalid() {
         let err = serde_yaml::from_str::<Name>("1BAD").unwrap_err();
-        assert!(err.to_string().contains("invalid environment variable name"));
+        assert!(
+            err.to_string()
+                .contains("invalid environment variable name")
+        );
     }
 }

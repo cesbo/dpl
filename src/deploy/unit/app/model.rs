@@ -8,11 +8,11 @@ use serde::{
 
 use crate::{
     MainContext,
-    config::UnitName,
-    deploy::{
+    config::{
         EnvList,
-        UnitConfig,
+        UnitName,
     },
+    deploy::UnitConfig,
     error::{
         Location,
         RefError,

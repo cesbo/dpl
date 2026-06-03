@@ -11,13 +11,13 @@ use super::{
 };
 use crate::{
     MainContext,
-    config::UnitName,
-    deploy::{
-        env::Value,
-        unit::{
-            UnitConfig,
-            http_server::HttpServerConfig,
-        },
+    config::{
+        UnitName,
+        Value,
+    },
+    deploy::unit::{
+        UnitConfig,
+        http_server::HttpServerConfig,
     },
     error::{
         Location,

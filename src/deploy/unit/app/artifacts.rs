@@ -188,9 +188,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::deploy::{
-        EnvList,
-        unit::app::model::*,
+    use crate::{
+        config::EnvList,
+        deploy::unit::app::model::*,
     };
 
     #[test]
@@ -202,14 +202,14 @@ mod tests {
                 BuildConfig {
                     description: None,
                     files: Vec::new(),
-                    env: EnvList::new(),
+                    env: EnvList::default(),
                     script: Some("date".to_owned()),
                 },
                 // with some files
                 BuildConfig {
                     description: None,
                     files: vec!["package.json".to_owned(), "package-lock.json".to_owned()],
-                    env: EnvList::new(),
+                    env: EnvList::default(),
                     script: Some("npm ci".to_owned()),
                 },
                 // without script - its db references still feed the wait-gate
@@ -362,7 +362,7 @@ mod tests {
             builds: vec![BuildConfig {
                 description: None,
                 files: vec!["*".to_owned()],
-                env: EnvList::new(),
+                env: EnvList::default(),
                 script: Some("npm run build".to_owned()),
             }],
             runtime: None,

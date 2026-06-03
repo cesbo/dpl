@@ -25,10 +25,6 @@ use crate::{
 pub struct EnvList(BTreeMap<Name, Value>);
 
 impl EnvList {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn resolve(
         &self,
         ctx: &MainContext,
