@@ -98,4 +98,57 @@ impl DeployError {
             source: source.into(),
         }
     }
+
+    /// Stage and flattened cause (the failing step plus its source chain,
+    /// joined by `": "`) for a `Step` error. `None` for `Reported`, which
+    /// carries no detail.
+    pub fn failure(&self) -> Option<(Stage, String)> {
+        let DeployError::Step {
+            stage,
+            info,
+            source,
+        } = self
+        else {
+            return None;
+        };
+
+        let mut messages = vec![info.to_owned()];
+        let mut source: &(dyn std::error::Error + 'static) = source.as_ref();
+        loop {
+            messages.push(source.to_string());
+            match source.source() {
+                Some(next) => source = next,
+                None => break,
+            }
+        }
+
+        Some((*stage, messages.join(": ")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use super::*;
+
+    #[test]
+    fn failure_flattens_source_chain() {
+        let err = DeployError::step_startup(
+            "waiting for app",
+            io::Error::other("container exited with code 1 (ran 2s)"),
+        );
+        assert_eq!(
+            err.failure(),
+            Some((
+                Stage::Startup,
+                "waiting for app: container exited with code 1 (ran 2s)".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn reported_has_no_failure() {
+        assert_eq!(DeployError::Reported.failure(), None);
+    }
 }

@@ -21,12 +21,14 @@ use crate::{
     deploy::{
         BuildFailure,
         DeployError,
+        DeployStateGuard,
         DeployStatus,
         Stage,
+        TimerState,
         TimerStatus,
+        TimersState,
         UnitConfig,
         UnitState,
-        UnitStateError,
         unit::{
             app::AppUnit,
             db::{
@@ -85,7 +87,9 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
         Ok(log) => log,
         Err(err) => {
             let err = DeployError::step_prepare("open deploy log", err);
-            state.set_error(&err);
+            if let Some((stage, message)) = err.failure() {
+                state.set_failed(stage, message);
+            }
             return Err(anyhow::Error::new(err).context(format!("deploy unit '{name}'")));
         }
     };
@@ -115,7 +119,9 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
         }
         Err(err) => {
             // Record the failing stage and cause before converting to Reported.
-            state.set_error(&err);
+            if let Some((stage, message)) = err.failure() {
+                state.set_failed(stage, message);
+            }
             tracing::debug!("deploy failed: {:#}", anyhow::Error::new(err));
             log.finish_err();
             Err(anyhow::Error::new(DeployError::Reported))
@@ -204,18 +210,19 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
         UnitConfig::Domain(_) => {}
     }
 
-    if !state.timers.is_empty() {
+    let timers = TimersState::load(ctx, name).with_context(|| format!("inspect unit '{name}'"))?;
+    if !timers.timers.is_empty() {
         println!();
         print_field("Timers", "");
-        print_timers(now, &state);
+        print_timers(now, &timers);
     }
 
     Ok(())
 }
 
 /// Print the last run of each timer (only app units record any).
-fn print_timers(now: chrono::DateTime<Utc>, state: &UnitState) {
-    for (timer, run) in &state.timers {
+fn print_timers(now: chrono::DateTime<Utc>, timers: &TimersState) {
+    for (timer, run) in &timers.timers {
         let mut items = Vec::new();
 
         match run.status {
@@ -305,19 +312,25 @@ pub fn timer(ctx: &MainContext, name: &UnitName, timer_name: &str) -> Result<()>
         bail!("{} unit has no timers", unit.kind());
     };
 
-    let (_guard, mut state) = match UnitState::acquire(ctx, name) {
-        Ok(acquired) => acquired,
-        Err(UnitStateError::Busy) => {
-            tracing::info!("unit '{name}' busy, skipping timer '{timer_name}'");
-            return Ok(());
-        }
-        Err(err) => {
-            return Err(anyhow::Error::new(err).context(format!("acquire unit '{name}'")));
-        }
+    let (_timer_lock, mut timers) = TimersState::acquire(ctx, name)
+        .with_context(|| format!("acquire timers for unit '{name}'"))?;
+
+    let Some(_deploy_log) = DeployStateGuard::try_acquire(ctx, name)
+        .with_context(|| format!("acquire unit '{name}'"))?
+    else {
+        let prev = timers.timers.get(timer_name).cloned();
+        let msg = format!("unit '{name}' busy: deploy in progress");
+        tracing::info!("{msg}; recording skip for timer '{timer_name}'");
+        timers.set_timer_state(
+            timer_name,
+            TimerState::failed(prev.as_ref(), Utc::now(), Duration::default(), msg),
+        );
+
+        return Ok(());
     };
 
     AppUnit::new(ctx, name, config)
-        .run_timer(&mut state, timer_name)
+        .run_timer(&mut timers, timer_name)
         .with_context(|| format!("run timer '{timer_name}' on unit '{name}'"))
 }
 

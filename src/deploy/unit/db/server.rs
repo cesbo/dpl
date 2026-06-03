@@ -62,7 +62,9 @@ impl<'a> DbServerUnit<'a> {
             Ok(()) => Ok(()),
             Err(err) => {
                 // No DeployLog handle here; the primary unit's state records the stage.
-                state.set_error(&err);
+                if let Some((stage, message)) = err.failure() {
+                    state.set_failed(stage, message);
+                }
                 Err(err)
             }
         }

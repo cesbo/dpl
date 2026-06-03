@@ -36,8 +36,10 @@ cargo run -- --base /path/to/base <command> ...
   (`sql.rs`), `dump`/`restore` (`backup.rs`), `console` (`console.rs`); `cmd/db.rs`
   only resolves config/secrets and picks the login (e.g. `--root`), never spawns
   the client itself.
-- **Deploy state** (`deploy/state.rs`) - on-disk `.state.json` and the
-  `.unit.lock` advisory `flock`. Acquired before any unit deploy runs.
+- **Deploy state** (`deploy/state.rs`) - on-disk `.unit.state` (JSON) and the
+  `.unit.lock` advisory `flock`. Acquired before any unit deploy runs. Timer
+  run records live separately in `.timers.state` with their own `.timers.lock`
+  (`deploy/timers.rs`).
 
 Keep this split when adding functionality.
 
@@ -53,7 +55,7 @@ Keep this split when adding functionality.
    with no `runtime` is a static build-and-export unit: it builds + exports
    only, skipping `run.sh`, the systemd service, the health check, and timers
    (the `port` lives inside `runtime`, so static units have none).
-3. `UnitState` is rewritten to `{unit_dir}/.state.json` at each phase
+3. `UnitState` is rewritten to `{unit_dir}/.unit.state` at each phase
    transition; failures land as `status: failed`, with `phase` recording the
    `log::phase` active at the failure (e.g. `building app image` →
    `{unit_dir}/build.log`, `waiting for app` → `/var/log/podman/{scoped}.log`).
@@ -92,10 +94,14 @@ Keep this split when adding functionality.
   writes `/etc/cron.d/{scoped_unit_name}` (one line per timer, no file when
   there are none), each line calling `dpl timer <unit> <timer>` (no inline
   `podman exec`). `TimerConfig::schedule` is a standard 5-field cron expression
-  parsed with `croner` at config load. `dpl timer` takes the unit's deploy
-  lock, runs the timer script in the live container, and records the last run
-  into `.state.json` under `timers` for `dpl inspect` — marked `running` while
-  in flight, then overwritten with `success`/`failed` and the run's duration.
+  parsed with `croner` at config load. `dpl timer` takes the per-unit timer
+  lock (`.timers.lock`, blocking, so concurrent runs serialize) and records each
+  run into `.timers.state` (keyed by timer name) for `dpl inspect` — marked
+  `running` while in flight, then overwritten with `success`/`failed` and the
+  run's duration. It checks the deploy lock non-blocking: while a deploy holds
+  it, the run is skipped and the reason recorded as a failed entry; otherwise it
+  holds the deploy lock for the run so a deploy can't replace the container
+  underneath it.
 - `dpl db backup [path]` streams SQL via `podman exec` as the `db` unit's
   login user (`deploy/unit/db/backup.rs`). `path` defaults to `-` (stdout); a
   `.gz` destination or `-z` gzips the output.

@@ -77,7 +77,15 @@ impl MainContext {
     }
 
     pub fn state_path(&self, unit: &UnitName) -> PathBuf {
-        self.unit_dir(unit).join(".state.json")
+        self.unit_dir(unit).join(".unit.state")
+    }
+
+    pub fn timers_path(&self, unit: &UnitName) -> PathBuf {
+        self.unit_dir(unit).join(".timers.state")
+    }
+
+    pub fn timers_lock_path(&self, unit: &UnitName) -> PathBuf {
+        self.unit_dir(unit).join(".timers.lock")
     }
 
     pub fn build_log_path(&self, unit: &UnitName) -> PathBuf {
