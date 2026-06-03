@@ -144,13 +144,13 @@ impl TimerState {
 /// On-disk record of each timer's most recent run, stored separately from the
 /// deploy state so timer runs and deploys never clobber each other's writes.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct TimersState {
+    /// Most recent run of each timer, keyed by timer name.
+    pub timers: BTreeMap<String, TimerState>,
+
     #[serde(skip)]
     path: PathBuf,
-
-    /// Most recent run of each timer, keyed by timer name.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub timers: BTreeMap<String, TimerState>,
 }
 
 impl TimersState {
@@ -307,6 +307,10 @@ mod tests {
         let on_disk = read_to_string(dir.path().join(".timers.state")).unwrap();
         assert!(on_disk.contains("\"status\": \"success\""), "{on_disk}");
         assert!(on_disk.contains("\"status\": \"failed\""), "{on_disk}");
+        // Flat shape: timer names sit at the top level, with no enclosing
+        // `timers` wrapper object (`#[serde(transparent)]`).
+        assert!(on_disk.contains("\"cleanup\""), "{on_disk}");
+        assert!(!on_disk.contains("\"timers\""), "{on_disk}");
         let reloaded: TimersState = serde_json::from_str(&on_disk).unwrap();
         assert_eq!(reloaded.timers, state.timers);
     }
@@ -377,10 +381,11 @@ mod tests {
     }
 
     #[test]
-    fn empty_timers_map_is_omitted_from_json() {
+    fn empty_timers_map_serializes_as_bare_object() {
         let dir = tempfile::tempdir().unwrap();
         let state = timers_at(dir.path());
+        // Transparent struct over an empty map -> a bare `{}`, no `timers` key.
         let json = serde_json::to_string(&state).unwrap();
-        assert!(!json.contains("timers"), "{json}");
+        assert_eq!(json, "{}", "{json}");
     }
 }

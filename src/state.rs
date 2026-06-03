@@ -106,9 +106,6 @@ pub struct BuildFailure {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DeployState {
-    #[serde(skip)]
-    path: PathBuf,
-
     /// Timestamp of the most recent deploy attempt event.
     pub updated_at: DateTime<Utc>,
 
@@ -124,6 +121,9 @@ pub struct DeployState {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<BuildFailure>,
+
+    #[serde(skip)]
+    path: PathBuf,
 }
 
 impl DeployState {
@@ -148,12 +148,12 @@ impl DeployState {
             Ok(content) => content,
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
                 return Ok(DeployState {
-                    path,
                     updated_at: Utc::now(),
                     active_version: None,
                     last_version: 0,
                     last_status: Default::default(),
                     failure: None,
+                    path,
                 });
             }
             Err(err) => return Err(UnitStateError::Read(err)),
@@ -297,12 +297,12 @@ mod tests {
 
     fn state_at(dir: &std::path::Path) -> DeployState {
         DeployState {
-            path: dir.join(".deploy.state"),
             updated_at: Utc::now(),
             active_version: None,
             last_version: 0,
             last_status: Default::default(),
             failure: None,
+            path: dir.join(".deploy.state"),
         }
     }
 
