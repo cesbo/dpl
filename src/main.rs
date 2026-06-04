@@ -4,9 +4,9 @@ mod cmd;
 mod config;
 mod context;
 mod deploy;
-mod reference;
 mod log;
 mod podman;
+mod reference;
 mod secret;
 mod spinner;
 mod state;
@@ -47,8 +47,10 @@ enum Command {
         /// Unit name
         name: config::UnitName,
     },
+
     /// Manage database units
     Db(cmd::db::Args),
+
     /// Deploy a unit (app: tar.gz archive; db: optional SQL backup to restore)
     Deploy {
         /// Unit name
@@ -58,21 +60,25 @@ enum Command {
         /// provision only). Gzip is detected automatically.
         path: Option<PathBuf>,
     },
+
     /// Show runtime state of a unit
     Inspect {
         /// Unit name
         name: config::UnitName,
     },
+
     /// Start a unit's container (the systemd service's ExecStart)
     Start {
         /// Unit name
         name: config::UnitName,
     },
+
     /// Stop a unit's container (the systemd service's ExecStop)
     Stop {
         /// Unit name
         name: config::UnitName,
     },
+
     /// Run one of a unit's timers (the timer service's ExecStart)
     Timer {
         /// Unit name
@@ -80,6 +86,10 @@ enum Command {
         /// Timer name
         timer: String,
     },
+
+    /// Run the in-process timer scheduler daemon
+    Serve,
+
     /// Manage encrypted runtime secrets
     Secret(cmd::secret::Args),
 }
@@ -116,6 +126,7 @@ fn run() -> Result<()> {
         Command::Start { name } => cmd::unit::start(&ctx, &name),
         Command::Stop { name } => cmd::unit::stop(&ctx, &name),
         Command::Timer { name, timer } => cmd::unit::timer(&ctx, &name, &timer),
+        Command::Serve => cmd::serve::run(&ctx),
         Command::Secret(args) => cmd::secret::run(&ctx, args),
     }
 }

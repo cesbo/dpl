@@ -1,5 +1,6 @@
 pub mod db;
 pub mod secret;
+pub mod serve;
 pub mod unit;
 
 use dialoguer::theme::ColorfulTheme;
