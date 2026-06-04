@@ -16,6 +16,11 @@ use crate::{
     },
 };
 
+const CONF_DIR: &str = "conf";
+const STATE_DIR: &str = "state";
+const LOG_DIR: &str = "log";
+const BACKUP_DIR: &str = "backup";
+
 #[derive(Debug, Error)]
 pub enum ContextError {
     #[error("resolve base directory '{}'", path.display())]
@@ -64,32 +69,53 @@ impl MainContext {
         &self.base
     }
 
-    pub fn unit_dir(&self, unit: &UnitName) -> PathBuf {
-        self.base.join(unit.as_str())
+    /// `{base}/conf` - unit config files, one `{unit}.yaml` per unit.
+    pub fn conf_dir(&self) -> PathBuf {
+        self.base.join(CONF_DIR)
+    }
+
+    /// `{base}/state` - deploy/timer locks and state files.
+    /// State dir will be created by DeployLockGuard or TimerLockGuard
+    pub fn state_dir(&self) -> PathBuf {
+        self.base.join(STATE_DIR)
+    }
+
+    /// `{base}/log` - per-unit build logs.
+    pub fn log_dir(&self) -> PathBuf {
+        self.base.join(LOG_DIR)
+    }
+
+    /// `{base}/backup` - database dumps written before a destructive drop.
+    pub fn backup_dir(&self) -> PathBuf {
+        self.base.join(BACKUP_DIR)
     }
 
     pub fn config_path(&self, unit: &UnitName) -> PathBuf {
-        self.unit_dir(unit).join("config.yaml")
+        self.conf_dir().join(format!("{}.yaml", unit.as_str()))
     }
 
-    pub fn lock_path(&self, unit: &UnitName) -> PathBuf {
-        self.unit_dir(unit).join(".deploy.lock")
+    pub fn deploy_lock_path(&self, unit: &UnitName) -> PathBuf {
+        self.state_dir()
+            .join(format!("{}--deploy.lock", unit.as_str()))
     }
 
-    pub fn state_path(&self, unit: &UnitName) -> PathBuf {
-        self.unit_dir(unit).join(".deploy.state")
+    pub fn deploy_state_path(&self, unit: &UnitName) -> PathBuf {
+        self.state_dir()
+            .join(format!("{}--deploy.json", unit.as_str()))
     }
 
-    pub fn timers_path(&self, unit: &UnitName) -> PathBuf {
-        self.unit_dir(unit).join(".timers.state")
+    pub fn timers_state_path(&self, unit: &UnitName) -> PathBuf {
+        self.state_dir()
+            .join(format!("{}--timers.json", unit.as_str()))
     }
 
     pub fn timers_lock_path(&self, unit: &UnitName) -> PathBuf {
-        self.unit_dir(unit).join(".timers.lock")
+        self.state_dir()
+            .join(format!("{}--timers.lock", unit.as_str()))
     }
 
     pub fn build_log_path(&self, unit: &UnitName) -> PathBuf {
-        self.unit_dir(unit).join("build.log")
+        self.log_dir().join(format!("{}.log", unit.as_str()))
     }
 
     pub fn resolve_secret(&self, name: &SecretName) -> Result<String, SecretError> {
@@ -102,5 +128,16 @@ impl MainContext {
 
     pub fn check_secret(&self, name: &SecretName) -> Result<(), SecretError> {
         crate::secret::check(&self.base, name)
+    }
+}
+
+#[cfg(test)]
+impl MainContext {
+    /// Write a unit config to `conf/{name}.yaml`, creating parent dirs.
+    /// Routes through `config_path` so tests can't drift from the real layout.
+    pub(crate) fn write_test_unit(&self, name: &str, yaml: &str) {
+        let path = self.config_path(&UnitName::new(name).unwrap());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, yaml).unwrap();
     }
 }

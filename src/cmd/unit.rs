@@ -37,9 +37,9 @@ use crate::{
     },
     state::{
         DeployFailure,
+        DeployLockGuard,
         DeployStage,
         DeployState,
-        DeployStateGuard,
         DeployStatus,
     },
     timers::{
@@ -317,7 +317,7 @@ pub fn timer(ctx: &MainContext, name: &UnitName, timer_name: &str) -> Result<()>
     let (_timer_lock, mut timers) = TimersState::acquire(ctx, name)
         .with_context(|| format!("acquire timers for unit '{name}'"))?;
 
-    let Some(_deploy_log) = DeployStateGuard::try_acquire(ctx, name)
+    let Some(_deploy_log) = DeployLockGuard::try_acquire(ctx, name)
         .with_context(|| format!("acquire unit '{name}'"))?
     else {
         let prev = timers.timers.get(timer_name).cloned();

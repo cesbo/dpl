@@ -366,21 +366,11 @@ secret: app1-pass
 
     #[test]
     fn db_resolve_export_postgres() {
-        use std::fs;
-
         use tempfile::TempDir;
 
         use crate::secret::MasterKey;
 
         let base = TempDir::new().unwrap();
-        let server_dir = base.path().join("pg-main");
-        fs::create_dir_all(&server_dir).unwrap();
-        fs::write(
-            server_dir.join("config.yaml"),
-            "type: db-server\nengine: postgresql\nversion: \"18\"\nsecret: pg-pass\n",
-        )
-        .unwrap();
-
         let key = MasterKey::generate(base.path());
         key.save().unwrap();
         key.encrypt_to_file(&SecretName::new("app1-pass").unwrap(), "top$ecret&")
@@ -390,6 +380,10 @@ secret: app1-pass
             base: base.path().to_path_buf(),
             master_key: Some(MasterKey::load(base.path()).unwrap()),
         };
+        ctx.write_test_unit(
+            "pg-main",
+            "type: db-server\nengine: postgresql\nversion: \"18\"\nsecret: pg-pass\n",
+        );
         let config = DbConfig {
             server: UnitName::new("pg-main").unwrap(),
             user: "app1".into(),
@@ -426,21 +420,11 @@ secret: app1-pass
 
     #[test]
     fn db_resolve_export_mariadb() {
-        use std::fs;
-
         use tempfile::TempDir;
 
         use crate::secret::MasterKey;
 
         let base = TempDir::new().unwrap();
-        let server_dir = base.path().join("maria-main");
-        fs::create_dir_all(&server_dir).unwrap();
-        fs::write(
-            server_dir.join("config.yaml"),
-            "type: db-server\nengine: mariadb\nversion: \"12\"\nsecret: maria-pass\n",
-        )
-        .unwrap();
-
         let key = MasterKey::generate(base.path());
         key.save().unwrap();
         key.encrypt_to_file(&SecretName::new("app1-pass").unwrap(), "top$ecret&")
@@ -450,6 +434,10 @@ secret: app1-pass
             base: base.path().to_path_buf(),
             master_key: Some(MasterKey::load(base.path()).unwrap()),
         };
+        ctx.write_test_unit(
+            "maria-main",
+            "type: db-server\nengine: mariadb\nversion: \"12\"\nsecret: maria-pass\n",
+        );
         let config = DbConfig {
             server: UnitName::new("maria-main").unwrap(),
             user: "app1".into(),
@@ -486,21 +474,11 @@ secret: app1-pass
 
     #[test]
     fn db_resolve_export_mysql() {
-        use std::fs;
-
         use tempfile::TempDir;
 
         use crate::secret::MasterKey;
 
         let base = TempDir::new().unwrap();
-        let server_dir = base.path().join("mysql-main");
-        fs::create_dir_all(&server_dir).unwrap();
-        fs::write(
-            server_dir.join("config.yaml"),
-            "type: db-server\nengine: mysql\nversion: \"8.4\"\nsecret: mysql-pass\n",
-        )
-        .unwrap();
-
         let key = MasterKey::generate(base.path());
         key.save().unwrap();
         key.encrypt_to_file(&SecretName::new("app1-pass").unwrap(), "top$ecret&")
@@ -510,6 +488,10 @@ secret: app1-pass
             base: base.path().to_path_buf(),
             master_key: Some(MasterKey::load(base.path()).unwrap()),
         };
+        ctx.write_test_unit(
+            "mysql-main",
+            "type: db-server\nengine: mysql\nversion: \"8.4\"\nsecret: mysql-pass\n",
+        );
         let config = DbConfig {
             server: UnitName::new("mysql-main").unwrap(),
             user: "app1".into(),

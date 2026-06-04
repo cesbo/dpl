@@ -191,7 +191,9 @@ fn drop(ctx: &MainContext, name: &UnitName) -> Result<()> {
 
     if make_backup {
         let stamp = Utc::now().format("%Y%m%d-%H%M%S");
-        let path = ctx.unit_dir(name).join(format!("backup-{stamp}.sql.gz"));
+        let backup_dir = ctx.backup_dir();
+        fs::create_dir_all(&backup_dir)?;
+        let path = backup_dir.join(format!("{name}-{stamp}.sql.gz"));
         let path = path.to_str().unwrap();
         backup(ctx, name, path, true)?;
     }
@@ -209,7 +211,7 @@ fn drop(ctx: &MainContext, name: &UnitName) -> Result<()> {
         )
         .with_context(|| format!("drop database '{name}'"))?;
 
-    let _ = fs::remove_file(ctx.state_path(name));
+    let _ = fs::remove_file(ctx.deploy_state_path(name));
     let _ = fs::remove_file(ctx.build_log_path(name));
 
     eprintln!("{} dropped database '{name}'", success_mark());

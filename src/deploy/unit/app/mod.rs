@@ -75,7 +75,8 @@ impl<'a> AppUnit<'a> {
     fn prepare<R: Read>(&self, archive: R) -> Result<TempDir, DeployError> {
         let _phase = log::phase("preparing");
 
-        let temp_dir = tempfile::tempdir_in(self.ctx.unit_dir(self.name))
+        let state_dir = self.ctx.state_dir();
+        let temp_dir = tempfile::tempdir_in(&state_dir)
             .map_err(|e| DeployError::step_prepare("create temporary directory", e))?;
         let deploy_dir = temp_dir.path();
 
@@ -410,9 +411,11 @@ mod tests {
     use super::*;
 
     fn write_unit(base: &Path, name: &str, config: &str) {
-        let dir = base.join(name);
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("config.yaml"), config).unwrap();
+        MainContext {
+            base: base.to_path_buf(),
+            master_key: None,
+        }
+        .write_test_unit(name, config);
     }
 
     #[test]

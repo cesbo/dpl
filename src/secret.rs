@@ -124,7 +124,7 @@ pub enum SecretError {
 }
 
 pub fn get_secrets_dir(base: &Path) -> PathBuf {
-    base.join(".secrets")
+    base.join("secrets")
 }
 
 /// List all secret names under `base` (e.g. `foo`, `group/bar`), sorted.

@@ -13,11 +13,11 @@ use crate::{
         UnitName,
     },
     deploy::UnitConfig,
+    podman::NGINX_WWW_MOUNT,
     reference::{
         Location,
         ReferenceError,
     },
-    podman::NGINX_WWW_MOUNT,
     state::DeployState,
 };
 
@@ -244,8 +244,6 @@ mod tests {
 
     #[test]
     fn app_database_deps_keeps_db_skips_other_kinds() {
-        use std::fs;
-
         use tempfile::TempDir;
 
         // app `foo` references a `db` unit and another `app` unit. Only the db
@@ -256,25 +254,18 @@ mod tests {
         .unwrap();
 
         let base = TempDir::new().unwrap();
-        let db_dir = base.path().join("db-x");
-        fs::create_dir_all(&db_dir).unwrap();
-        fs::write(
-            db_dir.join("config.yaml"),
-            "type: db\nserver: pg-main\nuser: app1\nsecret: db-x-pass\n",
-        )
-        .unwrap();
-        let app_dir = base.path().join("other-app");
-        fs::create_dir_all(&app_dir).unwrap();
-        fs::write(
-            app_dir.join("config.yaml"),
-            "type: app\nimage: alpine\nbuilds: []\nruntime:\n  port: 9090\n  cmd: ./run\n",
-        )
-        .unwrap();
-
         let ctx = MainContext {
             base: base.path().to_path_buf(),
             master_key: None,
         };
+        ctx.write_test_unit(
+            "db-x",
+            "type: db\nserver: pg-main\nuser: app1\nsecret: db-x-pass\n",
+        );
+        ctx.write_test_unit(
+            "other-app",
+            "type: app\nimage: alpine\nbuilds: []\nruntime:\n  port: 9090\n  cmd: ./run\n",
+        );
         let deps = config.database_deps(&ctx).unwrap();
         let names: Vec<&str> = deps.iter().map(UnitName::as_str).collect();
         assert_eq!(names, vec!["db-x"]);
@@ -322,18 +313,18 @@ mod tests {
         use tempfile::TempDir;
 
         let base = TempDir::new().unwrap();
-        let unit_dir = base.path().join("web");
-        fs::create_dir_all(&unit_dir).unwrap();
-        fs::write(
-            unit_dir.join(".deploy.state"),
-            r#"{"active_version":3,"last_version":3,"last_status":"ready","updated_at":"2026-05-31T07:00:00.000000Z"}"#,
-        )
-        .unwrap();
-
         let ctx = MainContext {
             base: base.path().to_path_buf(),
             master_key: None,
         };
+        let state_path = ctx.deploy_state_path(&UnitName::new("web").unwrap());
+        fs::create_dir_all(state_path.parent().unwrap()).unwrap();
+        fs::write(
+            &state_path,
+            r#"{"active_version":3,"last_version":3,"last_status":"ready","updated_at":"2026-05-31T07:00:00.000000Z"}"#,
+        )
+        .unwrap();
+
         assert_eq!(
             sample_config()
                 .resolve_export(&ctx, &UnitName::new("web").unwrap(), "export")
@@ -353,7 +344,7 @@ mod tests {
             base: base.path().to_path_buf(),
             master_key: None,
         };
-        // No .deploy.state on disk → no active deployment to export from.
+        // No deploy state on disk → no active deployment to export from.
         let err = sample_config()
             .resolve_export(&ctx, &UnitName::new("web").unwrap(), "export")
             .unwrap_err();

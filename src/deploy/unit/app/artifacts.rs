@@ -268,22 +268,20 @@ mod tests {
         let deploy_dir = temp_dir.path().join(name.as_str());
         fs::create_dir_all(&deploy_dir).unwrap();
 
-        // `database_deps` loads each referenced unit to classify it; the two db
-        // units must exist on disk to land in the `db wait` startup gate.
-        for db in ["main-db", "cache-db"] {
-            let db_dir = temp_dir.path().join(db);
-            fs::create_dir_all(&db_dir).unwrap();
-            fs::write(
-                db_dir.join("config.yaml"),
-                "type: db\nserver: pg-main\nuser: app1\nsecret: app1-pass\n",
-            )
-            .unwrap();
-        }
-
         let ctx = MainContext {
             base: temp_dir.path().to_path_buf(),
             master_key: None,
         };
+
+        // `database_deps` loads each referenced unit to classify it; the two db
+        // units must exist on disk to land in the `db wait` startup gate.
+        for db in ["main-db", "cache-db"] {
+            ctx.write_test_unit(
+                db,
+                "type: db\nserver: pg-main\nuser: app1\nsecret: app1-pass\n",
+            );
+        }
+
         let artifacts = ArtifactsContext {
             ctx: &ctx,
             name: &name,

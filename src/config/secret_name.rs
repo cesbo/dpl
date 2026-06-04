@@ -19,8 +19,7 @@ use crate::{
     config::UnitName,
 };
 
-const SECRETS_DIR: &str = ".secrets";
-const SECRET_FILE_EXT: &str = "json";
+const SECRETS_DIR: &str = "secrets";
 
 #[derive(Error, Debug)]
 #[error("invalid secret name '{0}'")]
@@ -48,13 +47,13 @@ impl SecretName {
         !name.is_empty() && name.split('/').all(UnitName::is_valid)
     }
 
-    /// `{base}/.secrets/{group_components}/{last}.json`
+    /// `{base}/secrets/{group_components}/{last}.json`
     pub fn file_path(&self, ctx: &MainContext) -> PathBuf {
         self.file_path_in(&ctx.base().join(SECRETS_DIR))
     }
 
     /// Build the secret file path relative to a pre-resolved secrets dir
-    /// (e.g. `{base}/.secrets`). Internal helper for `MasterKey`, which
+    /// (e.g. `{base}/secrets`). Internal helper for `MasterKey`, which
     /// stores its `secrets_dir` directly and has no full `MainContext`.
     pub(crate) fn file_path_in(&self, secrets_dir: &Path) -> PathBuf {
         let mut path = secrets_dir.to_path_buf();
@@ -63,7 +62,7 @@ impl SecretName {
         for segment in segments {
             path.push(segment);
         }
-        path.push(format!("{last}.{SECRET_FILE_EXT}"));
+        path.push(format!("{last}.json"));
         path
     }
 }

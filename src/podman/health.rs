@@ -19,7 +19,7 @@ const ATTEMPTS: usize = 30;
 const INTERVAL: Duration = Duration::from_millis(800);
 
 /// Why a [`check`] gave up waiting for the app's port. Carries the diagnosis so
-/// the caller can show it and persist it to `.deploy.state`.
+/// the caller can show it and persist it to the deploy state file.
 #[derive(Debug, Error)]
 pub enum HealthCheckError {
     /// The container is no longer running - it exited before opening the port.

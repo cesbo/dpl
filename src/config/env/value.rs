@@ -493,13 +493,14 @@ mod tests {
     }
 
     fn write_db_unit(base: &std::path::Path) {
-        let dir = base.join("app-db");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("config.yaml"),
+        MainContext {
+            base: base.to_path_buf(),
+            master_key: None,
+        }
+        .write_test_unit(
+            "app-db",
             "type: db\nserver: pg-main\nuser: app1\nsecret: app1-pass\n",
-        )
-        .unwrap();
+        );
     }
 
     #[test]

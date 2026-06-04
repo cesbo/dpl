@@ -311,26 +311,20 @@ routes:
 
     #[test]
     fn validate_references_rejects_wrong_server_type() {
-        use std::fs;
-
         use tempfile::TempDir;
 
         use crate::reference::ReferenceErrorKind;
 
         // `server: nginx` resolves to an app unit, not http-server.
         let base = TempDir::new().unwrap();
-        let nginx_dir = base.path().join("nginx");
-        fs::create_dir_all(&nginx_dir).unwrap();
-        fs::write(
-            nginx_dir.join("config.yaml"),
-            "type: app\nimage: alpine\nbuilds: []\nruntime:\n  port: 8080\n  cmd: ./run\n",
-        )
-        .unwrap();
-
         let ctx = MainContext {
             base: base.path().to_path_buf(),
             master_key: None,
         };
+        ctx.write_test_unit(
+            "nginx",
+            "type: app\nimage: alpine\nbuilds: []\nruntime:\n  port: 8080\n  cmd: ./run\n",
+        );
         let config: DomainConfig =
             serde_yaml::from_str("server: nginx\nhosts:\n  - example.com\nroutes: []\n").unwrap();
 
@@ -348,19 +342,14 @@ routes:
 
     #[test]
     fn validate_references_accepts_http_server() {
-        use std::fs;
-
         use tempfile::TempDir;
 
         let base = TempDir::new().unwrap();
-        let nginx_dir = base.path().join("nginx");
-        fs::create_dir_all(&nginx_dir).unwrap();
-        fs::write(nginx_dir.join("config.yaml"), "type: http-server\n").unwrap();
-
         let ctx = MainContext {
             base: base.path().to_path_buf(),
             master_key: None,
         };
+        ctx.write_test_unit("nginx", "type: http-server\n");
         let config: DomainConfig =
             serde_yaml::from_str("server: nginx\nhosts:\n  - example.com\nroutes: []\n").unwrap();
 

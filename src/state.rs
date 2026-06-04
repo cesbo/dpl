@@ -124,8 +124,8 @@ impl DeployState {
     pub fn acquire(
         ctx: &MainContext,
         name: &UnitName,
-    ) -> Result<(DeployStateGuard, DeployState), DeployStateError> {
-        let guard = DeployStateGuard::lock(ctx, name)?;
+    ) -> Result<(DeployLockGuard, DeployState), DeployStateError> {
+        let guard = DeployLockGuard::lock(ctx, name)?;
         let state = DeployState::load(ctx, name)?;
         if state.last_status == DeployStatus::Building {
             return Err(DeployStateError::Busy);
@@ -135,7 +135,7 @@ impl DeployState {
     }
 
     pub fn load(ctx: &MainContext, name: &UnitName) -> Result<Self, DeployStateError> {
-        let path = ctx.state_path(name);
+        let path = ctx.deploy_state_path(name);
 
         let content = match read_to_string(&path) {
             Ok(content) => content,
@@ -237,21 +237,20 @@ impl DeployState {
     }
 }
 
-/// Holds an OS-level exclusive `flock` on `{unit_dir}/.deploy.lock` for the
-/// lifetime of the value; the kernel releases it when the fd closes, including
-/// on crash. The lock file is unlinked on drop (carrying the usual flock-unlink
-/// race, acceptable since `dpl` deploys are serialized on a single host).
-pub struct DeployStateGuard {
-    // Held for the flock; the lock is released when this is dropped.
-    // Never read directly, just keep the fd and lock alive.
+/// Holds an OS-level exclusive `flock` on `state/{unit}--deploy.lock`.
+pub struct DeployLockGuard {
     #[allow(dead_code)]
     file: File,
     path: PathBuf,
 }
 
-impl DeployStateGuard {
+impl DeployLockGuard {
     fn lock(ctx: &MainContext, name: &UnitName) -> Result<Self, DeployStateError> {
-        let path = ctx.lock_path(name);
+        let path = ctx.deploy_lock_path(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(DeployStateError::Lock)?;
+        }
+
         let file = OpenOptions::new()
             .create(true)
             .truncate(true)
@@ -260,7 +259,7 @@ impl DeployStateGuard {
             .map_err(DeployStateError::Lock)?;
 
         match file.try_lock_exclusive() {
-            Ok(true) => Ok(DeployStateGuard { file, path }),
+            Ok(true) => Ok(DeployLockGuard { file, path }),
             Ok(false) => Err(DeployStateError::Busy),
             Err(err) => Err(DeployStateError::Lock(err)),
         }
@@ -280,7 +279,7 @@ impl DeployStateGuard {
     }
 }
 
-impl Drop for DeployStateGuard {
+impl Drop for DeployLockGuard {
     fn drop(&mut self) {
         if let Err(err) = std::fs::remove_file(&self.path)
             && err.kind() != io::ErrorKind::NotFound

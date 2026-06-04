@@ -115,7 +115,7 @@ pub fn list_units<F>(ctx: &MainContext, predicate: F) -> Vec<(UnitName, UnitConf
 where
     F: Fn(&UnitConfig) -> bool,
 {
-    let entries = match fs::read_dir(ctx.base()) {
+    let entries = match fs::read_dir(ctx.conf_dir()) {
         Ok(v) => v,
         Err(_) => return Vec::new(),
     };
@@ -126,7 +126,7 @@ where
             continue;
         };
 
-        if !file_type.is_dir() {
+        if !file_type.is_file() {
             continue;
         }
 
@@ -135,7 +135,11 @@ where
             continue;
         };
 
-        let Ok(unit_name) = UnitName::new(raw) else {
+        let Some(stem) = raw.strip_suffix(".yaml") else {
+            continue;
+        };
+
+        let Ok(unit_name) = UnitName::new(stem) else {
             continue;
         };
 
@@ -231,23 +235,17 @@ secret: pg-pass
 
     #[test]
     fn load_skips_reference_validation() {
-        use std::fs;
-
         use tempfile::TempDir;
 
         let base = TempDir::new().unwrap();
-        let app_dir = base.path().join("app-x");
-        fs::create_dir_all(&app_dir).unwrap();
-        fs::write(
-            app_dir.join("config.yaml"),
-            "type: app\nimage: alpine\nbuilds: []\nruntime:\n  port: 8080\n  env:\n    OTHER: \"${nope:user}\"\n  cmd: ./run\n",
-        )
-        .unwrap();
-
         let ctx = MainContext {
             base: base.path().to_path_buf(),
             master_key: None,
         };
+        ctx.write_test_unit(
+            "app-x",
+            "type: app\nimage: alpine\nbuilds: []\nruntime:\n  port: 8080\n  env:\n    OTHER: \"${nope:user}\"\n  cmd: ./run\n",
+        );
 
         // load skips reference validation: succeeds even with a missing ref.
         let unit = UnitConfig::load(&ctx, &UnitName::new("app-x").unwrap()).unwrap();
@@ -280,8 +278,6 @@ secret: pg-pass
 
     #[test]
     fn validate_references_full_chain() {
-        use std::fs;
-
         use tempfile::TempDir;
 
         use crate::secret::{
@@ -297,30 +293,6 @@ secret: pg-pass
         //   piece is `foo-db-test-password`).
         let base = TempDir::new().unwrap();
 
-        let app_dir = base.path().join("foo");
-        fs::create_dir_all(&app_dir).unwrap();
-        fs::write(
-            app_dir.join("config.yaml"),
-            "type: app\nimage: alpine\nbuilds: []\nruntime:\n  port: 8080\n  env:\n    X: \"${db-test:password}\"\n  cmd: ./run\n",
-        )
-        .unwrap();
-
-        let db_dir = base.path().join("db-test");
-        fs::create_dir_all(&db_dir).unwrap();
-        fs::write(
-            db_dir.join("config.yaml"),
-            "type: db\nserver: pg-main\nuser: app1\nsecret: foo-db-test-password\n",
-        )
-        .unwrap();
-
-        let server_dir = base.path().join("pg-main");
-        fs::create_dir_all(&server_dir).unwrap();
-        fs::write(
-            server_dir.join("config.yaml"),
-            "type: db-server\nengine: postgresql\nversion: \"18\"\nsecret: pg-pass\n",
-        )
-        .unwrap();
-
         let key = MasterKey::generate(base.path());
         key.save().unwrap();
         // Provide pg-main's password so recursive server-validation succeeds.
@@ -332,6 +304,19 @@ secret: pg-pass
             base: base.path().to_path_buf(),
             master_key: Some(MasterKey::load(base.path()).unwrap()),
         };
+
+        ctx.write_test_unit(
+            "foo",
+            "type: app\nimage: alpine\nbuilds: []\nruntime:\n  port: 8080\n  env:\n    X: \"${db-test:password}\"\n  cmd: ./run\n",
+        );
+        ctx.write_test_unit(
+            "db-test",
+            "type: db\nserver: pg-main\nuser: app1\nsecret: foo-db-test-password\n",
+        );
+        ctx.write_test_unit(
+            "pg-main",
+            "type: db-server\nengine: postgresql\nversion: \"18\"\nsecret: pg-pass\n",
+        );
 
         let foo = UnitConfig::load(&ctx, &UnitName::new("foo").unwrap()).unwrap();
         let err = foo.validate_references(&ctx).unwrap_err();
@@ -353,8 +338,6 @@ secret: pg-pass
 
     #[test]
     fn validate_references_databases_chain() {
-        use std::fs;
-
         use tempfile::TempDir;
 
         use crate::secret::{
@@ -372,30 +355,6 @@ secret: pg-pass
         // descends into db-test → pg-main. The trail must keep every hop.
         let base = TempDir::new().unwrap();
 
-        let app_dir = base.path().join("foo");
-        fs::create_dir_all(&app_dir).unwrap();
-        fs::write(
-            app_dir.join("config.yaml"),
-            "type: app\nimage: alpine\nbuilds: []\nruntime:\n  port: 8080\n  env:\n    DB: \"${db-test:url}\"\n  cmd: ./run\n",
-        )
-        .unwrap();
-
-        let db_dir = base.path().join("db-test");
-        fs::create_dir_all(&db_dir).unwrap();
-        fs::write(
-            db_dir.join("config.yaml"),
-            "type: db\nserver: pg-main\nuser: app1\nsecret: db-test-password\n",
-        )
-        .unwrap();
-
-        let server_dir = base.path().join("pg-main");
-        fs::create_dir_all(&server_dir).unwrap();
-        fs::write(
-            server_dir.join("config.yaml"),
-            "type: db-server\nengine: postgresql\nversion: \"18\"\nsecret: pg-pass\n",
-        )
-        .unwrap();
-
         let key = MasterKey::generate(base.path());
         key.save().unwrap();
         // db-test's own secret is present; only pg-main's `pg-pass` is missing,
@@ -407,6 +366,19 @@ secret: pg-pass
             base: base.path().to_path_buf(),
             master_key: Some(MasterKey::load(base.path()).unwrap()),
         };
+
+        ctx.write_test_unit(
+            "foo",
+            "type: app\nimage: alpine\nbuilds: []\nruntime:\n  port: 8080\n  env:\n    DB: \"${db-test:url}\"\n  cmd: ./run\n",
+        );
+        ctx.write_test_unit(
+            "db-test",
+            "type: db\nserver: pg-main\nuser: app1\nsecret: db-test-password\n",
+        );
+        ctx.write_test_unit(
+            "pg-main",
+            "type: db-server\nengine: postgresql\nversion: \"18\"\nsecret: pg-pass\n",
+        );
 
         let foo = UnitConfig::load(&ctx, &UnitName::new("foo").unwrap()).unwrap();
         let err = foo.validate_references(&ctx).unwrap_err();
@@ -437,23 +409,17 @@ secret: pg-pass
 
     #[test]
     fn resolve_export_on_domain_has_no_exports() {
-        use std::fs;
-
         use tempfile::TempDir;
 
         let base = TempDir::new().unwrap();
-        let dir = base.path().join("example-com");
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join("config.yaml"),
-            "type: domain\nserver: nginx\nhosts:\n  - example.com\n",
-        )
-        .unwrap();
-
         let ctx = MainContext {
             base: base.path().to_path_buf(),
             master_key: None,
         };
+        ctx.write_test_unit(
+            "example-com",
+            "type: domain\nserver: nginx\nhosts:\n  - example.com\n",
+        );
         let err = resolve_export(&ctx, &UnitName::new("example-com").unwrap(), "host").unwrap_err();
         assert!(matches!(&err.trail[0], Location::Unit { name } if name == "example-com"));
         assert!(matches!(err.kind, ReferenceErrorKind::UnknownExport { ref key } if key == "host"));

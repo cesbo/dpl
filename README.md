@@ -14,16 +14,18 @@ templates, run `podman build`, and (re)install the generated systemd service.
 
 ## Layout
 
-- `{base_dir}` - base directory, default `/opt/dpl`, override with `--base`
-- `{unit_dir}` - one per unit, at `{base_dir}/{name}/`
-- `{base_dir}/.secrets/` - encrypted secrets
+`{base_dir}` is the base directory, default `/opt/dpl`, override with `--base`.
+Files are grouped by kind, not by unit:
 
-Each unit directory holds:
-
-- `config.yaml` - unit config (`type:` selects the variant)
-- `state.json` - deploy state (app units only)
-- `.deploy.lock` - advisory `flock(2)` held during a deploy
-- `log/build-{version}.log` - last build log
+- `{base_dir}/conf/{name}.yaml` - unit config (`type:` selects the variant)
+- `{base_dir}/state/` - per-unit runtime state and locks:
+  - `{name}--deploy.json` - deploy state (active version, last status)
+  - `{name}--deploy.lock` - advisory `flock(2)` held during a deploy
+  - `{name}--timers.json` - timer run state
+  - `{name}--timers.lock` - advisory `flock(2)` held while a timer runs
+- `{base_dir}/log/{name}.log` - last build log
+- `{base_dir}/secrets/` - encrypted secrets (`master.key` plus `{name}.json`)
+- `{base_dir}/backup/` - database dumps written before a destructive drop
 
 ## CLI
 
@@ -176,7 +178,7 @@ and `.sql.gz` both work.
 
 ## Secrets
 
-Secrets are encrypted files under `{base_dir}/.secrets/`, decrypted and
+Secrets are encrypted files under `{base_dir}/secrets/`, decrypted and
 inlined into generated artifacts (`run.sh`, `build-N.sh`, db `Environment=`)
 at deploy time.
 
@@ -190,7 +192,7 @@ dpl secret rm foo
 ```
 
 Reference a secret from any `env` map with `${secret:<name>}`. The first
-`dpl secret create` creates `{base_dir}/.secrets/master.key` automatically.
+`dpl secret create` creates `{base_dir}/secrets/master.key` automatically.
 
 ### Threat model
 

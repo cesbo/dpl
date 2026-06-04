@@ -41,11 +41,6 @@ pub enum TimerStateError {
     Write(#[source] io::Error),
 }
 
-/// A timer run failed. The full cause is also recorded into [`TimersState`]
-/// (keyed by timer name) for `dpl inspect`; this is the value returned to the
-/// CLI so the process exits non-zero. A timer run is its own cron-driven
-/// operation, not a deploy phase, so it carries its own error rather than a
-/// `DeployError`.
 #[derive(Debug, Error)]
 pub enum TimerError {
     /// The named timer doesn't exist on the unit, or is disabled.
@@ -166,7 +161,7 @@ impl TimersState {
     }
 
     pub fn load(ctx: &MainContext, name: &UnitName) -> Result<Self, TimerStateError> {
-        let path = ctx.timers_path(name);
+        let path = ctx.timers_state_path(name);
 
         let content = match read_to_string(&path) {
             Ok(content) => content,
@@ -216,13 +211,8 @@ impl TimersState {
     }
 }
 
-/// Holds an OS-level exclusive `flock` on `{unit_dir}/.timers.lock` for the
-/// lifetime of the value, blocking until it is acquired; the kernel releases it
-/// when the fd closes, including on crash. The lock file is unlinked on drop
-/// (carrying the usual flock-unlink race, acceptable on a single host).
+/// Holds an OS-level exclusive `flock` on `state/{unit}--timers.lock`.
 pub struct TimerLockGuard {
-    // Held for the flock; the lock is released when this is dropped.
-    // Never read directly, just keep the fd and lock alive.
     #[allow(dead_code)]
     file: File,
     path: PathBuf,
@@ -231,6 +221,9 @@ pub struct TimerLockGuard {
 impl TimerLockGuard {
     fn lock(ctx: &MainContext, name: &UnitName) -> Result<Self, TimerStateError> {
         let path = ctx.timers_lock_path(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(TimerStateError::Lock)?;
+        }
         let file = OpenOptions::new()
             .create(true)
             .truncate(true)
