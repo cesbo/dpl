@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 dpl is a single static-binary deploy CLI that manages local units (`app`, `db-server`, `db`, `domain`, `http-server`) on one host. It uses `podman` to run containers and `systemd` to supervise them. It runs as root, is not a daemon, and has no server-side component.
 
+This project is in active development; backward compatibility is NOT required. Make breaking changes freely whenever they improve the design - do not preserve legacy behavior, deprecated APIs, or compatibility shims.
+
 ## Commands
 
 - Build: `cargo build` (release is slow: `[profile.release]` uses LTO + `panic=abort`).
