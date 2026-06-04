@@ -145,7 +145,7 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
         Some(active) => {
             let deployed =
                 if state.last_status == DeployStatus::Ready && state.last_version == active {
-                    format!(" deployed {}", fmt_ago(now, state.updated_at))
+                    format!(" deployed {}", fmt_ago(&now, &state.updated_at))
                 } else {
                     String::new()
                 };
@@ -164,7 +164,7 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
             let info = format!(
                 "Version {} in progress · started {}",
                 state.last_version,
-                fmt_ago(now, state.updated_at)
+                fmt_ago(&now, &state.updated_at)
             );
             print_field(LATEST_DEPLOY, info);
         }
@@ -177,7 +177,7 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
                 "Version {} build failed{} · {}",
                 state.last_version,
                 stage,
-                fmt_ago(now, state.updated_at)
+                fmt_ago(&now, &state.updated_at)
             );
             print_field(LATEST_DEPLOY, info);
 
@@ -232,14 +232,14 @@ fn print_timers(now: chrono::DateTime<Utc>, timers: &TimersState) {
                 items.push(format!(
                     "{} {}",
                     console::style("started").yellow(),
-                    fmt_ago(now, run.last_run_at)
+                    fmt_ago(&now, &run.last_run_at)
                 ));
             }
             TimerStatus::Success => {
                 items.push(format!(
                     "{} {}",
                     console::style("success").green(),
-                    fmt_ago(now, run.last_run_at)
+                    fmt_ago(&now, &run.last_run_at)
                 ));
                 if let Some(v) = run.duration_ms {
                     let v = Duration::from_millis(v);
@@ -251,15 +251,15 @@ fn print_timers(now: chrono::DateTime<Utc>, timers: &TimersState) {
                 items.push(format!(
                     "{} {}",
                     console::style("failed").red(),
-                    fmt_ago(now, run.last_run_at)
+                    fmt_ago(&now, &run.last_run_at)
                 ));
                 if let Some(v) = run.duration_ms {
                     let v = Duration::from_millis(v);
                     let v = fmt_duration(v);
                     items.push(format!("in {v}"));
                 }
-                if let Some(at) = run.last_success_at {
-                    let v = fmt_ago(now, at);
+                if let Some(at) = &run.last_success_at {
+                    let v = fmt_ago(&now, at);
                     items.push(format!("last success {v}"))
                 }
                 if let Some(failure) = &run.failure {

@@ -348,14 +348,20 @@ pub fn fmt_duration(duration: Duration) -> String {
 
 /// How long ago `then` was relative to `now`: "just now", "2 min ago",
 /// "3 hours ago", "5 days ago".
-pub fn fmt_ago(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
-    let s = (now - then).num_seconds();
+pub fn fmt_ago(now: &DateTime<Utc>, then: &DateTime<Utc>) -> String {
+    let s = now.signed_duration_since(then).num_seconds();
     match s {
         0 .. 10 => "now".to_string(),
         10 .. 100 => format!("{s}s ago"),
         100 .. 3600 => format!("{}m ago", s / 60),
         3600 .. 86400 => format!("{}h ago", s / 3600),
-        _ => format!("{}d ago", s / 86400),
+        _ => {
+            if s > 0 {
+                format!("{}d ago", s / 86400)
+            } else {
+                "?".into()
+            }
+        }
     }
 }
 
@@ -471,7 +477,7 @@ mod tests {
         let now = DateTime::parse_from_rfc3339("2026-05-31T12:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        let ago = |secs: i64| fmt_ago(now, now - chrono::Duration::seconds(secs));
+        let ago = |secs: i64| fmt_ago(&now, &(now - chrono::Duration::seconds(secs)));
 
         assert_eq!(ago(0), "now");
         assert_eq!(ago(9), "now");

@@ -36,7 +36,7 @@ pub fn print_container_state(name: &UnitName) {
 
     if running {
         if let Ok(started) = DateTime::parse_from_rfc3339(&c.state.started_at) {
-            print_field("Uptime", fmt_ago(Utc::now(), started.with_timezone(&Utc)));
+            print_field("Uptime", fmt_ago(&Utc::now(), &started.with_timezone(&Utc)));
         }
         if let Some(s) = container_stats(name) {
             print_field("CPU", s.cpu_perc);
