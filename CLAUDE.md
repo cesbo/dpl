@@ -1,68 +1,40 @@
-# dpl - Deploy CLI
+# CLAUDE.md
 
-CLI tool that manages local units (`app`, `db-server`, `db`, `domain`, `http-server`).
-Uses `podman` to run applications (`app`, `db-server`, `http-server`).
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Think Before Coding
+dpl is a single static-binary deploy CLI that manages local units (`app`, `db-server`, `db`, `domain`, `http-server`) on one host. It uses `podman` to run containers and `systemd` to supervise them. It runs as root, is not a daemon, and has no server-side component.
 
-**Don't assume. Don't hide confusion. Surface tradeoffs.**
+## Commands
 
-Before implementing:
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
+- Build: `cargo build` (release is slow: `[profile.release]` uses LTO + `panic=abort`).
+- Test: `cargo test`. Single test by name substring: `cargo test validate_references_full_chain`. Tests are inline `#[cfg(test)] mod tests`; there is no `tests/` directory.
+- Lint: `cargo clippy` - keep it clean before finishing. Edition 2024.
+- Run the CLI: `cargo run -- --base <scratch-dir> <subcommand>`.
+- Most logic is unit-tested against temp dirs and needs nothing installed. Exercising a real deploy needs `podman` + `systemd` on the host.
 
-## Simplicity First
+Formatting: there is no checked-in `rustfmt.toml`, but imports are hand-formatted as merged-by-crate, one item per line, with std / external / `crate` in separate `use` blocks. Do not run `cargo fmt` blindly - on stable it reformats every import block and creates unrelated churn. Match the surrounding import style by hand.
 
-**Minimum code that solves the problem. Nothing speculative.**
+## Architecture
 
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
+The unit model plus typed cross-unit references is the novel core; preserve it across refactors (see Design Decisions).
 
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+- **Units.** `UnitConfig` (`src/deploy/unit/mod.rs`) is a `type:`-tagged enum with five variants: `app` (build and run a container), `db-server` (a DBMS container), `db` (a database created on a server via `podman exec`), `http-server` (an nginx container), `domain` (an nginx vhost/proxy). One unit = one `conf/{name}.yaml`; `list_units` enumerates `conf/*.yaml`.
+- **Typed references.** `env` values embed `${unit:key}` and `${secret:name}` tokens, parsed in `src/config/env/value.rs` and resolved in `src/reference.rs`, which threads a `Location` trail for precise errors. Each unit type implements `resolve_export(key)` (app: `url`/`socket`/`export`; db: `url`/`host`/`port`/`user`/`password`/`name`). `dpl check` validates the entire reference graph (`validate_references`) without deploying. An app's database dependencies are derived from its `${db:...}` refs, not declared.
+- **Deploy.** `cmd/unit::deploy` dispatches on the unit type to a per-type `deploy` in `src/deploy/unit/{app,db,domain,http_server}`. The app path: take the deploy lock and bump the version, extract the tar, render MiniJinja artifacts (`containerfile`, `build-N.sh`, `run.sh`, `.service`, `.cron`), `podman build`, then install the systemd service (plus cron timers and static exports into the nginx `dpl-www` volume). The other types have lighter flows. Outcomes and failures are written to the deploy state file.
+- **dpl delegates lifecycle to itself.** The generated `.service` runs `dpl start` / `dpl stop` as its `ExecStart` / `ExecStop`, and timer units call `dpl timer <unit> <name>`. So `start`/`stop`/`timer` are CLI subcommands invoked by systemd, not only by humans.
+- **Paths.** Everything under `{base}` (default `/opt/dpl`) is addressed through `MainContext` accessors in `src/context.rs`. Never hardcode `{base}/...`; add or extend an accessor. The layout is grouped by kind, not per-unit: `conf/{name}.yaml`, `state/{name}--{deploy,timers}.{json,lock}`, `log/{name}.log`, `secrets/`, `backup/` (see README "Layout"). System-side artifacts live outside base: `/etc/systemd/system/dpl--*.service`, `/etc/cron.d/dpl--*`, `/var/log/podman/`, podman network `dpl`.
+- **Secrets** (`src/secret.rs`): AES-256-GCM, `secrets/master.key` plus one JSON file per secret. Plaintext is resolved as close to use as possible - inlined into `run.sh` for app units, passed as `-e VAR=value` by `dpl start` for db-server units (never written into the unit file).
+- **State and locking** (`src/state.rs`, `src/timers.rs`): per-unit deploy and timer state are JSON written atomically (temp file then rename); concurrency is guarded by `flock(2)` on `state/{name}--*.lock`, released on drop.
+- **Errors:** `thiserror` enums per module for library/domain errors; `anyhow` (`Context`, `bail!`) in `src/cmd/`. `DeployError::Reported` means "already shown to the user", so `main` skips the duplicate report.
 
-## Surgical Changes
+## Testing conventions
 
-**Touch only what you must. Clean up only your own mess.**
-
-When editing existing code:
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it - don't delete it.
-
-When your changes create orphans:
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
-
-The test: Every changed line should trace directly to the user's request.
-
-## Goal-Driven Execution
-
-**Define success criteria. Loop until verified.**
-
-Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
-
-For multi-step tasks, state a brief plan:
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
-```
-
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+- Inline `#[cfg(test)] mod tests`; use `tempfile::TempDir` for the filesystem.
+- Write unit configs with the test-only `MainContext::write_test_unit(name, yaml)` helper (it routes through `config_path`). Never hand-build `{base}/{name}/...` paths in tests, so they cannot drift from the real layout.
 
 ## Code conventions
 
 - In comments use regular hyphen - for dashes, not em dash — or en dash –
-- Use only english language in code
 
 ## Design Decisions
 
