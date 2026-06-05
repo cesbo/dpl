@@ -1,5 +1,4 @@
 mod artifacts;
-mod cron;
 mod model;
 mod podman;
 mod systemd;
@@ -26,7 +25,6 @@ use tracing::{
 pub use self::model::AppConfig;
 use self::{
     artifacts::ArtifactsContext,
-    cron::CronContext,
     podman::PodmanContext,
     systemd::SystemdContext,
 };
@@ -230,10 +228,7 @@ impl<'a> AppUnit<'a> {
                 .map_err(|e| DeployError::step_install("set restart policy to 'always'", e))?;
         }
 
-        let _phase = log::phase("installing timers");
-        CronContext::new(self.name)
-            .install(deploy_dir)
-            .map_err(|e| DeployError::step_install("install timers", e))?;
+        let _phase = log::phase("registering timers");
         self.register_timers();
 
         Ok(())
@@ -262,8 +257,6 @@ impl<'a> AppUnit<'a> {
     }
 
     fn uninstall_inner(&self, version: u32) {
-        CronContext::new(self.name).uninstall();
-
         SystemdContext::new(self.name).uninstall_app();
 
         let podman_ctx = PodmanContext::new(self.name, version);

@@ -27,7 +27,6 @@ const CONTAINERFILE_TEMPLATE: &str = "containerfile";
 const BUILD_SH_TEMPLATE: &str = "build-sh";
 const RUN_SH_TEMPLATE: &str = "run-sh";
 const APP_SERVICE_TEMPLATE: &str = "app-service";
-const CRON_TEMPLATE: &str = "cron";
 
 static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
     let mut env = Environment::new();
@@ -51,8 +50,6 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
         include_str!("templates/app-service.jinja"),
     )
     .unwrap();
-    env.add_template(CRON_TEMPLATE, include_str!("templates/cron.jinja"))
-        .unwrap();
 
     env
 });
@@ -147,28 +144,6 @@ impl<'a> ArtifactsContext<'a> {
                 name => &self.name,
             },
         )?;
-
-        // A single `/etc/cron.d/{scoped}` file drives every enabled timer, each
-        // line invoking `dpl timer`. No file when there are no enabled timers.
-        let timers = self
-            .config
-            .timers
-            .iter()
-            .filter(|t| !t.disabled)
-            .collect::<Vec<_>>();
-        if !timers.is_empty() {
-            let path = artifacts_dir.join(format!("{}.cron", self.name.scoped_unit_name()));
-            write_artifact(
-                path,
-                CRON_TEMPLATE,
-                context! {
-                    dpl_bin => dpl_bin.to_string_lossy(),
-                    dpl_base => self.ctx.base().to_string_lossy(),
-                    name => &self.name,
-                    timers => timers,
-                },
-            )?;
-        }
 
         Ok(())
     }
@@ -305,29 +280,17 @@ mod tests {
         assert!(artifacts_dir.join("build-4.sh").exists());
         assert!(artifacts_dir.join("dpl--my-app.service").exists());
 
-        // A single cron.d file drives every enabled timer; each line delegates
-        // to `dpl timer` and embeds no podman logic.
-        let cron = fs::read_to_string(artifacts_dir.join("dpl--my-app.cron")).unwrap();
+        // Enabled timers reach the container through run.sh's `timer--<name>`
+        // dispatch; the disabled one is skipped. The scheduler (not a cron file)
+        // now decides when each fires.
+        let run_sh = fs::read_to_string(artifacts_dir.join("run.sh")).unwrap();
         assert!(
-            cron.contains("0 3 * * * root") && cron.contains("timer my-app cleanup"),
-            "missing cleanup cron line:\n{cron}"
+            run_sh.contains("timer--cleanup") && run_sh.contains("timer--sync"),
+            "missing timer dispatch in run.sh:\n{run_sh}"
         );
         assert!(
-            cron.contains("0 * * * * root") && cron.contains("timer my-app sync"),
-            "missing sync cron line:\n{cron}"
-        );
-        // disabled timer is skipped entirely
-        assert!(
-            !cron.contains("timer my-app purge"),
-            "disabled timer must not be rendered:\n{cron}"
-        );
-        assert!(
-            !cron.contains("podman"),
-            "cron file must not embed podman logic:\n{cron}"
-        );
-        assert!(
-            cron.ends_with('\n'),
-            "cron file must end with a newline:\n{cron}"
+            !run_sh.contains("timer--purge"),
+            "disabled timer must not be rendered:\n{run_sh}"
         );
 
         // The service only delegates to `dpl start`/`dpl stop`; container logic
@@ -400,10 +363,9 @@ mod tests {
         // The build still runs: containerfile + build scripts are rendered.
         assert!(artifacts_dir.join("containerfile").exists());
         assert!(artifacts_dir.join("build-1.sh").exists());
-        // No runtime → no entrypoint, service, or cron file.
+        // No runtime → no entrypoint or service.
         assert!(!artifacts_dir.join("run.sh").exists());
         assert!(!artifacts_dir.join("dpl--site.service").exists());
-        assert!(!artifacts_dir.join("dpl--site.cron").exists());
 
         // The image has no EXPOSE or CMD - it exists only to be exported from.
         let containerfile = fs::read_to_string(artifacts_dir.join("containerfile")).unwrap();

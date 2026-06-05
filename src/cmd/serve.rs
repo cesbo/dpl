@@ -34,11 +34,6 @@ use crate::MainContext;
 const POLL_INTERVAL: Duration = Duration::from_secs(10);
 const SLEEP_SLICE: Duration = Duration::from_millis(250);
 
-fn tick(ctx: &MainContext) {
-    let _ = ctx;
-    // TODO: continue here...
-}
-
 pub fn run(ctx: &MainContext) -> Result<()> {
     let _lock = SchedulerLock::acquire(ctx)?;
 
@@ -54,7 +49,7 @@ pub fn run(ctx: &MainContext) -> Result<()> {
 
     tracing::info!("dpl scheduler started");
 
-    tick(ctx);
+    crate::scheduler::tick(ctx);
 
     while !shutdown.load(Ordering::Relaxed) {
         if reload.swap(false, Ordering::Relaxed) {
@@ -76,7 +71,7 @@ pub fn run(ctx: &MainContext) -> Result<()> {
             break;
         }
 
-        tick(ctx);
+        crate::scheduler::tick(ctx);
     }
 
     Ok(())
