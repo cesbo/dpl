@@ -18,6 +18,7 @@ use std::{
 
 use chrono::{
     DateTime,
+    Local,
     Utc,
 };
 use croner::Cron;
@@ -47,7 +48,8 @@ pub enum TimerStateError {
 
 #[derive(Debug, Error)]
 pub enum TimerError {
-    /// The named timer doesn't exist on the unit, or is disabled.
+    /// The named timer isn't registered in the unit's timer state - unknown,
+    /// disabled, or not yet reconciled.
     #[error("unknown or disabled timer '{0}'")]
     Unknown(String),
 
@@ -72,6 +74,8 @@ pub enum TimerOutcome {
     Success { duration_ms: u64 },
     /// The last run failed.
     Failed { duration_ms: u64, error: String },
+    /// The schedule has no upcoming occurrence.
+    Invalid { error: String },
 }
 
 /// The most recent record of one of a unit's timers.
@@ -84,6 +88,10 @@ pub struct TimerState {
     /// Cron schedule this timer fires on.
     pub schedule: Cron,
 
+    /// When the timer should next fire (UTC).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_run: Option<DateTime<Utc>>,
+
     /// Anchor for the next-occurrence computation: the start of the most recent
     /// run, or the seeded registration time for an `Idle` timer that never ran.
     pub last_run_at: DateTime<Utc>,
@@ -93,59 +101,95 @@ pub struct TimerState {
     pub last_success_at: Option<DateTime<Utc>>,
 
     /// Consecutive failed runs since the last success; 0 while healthy.
+    #[serde(default, skip_serializing_if = "crate::config::is_default")]
     pub consecutive_failures: u32,
 }
 
 impl TimerState {
+    /// Next occurrence of `schedule` strictly after `after`.
+    /// The cron fields in the host's local time and returned in UTC.
+    /// `None` when the schedule has no upcoming occurrence (an impossible date).
+    pub fn next_occurrence(schedule: &Cron, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        let after_local = after.with_timezone(&Local);
+        schedule
+            .find_next_occurrence(&after_local, false)
+            .ok()
+            .map(|next| next.with_timezone(&Utc))
+    }
+
     /// A timer registered but not yet run.
-    pub fn idle(schedule: Cron, anchor: DateTime<Utc>) -> Self {
+    pub fn idle(
+        schedule: Cron,
+        last_run_at: DateTime<Utc>,
+        next_run: Option<DateTime<Utc>>,
+    ) -> Self {
         TimerState {
             outcome: TimerOutcome::Idle,
             schedule,
-            last_run_at: anchor,
+            next_run,
+            last_run_at,
             last_success_at: None,
             consecutive_failures: 0,
         }
     }
 
-    pub fn running(schedule: Cron, prev: Option<&TimerState>, last_run_at: DateTime<Utc>) -> Self {
+    /// Begin a run starting at `last_run_at`. The schedule and failure streak
+    /// carry forward from the prior record (`self`); the run's own
+    /// `last_run_at`/`next_run` come from the caller.
+    pub fn running(&self, last_run_at: DateTime<Utc>, next_run: Option<DateTime<Utc>>) -> Self {
         TimerState {
             outcome: TimerOutcome::Running,
-            schedule,
+            schedule: self.schedule.clone(),
+            next_run,
             last_run_at,
-            last_success_at: prev.and_then(|p| p.last_success_at),
-            consecutive_failures: prev.map_or(0, |p| p.consecutive_failures),
+            last_success_at: self.last_success_at,
+            consecutive_failures: self.consecutive_failures,
         }
     }
 
-    pub fn success(schedule: Cron, last_run_at: DateTime<Utc>, duration: Duration) -> Self {
+    /// Complete the in-progress run successfully. Schedule, run start and
+    /// next_run are taken from `self` (the `Running` record).
+    pub fn success(&self, duration: Duration) -> Self {
         TimerState {
             outcome: TimerOutcome::Success {
                 duration_ms: duration.as_millis() as u64,
             },
-            schedule,
-            last_run_at,
-            last_success_at: Some(last_run_at),
+            schedule: self.schedule.clone(),
+            next_run: self.next_run,
+            last_run_at: self.last_run_at,
+            last_success_at: Some(self.last_run_at),
             consecutive_failures: 0,
         }
     }
 
-    pub fn failed(
-        schedule: Cron,
-        prev: Option<&TimerState>,
-        last_run_at: DateTime<Utc>,
-        duration: Duration,
-        error: impl Into<String>,
-    ) -> Self {
+    /// Complete the in-progress run with a failure, advancing the streak.
+    /// Schedule, run start, next_run and the carried `last_success_at`/streak
+    /// all come from `self` (the `Running` record).
+    pub fn failed(&self, duration: Duration, error: impl Into<String>) -> Self {
         TimerState {
             outcome: TimerOutcome::Failed {
                 duration_ms: duration.as_millis() as u64,
                 error: error.into(),
             },
+            schedule: self.schedule.clone(),
+            next_run: self.next_run,
+            last_run_at: self.last_run_at,
+            last_success_at: self.last_success_at,
+            consecutive_failures: self.consecutive_failures.saturating_add(1),
+        }
+    }
+
+    /// A timer whose schedule has no upcoming occurrence.
+    pub fn invalid(schedule: Cron, last_run_at: DateTime<Utc>, error: impl Into<String>) -> Self {
+        TimerState {
+            outcome: TimerOutcome::Invalid {
+                error: error.into(),
+            },
             schedule,
+            next_run: None,
             last_run_at,
-            last_success_at: prev.and_then(|p| p.last_success_at),
-            consecutive_failures: prev.map_or(0, |p| p.consecutive_failures).saturating_add(1),
+            last_success_at: None,
+            consecutive_failures: 0,
         }
     }
 }
@@ -225,24 +269,42 @@ impl TimersState {
         let _ = self.save();
     }
 
-    /// Reconcile persisted state against a unit's configured timers in one
-    /// write: add, update changed schedules, drop removed. `anchor` seeds
-    /// newly added timers.
+    /// Reconcile persisted timer state with configured timers.
     pub fn reconcile(&mut self, configured: &[(String, Cron)], anchor: DateTime<Utc>) {
         let names: BTreeSet<&str> = configured.iter().map(|(name, _)| name.as_str()).collect();
         self.timers.retain(|name, _| names.contains(name.as_str()));
 
         for (name, schedule) in configured {
+            // No upcoming occurrence: park as invalid (replacing any prior
+            // record). Visible in inspect, but next_run is None so it never fires.
+            let Some(next) = TimerState::next_occurrence(schedule, anchor) else {
+                let error = "schedule has no upcoming occurrence";
+                tracing::warn!("timer '{name}': {error}");
+                self.timers.insert(
+                    name.clone(),
+                    TimerState::invalid(schedule.clone(), anchor, error),
+                );
+                continue;
+            };
+
             match self.timers.get_mut(name) {
-                Some(state) => {
-                    if state.schedule != *schedule {
-                        state.schedule = schedule.clone();
-                    }
-                }
                 None => {
-                    let timer = TimerState::idle(schedule.clone(), anchor);
-                    self.timers.insert(name.clone(), timer);
+                    self.timers.insert(
+                        name.clone(),
+                        TimerState::idle(schedule.clone(), anchor, Some(next)),
+                    );
                 }
+
+                Some(state) if matches!(state.outcome, TimerOutcome::Invalid { .. }) => {
+                    *state = TimerState::idle(schedule.clone(), anchor, Some(next));
+                }
+
+                Some(state) if state.schedule != *schedule => {
+                    state.schedule = schedule.clone();
+                    state.next_run = Some(next);
+                }
+
+                Some(_) => {}
             }
         }
 
@@ -303,39 +365,50 @@ mod tests {
         expr.parse().unwrap()
     }
 
+    /// The next_run a constructor should store for a schedulable timer. Asserted
+    /// against rather than a hardcoded instant, since the value is timezone-dependent.
+    fn next(expr: &str, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        TimerState::next_occurrence(&cron(expr), after)
+    }
+
+    /// The `Running` pivot for `name`'s next run at `at`, mirroring run_timer:
+    /// carry the prior record forward, or seed an idle baseline if absent. Call
+    /// `.success(..)`/`.failed(..)` on the result to record the run's outcome.
+    fn attempt(state: &TimersState, name: &str, expr: &str, at: DateTime<Utc>) -> TimerState {
+        state
+            .timers
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| TimerState::idle(cron(expr), at, next(expr, at)))
+            .running(at, next(expr, at))
+    }
+
     #[test]
     fn record_timer_run_persists_last_run_per_timer() {
         let dir = tempfile::tempdir().unwrap();
         let mut state = timers_at(dir.path());
 
         let t0 = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap();
-        state.set_timer_state(
-            "cleanup",
-            TimerState::success(cron("0 3 * * *"), t0, Duration::from_millis(1840)),
-        );
-        state.set_timer_state(
-            "sync",
-            TimerState::failed(
-                cron("0 * * * *"),
-                None,
-                t0,
-                Duration::from_secs(2),
-                "exit code 1",
-            ),
-        );
+        let cleanup =
+            attempt(&state, "cleanup", "0 3 * * *", t0).success(Duration::from_millis(1840));
+        state.set_timer_state("cleanup", cleanup);
+        let sync =
+            attempt(&state, "sync", "0 * * * *", t0).failed(Duration::from_secs(2), "exit code 1");
+        state.set_timer_state("sync", sync);
 
         // A second run of the same timer replaces the first.
         let t1 = DateTime::<Utc>::from_timestamp(1_700_000_060, 0).unwrap();
-        state.set_timer_state(
-            "cleanup",
-            TimerState::success(cron("0 3 * * *"), t1, Duration::from_millis(990)),
-        );
+        let cleanup =
+            attempt(&state, "cleanup", "0 3 * * *", t1).success(Duration::from_millis(990));
+        state.set_timer_state("cleanup", cleanup);
 
         assert_eq!(state.timers.len(), 2);
         let cleanup = &state.timers["cleanup"];
         assert_eq!(cleanup.outcome, TimerOutcome::Success { duration_ms: 990 });
         assert_eq!(cleanup.last_run_at, t1);
         assert_eq!(cleanup.last_success_at, Some(t1));
+        assert_eq!(cleanup.next_run, next("0 3 * * *", t1));
+        assert!(cleanup.next_run > Some(t1));
         assert_eq!(cleanup.consecutive_failures, 0);
 
         let sync = &state.timers["sync"];
@@ -363,7 +436,8 @@ mod tests {
         let mut state = timers_at(dir.path());
         let t = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap();
 
-        state.set_timer_state("backup", TimerState::running(cron("0 * * * *"), None, t));
+        let running = attempt(&state, "backup", "0 * * * *", t);
+        state.set_timer_state("backup", running.clone());
         let run = &state.timers["backup"];
         assert_eq!(run.outcome, TimerOutcome::Running);
 
@@ -375,10 +449,7 @@ mod tests {
         assert!(!json.contains("consecutive_failures"), "{json}");
 
         // Completing the run overwrites the `Running` record in place.
-        state.set_timer_state(
-            "backup",
-            TimerState::success(cron("0 * * * *"), t, Duration::from_millis(500)),
-        );
+        state.set_timer_state("backup", running.success(Duration::from_millis(500)));
         assert_eq!(state.timers.len(), 1);
         assert_eq!(
             state.timers["backup"].outcome,
@@ -391,54 +462,30 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut state = timers_at(dir.path());
 
-        let prev = |s: &TimersState| s.timers.get("job").cloned();
-
         let t0 = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap();
-        state.set_timer_state(
-            "job",
-            TimerState::success(cron("0 * * * *"), t0, Duration::from_millis(10)),
-        );
+        let run = attempt(&state, "job", "0 * * * *", t0).success(Duration::from_millis(10));
+        state.set_timer_state("job", run);
 
         // First failure: last success is preserved, counter goes to 1.
         let t1 = DateTime::<Utc>::from_timestamp(1_700_000_060, 0).unwrap();
-        let p = prev(&state);
-        state.set_timer_state(
-            "job",
-            TimerState::failed(
-                cron("0 * * * *"),
-                p.as_ref(),
-                t1,
-                Duration::from_millis(20),
-                "boom",
-            ),
-        );
+        let run = attempt(&state, "job", "0 * * * *", t1).failed(Duration::from_millis(20), "boom");
+        state.set_timer_state("job", run);
         let job = &state.timers["job"];
         assert_eq!(job.last_success_at, Some(t0));
         assert_eq!(job.consecutive_failures, 1);
 
         // Second failure: counter climbs, last success still preserved.
         let t2 = DateTime::<Utc>::from_timestamp(1_700_000_120, 0).unwrap();
-        let p = prev(&state);
-        state.set_timer_state(
-            "job",
-            TimerState::failed(
-                cron("0 * * * *"),
-                p.as_ref(),
-                t2,
-                Duration::from_millis(20),
-                "boom",
-            ),
-        );
+        let run = attempt(&state, "job", "0 * * * *", t2).failed(Duration::from_millis(20), "boom");
+        state.set_timer_state("job", run);
         let job = &state.timers["job"];
         assert_eq!(job.last_success_at, Some(t0));
         assert_eq!(job.consecutive_failures, 2);
 
         // Success resets the counter and advances the last-success marker.
         let t3 = DateTime::<Utc>::from_timestamp(1_700_000_240, 0).unwrap();
-        state.set_timer_state(
-            "job",
-            TimerState::success(cron("0 * * * *"), t3, Duration::from_millis(10)),
-        );
+        let run = attempt(&state, "job", "0 * * * *", t3).success(Duration::from_millis(10));
+        state.set_timer_state("job", run);
         let job = &state.timers["job"];
         assert_eq!(job.consecutive_failures, 0);
         assert_eq!(job.last_success_at, Some(t3));
@@ -450,12 +497,18 @@ mod tests {
         let mut state = timers_at(dir.path());
         let anchor = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap();
 
-        state.set_timer_state("backup", TimerState::idle(cron("0 2 * * *"), anchor));
+        state.set_timer_state(
+            "backup",
+            TimerState::idle(cron("0 2 * * *"), anchor, next("0 2 * * *", anchor)),
+        );
         let idle = &state.timers["backup"];
         assert_eq!(idle.outcome, TimerOutcome::Idle);
         // The anchor is stored as last_run_at even though the timer never ran.
         assert_eq!(idle.last_run_at, anchor);
         assert_eq!(idle.schedule, cron("0 2 * * *"));
+        // next_run is the first occurrence after the registration anchor.
+        assert_eq!(idle.next_run, next("0 2 * * *", anchor));
+        assert!(idle.next_run > Some(anchor));
         assert!(idle.last_success_at.is_none());
         assert_eq!(idle.consecutive_failures, 0);
 
@@ -474,40 +527,21 @@ mod tests {
         let mut state = timers_at(dir.path());
 
         let t0 = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap();
-        state.set_timer_state(
-            "job",
-            TimerState::failed(
-                cron("0 * * * *"),
-                None,
-                t0,
-                Duration::from_millis(5),
-                "boom",
-            ),
-        );
+        let run = attempt(&state, "job", "0 * * * *", t0).failed(Duration::from_millis(5), "boom");
+        state.set_timer_state("job", run);
 
-        let prev = state.timers.get("job").cloned();
+        // The next run is left in `Running` (as a crash would), carrying the streak.
         let t1 = DateTime::<Utc>::from_timestamp(1_700_000_060, 0).unwrap();
-        state.set_timer_state(
-            "job",
-            TimerState::running(cron("0 * * * *"), prev.as_ref(), t1),
-        );
+        let run = attempt(&state, "job", "0 * * * *", t1);
+        state.set_timer_state("job", run);
         let job = &state.timers["job"];
         assert_eq!(job.outcome, TimerOutcome::Running);
         assert_eq!(job.consecutive_failures, 1);
 
         // The next failure, reading the carried `Running` record, climbs to 2.
-        let prev = state.timers.get("job").cloned();
         let t2 = DateTime::<Utc>::from_timestamp(1_700_000_120, 0).unwrap();
-        state.set_timer_state(
-            "job",
-            TimerState::failed(
-                cron("0 * * * *"),
-                prev.as_ref(),
-                t2,
-                Duration::from_millis(5),
-                "boom",
-            ),
-        );
+        let run = attempt(&state, "job", "0 * * * *", t2).failed(Duration::from_millis(5), "boom");
+        state.set_timer_state("job", run);
         assert_eq!(state.timers["job"].consecutive_failures, 2);
     }
 
@@ -528,12 +562,16 @@ mod tests {
         let t0 = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap();
         // Pre-existing state: an idle timer, one with run history, and one that
         // the new config no longer mentions.
-        state.set_timer_state("keep", TimerState::idle(cron("0 * * * *"), t0));
         state.set_timer_state(
-            "change",
-            TimerState::success(cron("0 3 * * *"), t0, Duration::from_millis(5)),
+            "keep",
+            TimerState::idle(cron("0 * * * *"), t0, next("0 * * * *", t0)),
         );
-        state.set_timer_state("gone", TimerState::idle(cron("0 0 * * *"), t0));
+        let change = attempt(&state, "change", "0 3 * * *", t0).success(Duration::from_millis(5));
+        state.set_timer_state("change", change);
+        state.set_timer_state(
+            "gone",
+            TimerState::idle(cron("0 0 * * *"), t0, next("0 0 * * *", t0)),
+        );
 
         let anchor = DateTime::<Utc>::from_timestamp(1_700_000_500, 0).unwrap();
         let configured = vec![
@@ -547,22 +585,86 @@ mod tests {
         let names: Vec<&str> = state.timers.keys().map(String::as_str).collect();
         assert_eq!(names, ["change", "keep", "new"]);
 
-        // "keep" is untouched: same anchor, still idle, same schedule.
+        // "keep" is untouched: same anchor, still idle, same schedule, and its
+        // next_run is left at the originally-seeded value (not refreshed).
         let keep = &state.timers["keep"];
         assert_eq!(keep.outcome, TimerOutcome::Idle);
         assert_eq!(keep.last_run_at, t0);
         assert_eq!(keep.schedule, cron("0 * * * *"));
+        assert_eq!(keep.next_run, next("0 * * * *", t0));
 
-        // "change" picks up the new schedule but keeps its run history.
+        // "change" picks up the new schedule and a next_run recomputed from it,
+        // but keeps its run history.
         let change = &state.timers["change"];
         assert_eq!(change.schedule, cron("30 4 * * *"));
         assert_eq!(change.outcome, TimerOutcome::Success { duration_ms: 5 });
         assert_eq!(change.last_run_at, t0);
+        assert_eq!(change.next_run, next("30 4 * * *", anchor));
 
-        // "new" is seeded as idle, anchored at the reconcile time.
+        // "new" is seeded as idle, anchored at the reconcile time, with its
+        // first next_run computed from that anchor.
         let new = &state.timers["new"];
         assert_eq!(new.outcome, TimerOutcome::Idle);
         assert_eq!(new.last_run_at, anchor);
         assert_eq!(new.schedule, cron("15 * * * *"));
+        assert_eq!(new.next_run, next("15 * * * *", anchor));
+    }
+
+    #[test]
+    fn reconcile_parks_timer_with_undeterminable_next_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = timers_at(dir.path());
+
+        // Feb 30 never occurs, so find_next_occurrence can't resolve a next run.
+        let ghost = cron("0 0 30 2 *");
+        assert!(
+            TimerState::next_occurrence(&ghost, Utc::now()).is_none(),
+            "expected an impossible schedule to have no next occurrence",
+        );
+
+        let anchor = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap();
+        let configured = vec![
+            ("ok".to_string(), cron("0 * * * *")),
+            ("ghost".to_string(), ghost),
+        ];
+        state.reconcile(&configured, anchor);
+
+        // Both stay registered: the dead one is parked as Invalid with no
+        // next_run, so it shows in `dpl inspect` but never fires.
+        let names: Vec<&str> = state.timers.keys().map(String::as_str).collect();
+        assert_eq!(names, ["ghost", "ok"]);
+
+        let ghost = &state.timers["ghost"];
+        assert!(matches!(ghost.outcome, TimerOutcome::Invalid { .. }));
+        assert!(ghost.next_run.is_none());
+
+        let ok = &state.timers["ok"];
+        assert_eq!(ok.outcome, TimerOutcome::Idle);
+        assert_eq!(ok.next_run, next("0 * * * *", anchor));
+    }
+
+    #[test]
+    fn reconcile_parks_then_recovers_on_schedule_edit() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = timers_at(dir.path());
+        let t0 = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap();
+
+        // A healthy timer with run history.
+        let job = attempt(&state, "job", "0 * * * *", t0).success(Duration::from_millis(5));
+        state.set_timer_state("job", job);
+
+        // Editing it to an impossible schedule parks it: visible, but unscheduled.
+        let a1 = DateTime::<Utc>::from_timestamp(1_700_000_500, 0).unwrap();
+        state.reconcile(&[("job".to_string(), cron("0 0 30 2 *"))], a1);
+        let job = &state.timers["job"];
+        assert!(matches!(job.outcome, TimerOutcome::Invalid { .. }));
+        assert!(job.next_run.is_none());
+
+        // Editing back to a valid schedule re-seeds it as idle and schedulable.
+        let a2 = DateTime::<Utc>::from_timestamp(1_700_001_000, 0).unwrap();
+        state.reconcile(&[("job".to_string(), cron("15 * * * *"))], a2);
+        let job = &state.timers["job"];
+        assert_eq!(job.outcome, TimerOutcome::Idle);
+        assert_eq!(job.next_run, next("15 * * * *", a2));
     }
 }

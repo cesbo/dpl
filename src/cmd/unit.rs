@@ -13,7 +13,10 @@ use anyhow::{
     Result,
     bail,
 };
-use chrono::Utc;
+use chrono::{
+    Local,
+    Utc,
+};
 
 use crate::{
     MainContext,
@@ -224,11 +227,22 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
 
 /// Print the last run of each timer (only app units record any).
 fn print_timers(now: chrono::DateTime<Utc>, timers: &TimersState) {
+    const DT_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+
     for (timer, run) in &timers.timers {
         let mut items = Vec::new();
 
+        let next_run = run
+            .next_run
+            .map(|f| format!("next {}", f.with_timezone(&Local).format(DT_FORMAT)));
+
         match &run.outcome {
-            TimerOutcome::Idle => items.push(format!("{}", console::style("idle").dim())),
+            TimerOutcome::Idle => {
+                items.push(format!("{}", console::style("idle").dim()));
+                if let Some(next_run) = next_run {
+                    items.push(next_run);
+                }
+            }
             TimerOutcome::Running => {
                 items.push(format!(
                     "{} {}",
@@ -242,7 +256,13 @@ fn print_timers(now: chrono::DateTime<Utc>, timers: &TimersState) {
                     console::style("success").green(),
                     fmt_ago(&now, &run.last_run_at)
                 ));
-                items.push(format!("in {}", fmt_duration(Duration::from_millis(*duration_ms))));
+                items.push(format!(
+                    "took {}",
+                    fmt_duration(Duration::from_millis(*duration_ms))
+                ));
+                if let Some(next_run) = next_run {
+                    items.push(next_run);
+                }
             }
             TimerOutcome::Failed { duration_ms, error } => {
                 items.push(format!(
@@ -250,13 +270,22 @@ fn print_timers(now: chrono::DateTime<Utc>, timers: &TimersState) {
                     console::style("failed").red(),
                     fmt_ago(&now, &run.last_run_at)
                 ));
-                items.push(format!("in {}", fmt_duration(Duration::from_millis(*duration_ms))));
-                if let Some(at) = &run.last_success_at {
-                    let v = fmt_ago(&now, at);
-                    items.push(format!("last success {v}"))
-                }
+                items.push(format!(
+                    "took {}",
+                    fmt_duration(Duration::from_millis(*duration_ms))
+                ));
                 items.push(format!("fails {}", run.consecutive_failures));
-                items.push(error.clone());
+                if let Some(at) = &run.last_success_at {
+                    items.push(format!("last success {}", fmt_ago(&now, at)));
+                }
+                if let Some(next_run) = next_run {
+                    items.push(next_run);
+                }
+                items.push(format!("error: {}", error));
+            }
+            TimerOutcome::Invalid { error } => {
+                items.push(format!("{}", console::style("invalid").red()));
+                items.push(format!("error: {}", error));
             }
         }
 
@@ -311,26 +340,16 @@ pub fn timer(ctx: &MainContext, name: &UnitName, timer_name: &str) -> Result<()>
     let Some(_deploy_log) = DeployLockGuard::try_acquire(ctx, name)
         .with_context(|| format!("acquire unit '{name}'"))?
     else {
-        // Record a skip only for a configured, enabled timer: an unknown name
-        // has no schedule to anchor a record on, and run_timer would reject it.
-        if let Some(timer) = config
-            .timers
-            .iter()
-            .find(|t| t.name == timer_name && !t.disabled)
-        {
-            let prev = timers.timers.get(timer_name).cloned();
+        // Record a skip only for a timer already registered in the state.
+        if let Some(prev) = timers.timers.get(timer_name).cloned() {
             let msg = format!("unit '{name}' busy: deploy in progress");
-            tracing::info!("{msg}; recording skip for timer '{timer_name}'");
-            timers.set_timer_state(
-                timer_name,
-                TimerState::failed(
-                    timer.schedule.clone(),
-                    prev.as_ref(),
-                    Utc::now(),
-                    Duration::default(),
-                    msg,
-                ),
-            );
+            tracing::info!("skip timer '{timer_name}': {msg}");
+
+            let now = Utc::now();
+            let next_run = TimerState::next_occurrence(&prev.schedule, now);
+            // The attempt starts now but can't run, so record it as a failed run.
+            let skipped = prev.running(now, next_run).failed(Duration::default(), msg);
+            timers.set_timer_state(timer_name, skipped);
         }
 
         return Ok(());

@@ -358,41 +358,33 @@ impl<'a> AppUnit<'a> {
 
     /// Run one of the unit's timers once.
     pub fn run_timer(&self, timers: &mut TimersState, timer_name: &str) -> Result<(), TimerError> {
-        let timer = self
-            .config
+        // TimersState is the source of truth for which timers exist.
+        let prev = timers
             .timers
-            .iter()
-            .find(|t| t.name == timer_name && !t.disabled)
+            .get(timer_name)
+            .cloned()
             .ok_or_else(|| TimerError::Unknown(timer_name.to_string()))?;
 
-        // Carry-forward fields (last success, consecutive failures) are derived
-        // from the timer's prior record; capture it once before overwriting.
-        let prev = timers.timers.get(timer_name).cloned();
         let started_at = Utc::now();
+
+        let next_run = TimerState::next_occurrence(&prev.schedule, started_at);
+        if next_run.is_none() {
+            warn!("timer '{timer_name}': next run unresolved");
+        }
+
+        let running = prev.running(started_at, next_run);
 
         if !crate::podman::is_running(self.name) {
             let error = format!("container for '{}' not running", self.name);
             info!("{error}; skipping timer '{timer_name}'");
-            timers.set_timer_state(
-                timer_name,
-                TimerState::failed(
-                    timer.schedule.clone(),
-                    prev.as_ref(),
-                    started_at,
-                    Duration::default(),
-                    error,
-                ),
-            );
+            timers.set_timer_state(timer_name, running.failed(Duration::default(), error));
             return Ok(());
         }
 
         let container = self.name.scoped_unit_name();
-        let command = format!("timer--{}", timer.name);
+        let command = format!("timer--{timer_name}");
 
-        timers.set_timer_state(
-            timer_name,
-            TimerState::running(timer.schedule.clone(), prev.as_ref(), started_at),
-        );
+        timers.set_timer_state(timer_name, running.clone());
 
         let clock = Instant::now();
         let status = Command::new("podman")
@@ -402,24 +394,12 @@ impl<'a> AppUnit<'a> {
 
         match status {
             Ok(status) if status.success() => {
-                timers.set_timer_state(
-                    timer_name,
-                    TimerState::success(timer.schedule.clone(), started_at, elapsed),
-                );
+                timers.set_timer_state(timer_name, running.success(elapsed));
                 Ok(())
             }
             Ok(status) => {
                 let cause = format!("timer script exited with {status}");
-                timers.set_timer_state(
-                    timer_name,
-                    TimerState::failed(
-                        timer.schedule.clone(),
-                        prev.as_ref(),
-                        started_at,
-                        elapsed,
-                        &cause,
-                    ),
-                );
+                timers.set_timer_state(timer_name, running.failed(elapsed, &cause));
                 Err(TimerError::Run {
                     name: timer_name.to_string(),
                     source: io::Error::other(cause),
@@ -427,16 +407,7 @@ impl<'a> AppUnit<'a> {
             }
             Err(err) => {
                 let err = crate::podman::podman_spawn_error(err);
-                timers.set_timer_state(
-                    timer_name,
-                    TimerState::failed(
-                        timer.schedule.clone(),
-                        prev.as_ref(),
-                        started_at,
-                        elapsed,
-                        err.to_string(),
-                    ),
-                );
+                timers.set_timer_state(timer_name, running.failed(elapsed, err.to_string()));
                 Err(TimerError::Run {
                     name: timer_name.to_string(),
                     source: err,
