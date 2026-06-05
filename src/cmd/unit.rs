@@ -43,8 +43,8 @@ use crate::{
         DeployStatus,
     },
     timers::{
+        TimerOutcome,
         TimerState,
-        TimerStatus,
         TimersState,
     },
 };
@@ -227,45 +227,36 @@ fn print_timers(now: chrono::DateTime<Utc>, timers: &TimersState) {
     for (timer, run) in &timers.timers {
         let mut items = Vec::new();
 
-        match run.status {
-            TimerStatus::Running => {
+        match &run.outcome {
+            TimerOutcome::Idle => items.push(format!("{}", console::style("idle").dim())),
+            TimerOutcome::Running => {
                 items.push(format!(
                     "{} {}",
                     console::style("started").yellow(),
                     fmt_ago(&now, &run.last_run_at)
                 ));
             }
-            TimerStatus::Success => {
+            TimerOutcome::Success { duration_ms } => {
                 items.push(format!(
                     "{} {}",
                     console::style("success").green(),
                     fmt_ago(&now, &run.last_run_at)
                 ));
-                if let Some(v) = run.duration_ms {
-                    let v = Duration::from_millis(v);
-                    let v = fmt_duration(v);
-                    items.push(format!("in {v}"));
-                }
+                items.push(format!("in {}", fmt_duration(Duration::from_millis(*duration_ms))));
             }
-            TimerStatus::Failed => {
+            TimerOutcome::Failed { duration_ms, error } => {
                 items.push(format!(
                     "{} {}",
                     console::style("failed").red(),
                     fmt_ago(&now, &run.last_run_at)
                 ));
-                if let Some(v) = run.duration_ms {
-                    let v = Duration::from_millis(v);
-                    let v = fmt_duration(v);
-                    items.push(format!("in {v}"));
-                }
+                items.push(format!("in {}", fmt_duration(Duration::from_millis(*duration_ms))));
                 if let Some(at) = &run.last_success_at {
                     let v = fmt_ago(&now, at);
                     items.push(format!("last success {v}"))
                 }
-                if let Some(failure) = &run.failure {
-                    items.push(format!("fails {}", failure.count));
-                    items.push(failure.error.clone());
-                }
+                items.push(format!("fails {}", run.consecutive_failures));
+                items.push(error.clone());
             }
         }
 
@@ -320,13 +311,27 @@ pub fn timer(ctx: &MainContext, name: &UnitName, timer_name: &str) -> Result<()>
     let Some(_deploy_log) = DeployLockGuard::try_acquire(ctx, name)
         .with_context(|| format!("acquire unit '{name}'"))?
     else {
-        let prev = timers.timers.get(timer_name).cloned();
-        let msg = format!("unit '{name}' busy: deploy in progress");
-        tracing::info!("{msg}; recording skip for timer '{timer_name}'");
-        timers.set_timer_state(
-            timer_name,
-            TimerState::failed(prev.as_ref(), Utc::now(), Duration::default(), msg),
-        );
+        // Record a skip only for a configured, enabled timer: an unknown name
+        // has no schedule to anchor a record on, and run_timer would reject it.
+        if let Some(timer) = config
+            .timers
+            .iter()
+            .find(|t| t.name == timer_name && !t.disabled)
+        {
+            let prev = timers.timers.get(timer_name).cloned();
+            let msg = format!("unit '{name}' busy: deploy in progress");
+            tracing::info!("{msg}; recording skip for timer '{timer_name}'");
+            timers.set_timer_state(
+                timer_name,
+                TimerState::failed(
+                    timer.schedule.clone(),
+                    prev.as_ref(),
+                    Utc::now(),
+                    Duration::default(),
+                    msg,
+                ),
+            );
+        }
 
         return Ok(());
     };

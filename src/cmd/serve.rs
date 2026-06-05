@@ -22,7 +22,6 @@ use anyhow::{
     Result,
     bail,
 };
-use chrono::Local;
 use fs4::fs_std::FileExt;
 use signal_hook::consts::{
     SIGHUP,

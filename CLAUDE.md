@@ -37,6 +37,7 @@ The unit model plus typed cross-unit references is the novel core; preserve it a
 ## Code conventions
 
 - In comments use regular hyphen - for dashes, not em dash — or en dash –
+- Keep comments lean: state the intent in a line or two, not the implementation. The code already shows *how*; the comment exists for the *why* that isn't obvious. Don't narrate each branch or restate what the next line does.
 
 ## Design Decisions
 
