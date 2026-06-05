@@ -118,6 +118,13 @@ impl MainContext {
         self.log_dir().join(format!("{}.log", unit.as_str()))
     }
 
+    /// `{base}/log/{unit}--{timer}.log` - a timer's captured stdout/stderr in
+    /// CRI `k8s-file` format, appended across runs.
+    pub fn timer_log_path(&self, unit: &UnitName, timer: &str) -> PathBuf {
+        self.log_dir()
+            .join(format!("{}--{}.log", unit.as_str(), timer))
+    }
+
     pub fn resolve_secret(&self, name: &SecretName) -> Result<String, SecretError> {
         let Some(master_key) = &self.master_key else {
             return Err(SecretError::KeyNotFound);

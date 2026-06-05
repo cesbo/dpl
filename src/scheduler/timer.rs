@@ -1,6 +1,9 @@
 use std::{
     io,
-    process::Command,
+    process::{
+        Command,
+        Stdio,
+    },
     time::{
         Duration,
         Instant,
@@ -14,7 +17,9 @@ use tracing::{
 };
 
 use crate::{
+    MainContext,
     config::UnitName,
+    scheduler::cri_log::CriLog,
     timers::{
         TimerError,
         TimerState,
@@ -22,8 +27,11 @@ use crate::{
     },
 };
 
-/// Run one of a unit's timers once, recording the outcome into `timers`.
+/// Run one of a unit's timers once, recording the outcome into `timers`. The
+/// container's stdout/stderr are captured to the unit's timer log in CRI
+/// `k8s-file` format.
 pub fn run_timer(
+    ctx: &MainContext,
     name: &UnitName,
     timers: &mut TimersState,
     timer_name: &str,
@@ -57,9 +65,35 @@ pub fn run_timer(
     timers.set_timer_state(timer_name, running.clone());
 
     let clock = Instant::now();
-    let status = Command::new("podman")
+    let spawned = Command::new("podman")
         .args(["exec", &container, "/bin/sh", "/opt/dpl/run.sh", &command])
-        .status();
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
+
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(err) => {
+            let err = crate::podman::podman_spawn_error(err);
+            timers.set_timer_state(timer_name, running.failed(clock.elapsed(), err.to_string()));
+            return Err(TimerError::Run {
+                name: timer_name.to_string(),
+                source: err,
+            });
+        }
+    };
+
+    // Drain the container's output into the unit's timer log before reaping it,
+    // so a full pipe can't wedge the process. A log failure is non-fatal: the
+    // timer still ran, so record its real outcome rather than masking it.
+    let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
+    let log_path = ctx.timer_log_path(name, timer_name);
+    if let Err(err) = CriLog::open(&log_path).and_then(|log| log.capture(stdout, stderr)) {
+        warn!("timer '{timer_name}': write log {}: {err}", log_path.display());
+    }
+
+    let status = child.wait();
     let elapsed = clock.elapsed();
 
     match status {
@@ -76,7 +110,6 @@ pub fn run_timer(
             })
         }
         Err(err) => {
-            let err = crate::podman::podman_spawn_error(err);
             timers.set_timer_state(timer_name, running.failed(elapsed, err.to_string()));
             Err(TimerError::Run {
                 name: timer_name.to_string(),

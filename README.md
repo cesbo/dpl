@@ -24,6 +24,7 @@ Files are grouped by kind, not by unit:
   - `{name}--timers.json` - timer run state
   - `{name}--timers.lock` - advisory `flock(2)` held while a timer runs
 - `{base_dir}/log/{name}.log` - last build log
+- `{base_dir}/log/{name}--{timer}.log` - timer run output, CRI `k8s-file` format
 - `{base_dir}/secrets/` - encrypted secrets (`master.key` plus `{name}.json`)
 - `{base_dir}/backup/` - database dumps written before a destructive drop
 
