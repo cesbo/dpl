@@ -7,6 +7,7 @@ mod deploy;
 mod log;
 mod podman;
 mod reference;
+mod scheduler;
 mod secret;
 mod spinner;
 mod state;

@@ -328,12 +328,6 @@ pub fn stop(ctx: &MainContext, name: &UnitName) -> Result<()> {
 
 /// Run one of a unit's timers.
 pub fn timer(ctx: &MainContext, name: &UnitName, timer_name: &str) -> Result<()> {
-    let unit = load_unit(ctx, name)?;
-
-    let UnitConfig::App(config) = unit else {
-        bail!("{} unit has no timers", unit.kind());
-    };
-
     let (_timer_lock, mut timers) = TimersState::acquire(ctx, name)
         .with_context(|| format!("acquire timers for unit '{name}'"))?;
 
@@ -355,8 +349,7 @@ pub fn timer(ctx: &MainContext, name: &UnitName, timer_name: &str) -> Result<()>
         return Ok(());
     };
 
-    AppUnit::new(ctx, name, config)
-        .run_timer(&mut timers, timer_name)
+    crate::scheduler::run_timer(name, &mut timers, timer_name)
         .with_context(|| format!("run timer '{timer_name}' on unit '{name}'"))
 }
 
