@@ -11,14 +11,11 @@ use std::{
 };
 
 use chrono::Utc;
-use tracing::{
-    info,
-    warn,
-};
 
 use crate::{
     MainContext,
     config::UnitName,
+    log,
     log::cri_log::CriLog,
     timers::{
         TimerError,
@@ -47,14 +44,13 @@ pub fn run_timer(
 
     let next_run = TimerState::next_occurrence(&prev.schedule, started_at);
     if next_run.is_none() {
-        warn!("timer '{timer_name}': next run unresolved");
+        log::warn(format!("timer '{timer_name}': next run unresolved"));
     }
 
     let running = prev.running(started_at, next_run);
 
     if !crate::podman::is_running(name) {
         let error = format!("container for '{name}' not running");
-        info!("{error}; skipping timer '{timer_name}'");
         timers.set_timer_state(timer_name, running.failed(Duration::default(), error));
         return Ok(());
     }
@@ -89,15 +85,13 @@ pub fn run_timer(
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
     let log_path = ctx.timers_log_path(name);
-    match CriLog::open(&log_path, Some(timer_name)).and_then(|log| log.capture(stdout, stderr)) {
-        Ok(_) => {}
-        Err(err) => {
-            warn!(
-                "timer '{}': write log {}: {err}",
-                timer_name,
-                log_path.display()
-            );
-        }
+    if let Err(err) =
+        CriLog::open(&log_path, Some(timer_name)).and_then(|log| log.capture(stdout, stderr))
+    {
+        log::warn(format!(
+            "timer '{timer_name}': write log {}: {err}",
+            log_path.display()
+        ));
     }
 
     let status = child.wait();

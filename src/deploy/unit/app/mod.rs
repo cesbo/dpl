@@ -16,11 +16,6 @@ use std::{
 use chrono::Utc;
 use croner::Cron;
 use tempfile::TempDir;
-use tracing::{
-    debug,
-    error,
-    warn,
-};
 
 pub use self::model::AppConfig;
 use self::{
@@ -64,7 +59,7 @@ impl<'a> AppUnit<'a> {
     }
 
     fn prepare<R: Read>(&self, archive: R) -> Result<TempDir, DeployError> {
-        let _phase = log::phase("preparing");
+        log::phase("preparing");
 
         let state_dir = self.ctx.state_dir();
         let temp_dir = tempfile::tempdir_in(&state_dir)
@@ -115,12 +110,11 @@ impl<'a> AppUnit<'a> {
         self.build_inner(deploy_dir, version)?;
 
         if let Some(active_version) = state.take_active_version() {
-            let _phase = log::phase(format_args!("uninstalling v{active_version}"));
+            log::phase(format_args!("uninstalling v{active_version}"));
             self.uninstall_inner(active_version);
         }
 
         if let Err(err) = self.install_inner(deploy_dir, version) {
-            debug!("deploy failed, removing {} version {}", self.name, version);
             self.uninstall_inner(version);
             return Err(err);
         }
@@ -147,18 +141,18 @@ impl<'a> AppUnit<'a> {
             return;
         }
 
-        let _phase = log::phase("updating dependent domains");
+        log::phase("updating dependent domains");
         for (name, config) in domains {
             let (_guard, mut state) = match DeployState::acquire(self.ctx, self.name) {
                 Ok(v) => v,
                 Err(err) => {
-                    error!("skip domain '{name}': {err}");
+                    log::error(format!("skip domain '{name}': {err}"));
                     continue;
                 }
             };
 
             if let Err(err) = state.bump_version() {
-                error!("skip domain '{name}': {err}");
+                log::error(format!("skip domain '{name}': {err}"));
                 continue;
             }
 
@@ -167,24 +161,24 @@ impl<'a> AppUnit<'a> {
                 if let Some((stage, message)) = err.failure() {
                     state.set_failed(stage, message);
                 }
-                error!(
+                log::error(format!(
                     "domain '{name}' redeploy failed: {:#}",
                     anyhow::Error::new(err)
-                );
+                ));
             }
         }
     }
 
     fn build_inner(&self, deploy_dir: &Path, version: u32) -> Result<(), DeployError> {
         {
-            let _phase = log::phase("extracting app archive");
+            log::phase("extracting app archive");
             let archive_path = deploy_dir.join("app.tar.gz");
             let app_dir = deploy_dir.join("app");
             crate::archive::extract(&archive_path, &app_dir)
                 .map_err(|e| DeployError::step_build("extract app archive", e))?;
         }
 
-        let _phase = log::phase("building app image");
+        log::phase("building app image");
         PodmanContext::new(self.name, version)
             .build(deploy_dir, &self.ctx.build_log_path(self.name))
             .map_err(|e| DeployError::step_build("build app image", e))?;
@@ -194,7 +188,7 @@ impl<'a> AppUnit<'a> {
 
     fn install_inner(&self, deploy_dir: &Path, version: u32) -> Result<(), DeployError> {
         if !self.config.exports.is_empty() {
-            let _phase = log::phase("exporting files");
+            log::phase("exporting files");
             PodmanContext::new(self.name, version)
                 .export(&self.config.exports)
                 .map_err(|e| DeployError::step_install("export files", e))?;
@@ -209,7 +203,7 @@ impl<'a> AppUnit<'a> {
         let systemd_ctx = SystemdContext::new(self.name);
 
         {
-            let _phase = log::phase("installing app service");
+            log::phase("installing app service");
             systemd_ctx
                 .install_app(deploy_dir)
                 .map_err(|e| DeployError::step_install("install app service", e))?;
@@ -217,9 +211,9 @@ impl<'a> AppUnit<'a> {
 
         {
             let phase_name = "waiting for app".to_string();
-            let _phase = log::phase(&phase_name);
+            log::phase(&phase_name);
             if let Err(err) = crate::podman::health::check(self.name, runtime.port) {
-                error!("{err}");
+                log::error(format!("{err}"));
                 return Err(DeployError::step_startup(phase_name, err));
             }
 
@@ -228,7 +222,7 @@ impl<'a> AppUnit<'a> {
                 .map_err(|e| DeployError::step_install("set restart policy to 'always'", e))?;
         }
 
-        let _phase = log::phase("registering timers");
+        log::phase("registering timers");
         self.register_timers();
 
         Ok(())
@@ -248,7 +242,7 @@ impl<'a> AppUnit<'a> {
         let (_lock, mut timers) = match TimersState::acquire(self.ctx, self.name) {
             Ok(acquired) => acquired,
             Err(err) => {
-                warn!("register timers for '{}': {err}", self.name);
+                log::warn(format!("register timers for '{}': {err}", self.name));
                 return;
             }
         };

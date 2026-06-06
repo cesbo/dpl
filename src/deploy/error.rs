@@ -14,9 +14,9 @@ pub enum DeployError {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
-    /// A deploy failed after its build log was opened: the cause is in that log
-    /// and `DeployLog::finish_err` already printed a one-line summary. Carries
-    /// no detail so the top level can exit non-zero without repeating anything.
+    /// A deploy failed: the cause is in the build log (when one was written) and
+    /// `DeployConsole::finish_err` already printed a one-line summary. Carries no
+    /// detail so the top level can exit non-zero without repeating anything.
     #[error("deploy failed")]
     Reported,
 }

@@ -55,7 +55,7 @@ impl<'a> HttpServerUnit<'a> {
     ///     so a dependent unit (e.g. a domain) can trigger the chain.
     pub fn reload_or_deploy(self) -> Result<(), DeployError> {
         if crate::podman::is_running(self.name) {
-            let _phase = log::phase(format!("reloading http-server '{}'", self.name));
+            log::phase(format!("reloading http-server '{}'", self.name));
             let container = self.name.scoped_unit_name();
             crate::podman::run_podman(&["exec", &container, "nginx", "-s", "reload"]).map_err(
                 |e| DeployError::step_install(format!("reload http-server '{}'", self.name), e),
@@ -75,7 +75,7 @@ impl<'a> HttpServerUnit<'a> {
         match self.deploy(&mut state) {
             Ok(()) => Ok(()),
             Err(err) => {
-                // No DeployLog handle here; the primary unit's state records the stage.
+                // No deploy console of its own here; the primary unit's state records the stage.
                 if let Some((stage, message)) = err.failure() {
                     state.set_failed(stage, message);
                 }
@@ -109,7 +109,7 @@ impl<'a> HttpServerUnit<'a> {
 
         {
             let service_name = format!("{}.service", self.name.scoped_unit_name());
-            let _phase = log::phase(format!("starting http-server '{}'", self.name));
+            log::phase(format!("starting http-server '{}'", self.name));
             if systemd::is_active(&service_name) {
                 systemd::restart_service(&service_name).map_err(|e| {
                     DeployError::step_install(format!("restart service for '{}'", self.name), e)
@@ -122,9 +122,9 @@ impl<'a> HttpServerUnit<'a> {
         }
 
         let phase_name = format!("waiting for http-server '{}'", self.name);
-        let _phase = log::phase(&phase_name);
+        log::phase(&phase_name);
         if let Err(err) = health::check(self.name, HTTP_PORT) {
-            tracing::error!("{err}");
+            log::error(format!("{err}"));
             return Err(DeployError::step_startup(phase_name, err));
         }
 

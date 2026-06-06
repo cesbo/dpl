@@ -96,8 +96,6 @@ enum Command {
 }
 
 fn main() -> ExitCode {
-    log::init();
-
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         // A reported deploy failure already showed its summary on the console;

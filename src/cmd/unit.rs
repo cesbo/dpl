@@ -33,7 +33,7 @@ use crate::{
         http_server::HttpServerUnit,
     },
     log::{
-        DeployLog,
+        DeployConsole,
         fmt_ago,
         fmt_duration,
         print_field,
@@ -90,17 +90,7 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
     let log_path = ctx.build_log_path(name);
     let _ = crate::log::cri_log::remove_all(&log_path);
 
-    let log = match DeployLog::open(&log_path, name, version) {
-        Ok(log) => log,
-        Err(err) => {
-            let err = DeployError::step_prepare("open deploy log", err);
-            if let Some((stage, message)) = err.failure() {
-                state.set_failed(stage, message);
-            }
-            return Err(anyhow::Error::new(err).context(format!("deploy unit '{name}'")));
-        }
-    };
-    let _default = log.set_default();
+    let console = DeployConsole::open(name, version);
 
     let result: std::result::Result<(), DeployError> = match unit {
         UnitConfig::App(app_config) => {
@@ -121,7 +111,7 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
 
     match result {
         Ok(()) => {
-            log.finish_ok();
+            console.finish_ok();
             Ok(())
         }
         Err(err) => {
@@ -129,8 +119,7 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
             if let Some((stage, message)) = err.failure() {
                 state.set_failed(stage, message);
             }
-            tracing::debug!("deploy failed: {:#}", anyhow::Error::new(err));
-            log.finish_err();
+            console.finish_err(&log_path);
             Err(anyhow::Error::new(DeployError::Reported))
         }
     }
@@ -339,7 +328,6 @@ pub fn timer(ctx: &MainContext, name: &UnitName, timer_name: &str) -> Result<()>
         // Record a skip only for a timer already registered in the state.
         if let Some(prev) = timers.timers.get(timer_name).cloned() {
             let msg = format!("unit '{name}' busy: deploy in progress");
-            tracing::info!("skip timer '{timer_name}': {msg}");
 
             let now = Utc::now();
             let next_run = TimerState::next_occurrence(&prev.schedule, now);

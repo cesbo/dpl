@@ -7,13 +7,9 @@ use std::{
     path::Path,
 };
 
-use tracing::{
-    debug,
-    error,
-};
-
 use crate::{
     config::UnitName,
+    log,
     systemd::{
         disable_service,
         enable_service,
@@ -66,10 +62,9 @@ impl<'a> SystemdContext<'a> {
 
         if let Err(err) = fs::remove_file(&app_service_path) {
             if err.kind() != io::ErrorKind::NotFound {
-                error!("failed to remove service for unit {}: {err}", self.name);
+                log::error(format!("failed to remove service for unit {}: {err}", self.name));
             }
         } else {
-            debug!("removed service for unit {}", self.name);
             reload_systemd();
         }
     }
@@ -116,7 +111,7 @@ impl<'a> SystemdContext<'a> {
 
 fn reload_systemd() {
     if let Err(err) = crate::systemd::reload() {
-        error!("reload systemd: {err}");
+        log::error(format!("reload systemd: {err}"));
     }
 }
 

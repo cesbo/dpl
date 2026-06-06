@@ -47,8 +47,6 @@ pub fn run(ctx: &MainContext) -> Result<()> {
     signal_hook::flag::register(SIGHUP, Arc::clone(&reload))
         .with_context(|| format!("register {} signal", SIGHUP))?;
 
-    tracing::info!("dpl scheduler started");
-
     crate::scheduler::tick(ctx);
 
     while !shutdown.load(Ordering::Relaxed) {
@@ -113,7 +111,7 @@ impl Drop for SchedulerLock {
         if let Err(err) = std::fs::remove_file(&self.path)
             && err.kind() != io::ErrorKind::NotFound
         {
-            tracing::warn!("remove scheduler lock '{}': {err}", self.path.display());
+            crate::log::warn(format!("remove scheduler lock '{}': {err}", self.path.display()));
         }
     }
 }

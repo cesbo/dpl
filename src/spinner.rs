@@ -30,10 +30,10 @@ pub fn deploy_style() -> ProgressStyle {
         .tick_strings(SPINNER)
 }
 
-/// Owns a styled progress spinner and its lifecycle. Used by [`DeployLog`] to
-/// drive the live `[MM:SS] {spinner} {phase}` line shown during a deploy.
+/// Owns a styled progress spinner and its lifecycle. Used by [`DeployConsole`]
+/// to drive the live `[MM:SS] {spinner} {phase}` line shown during a deploy.
 ///
-/// [`DeployLog`]: crate::log::DeployLog
+/// [`DeployConsole`]: crate::log::DeployConsole
 pub struct Spinner {
     bar: ProgressBar,
 }

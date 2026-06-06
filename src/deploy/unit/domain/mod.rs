@@ -56,7 +56,7 @@ impl<'a> DomainUnit<'a> {
         // Resolve the proxy's trusted-IP allowlist.
         let resolved = match &self.config.proxy {
             Some(cfg) => {
-                let _phase = log::phase("resolving proxy IP ranges");
+                log::phase("resolving proxy IP ranges");
                 Some(
                     proxy::resolve(cfg)
                         .map_err(|e| DeployError::step_install("resolve proxy IP ranges", e))?,

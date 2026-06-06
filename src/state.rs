@@ -284,7 +284,7 @@ impl Drop for DeployLockGuard {
         if let Err(err) = std::fs::remove_file(&self.path)
             && err.kind() != io::ErrorKind::NotFound
         {
-            tracing::warn!("remove deploy lock file {}: {err}", self.path.display());
+            crate::log::warn(format!("remove deploy lock file {}: {err}", self.path.display()));
         }
     }
 }

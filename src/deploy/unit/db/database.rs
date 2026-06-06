@@ -88,7 +88,7 @@ impl<'a> DbUnit<'a> {
             .reload_or_deploy()?;
 
         let exists = {
-            let _phase = log::phase("checking database");
+            log::phase("checking database");
             server_config
                 .engine
                 .ping(
@@ -114,7 +114,7 @@ impl<'a> DbUnit<'a> {
         };
 
         if !exists {
-            let _phase = log::phase("creating database");
+            log::phase("creating database");
             server_config
                 .engine
                 .create_database(&params, &root_password)
@@ -124,7 +124,7 @@ impl<'a> DbUnit<'a> {
         }
 
         if let Some(backup) = backup {
-            let _phase = log::phase("restoring database");
+            log::phase("restoring database");
             let mut input = open_backup(backup).map_err(|e| {
                 DeployError::step_install(format!("restore database '{}'", self.name), e)
             })?;

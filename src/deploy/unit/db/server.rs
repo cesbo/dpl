@@ -62,7 +62,7 @@ impl<'a> DbServerUnit<'a> {
         match self.deploy(&mut state) {
             Ok(()) => Ok(()),
             Err(err) => {
-                // No DeployLog handle here; the primary unit's state records the stage.
+                // No deploy console of its own here; the primary unit's state records the stage.
                 if let Some((stage, message)) = err.failure() {
                     state.set_failed(stage, message);
                 }
@@ -83,7 +83,7 @@ impl<'a> DbServerUnit<'a> {
 
         {
             let service_name = format!("{}.service", self.name.scoped_unit_name());
-            let _phase = log::phase(format!("starting db-server '{}'", self.name));
+            log::phase(format!("starting db-server '{}'", self.name));
             if systemd::is_active(&service_name) {
                 systemd::restart_service(&service_name).map_err(|e| {
                     DeployError::step_install(format!("restart service for '{}'", self.name), e)
@@ -95,7 +95,7 @@ impl<'a> DbServerUnit<'a> {
             }
         }
 
-        let _phase = log::phase(format!("waiting for db-server '{}'", self.name));
+        log::phase(format!("waiting for db-server '{}'", self.name));
         let deadline = Instant::now() + PING_TIMEOUT;
         loop {
             if self

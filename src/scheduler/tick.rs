@@ -2,14 +2,10 @@ use chrono::{
     DateTime,
     Utc,
 };
-use tracing::{
-    debug,
-    warn,
-};
-
 use crate::{
     MainContext,
     deploy::list_units,
+    log,
     scheduler::run_timer,
     state::DeployLockGuard,
     timers::TimersState,
@@ -28,7 +24,7 @@ pub fn tick(ctx: &MainContext) {
         let (_timer_lock, mut timers) = match TimersState::acquire(ctx, &name) {
             Ok(acquired) => acquired,
             Err(err) => {
-                warn!("scheduler: acquire timers for '{name}': {err}");
+                log::warn(format!("scheduler: acquire timers for '{name}': {err}"));
                 continue;
             }
         };
@@ -42,12 +38,13 @@ pub fn tick(ctx: &MainContext) {
             Ok(Some(_deploy_guard)) => {
                 for timer_name in due {
                     if let Err(err) = run_timer(ctx, &name, &mut timers, &timer_name) {
-                        warn!("scheduler: timer '{timer_name}' on '{name}': {err}");
+                        log::warn(format!("scheduler: timer '{timer_name}' on '{name}': {err}"));
                     }
                 }
             }
-            Ok(None) => debug!("scheduler: '{name}' busy (deploy), deferring timers"),
-            Err(err) => warn!("scheduler: deploy lock '{name}': {err}"),
+            // Busy with a deploy; these timers run on a later tick.
+            Ok(None) => {}
+            Err(err) => log::warn(format!("scheduler: deploy lock '{name}': {err}")),
         }
     }
 }

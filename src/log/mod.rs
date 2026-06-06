@@ -1,19 +1,9 @@
 pub mod cri_log;
 
 use std::{
-    fmt::{
-        self,
-        Write as _,
-    },
-    io,
-    path::{
-        Path,
-        PathBuf,
-    },
-    sync::{
-        Arc,
-        Mutex,
-    },
+    cell::RefCell,
+    fmt,
+    path::Path,
     time::{
         Duration,
         Instant,
@@ -25,38 +15,26 @@ use chrono::{
     Utc,
 };
 use indicatif::ProgressBar;
-use tracing::{
-    Dispatch,
-    Event,
-    Level,
-    Subscriber,
-    field::{
-        Field,
-        Visit,
-    },
-    span::{
-        Attributes,
-        Id,
-    },
-};
-use tracing_subscriber::{
-    Registry,
-    layer::{
-        Context,
-        Layer,
-        SubscriberExt,
-    },
-};
 
 use crate::{
     config::UnitName,
     spinner::Spinner,
 };
 
-/// Name of the spans opened by [`phase`]; how [`DeployLayer`] tells a deploy
-/// phase apart from any other span. Must match the literal in [`phase`] (span
-/// names are static metadata, so the macro can't reference this constant).
-const PHASE_SPAN: &str = "dpl::phase";
+thread_local! {
+    /// The deploy console active on this thread, installed by [`DeployConsole`]
+    /// for the deploy's lifetime. `phase()` drives it, and [`StderrLayer`] reads
+    /// it to print `warn!`/`error!` above the spinner instead of corrupting it.
+    static CONSOLE: RefCell<Option<ConsoleState>> = const { RefCell::new(None) };
+}
+
+/// Live deploy console: the spinner plus the name of the phase in progress.
+struct ConsoleState {
+    spinner: Spinner,
+    started: Instant,
+    /// Phase shown on the spinner, echoed as `✓` when the next phase opens.
+    phase: Option<String>,
+}
 
 pub fn success_mark() -> console::StyledObject<&'static str> {
     console::style("✓").green()
@@ -73,197 +51,113 @@ pub fn print_field(key: &str, value: impl fmt::Display) {
     println!("{key:<20} {value}")
 }
 
-/// Open and enter a deploy phase.
-/// Sets the spinner message and stamps
-/// The previous phase's `✓` line is echoed when the next phase opens.
-pub fn phase(message: impl fmt::Display) -> tracing::span::EnteredSpan {
-    tracing::info_span!(PHASE_SPAN, message = %message).entered()
+/// Advance the deploy console to a new phase: show it on the spinner and leave a
+/// `✓` for the phase that just finished. No-op outside a deploy.
+pub fn phase(message: impl fmt::Display) {
+    CONSOLE.with_borrow_mut(|console| {
+        let Some(state) = console.as_mut() else {
+            return;
+        };
+        let message = message.to_string();
+        state.spinner.bar().set_message(message.clone());
+        if let Some(prev) = state.phase.replace(message) {
+            echo_phase_done(state.spinner.bar(), state.started, &prev);
+        }
+    });
 }
 
-/// Owns a per-deploy `tracing` subscriber and the deploy spinner. Install it as
-/// the thread-default dispatcher via [`set_default`](Self::set_default); logging
-/// then flows through the `tracing` macros. Console output happens in
-/// [`DeployLayer`]; the build log file is written separately by `CriLog` at the
-/// podman call sites.
-pub struct DeployLog {
-    dispatch: Dispatch,
-    started: Instant,
-    spinner: Spinner,
-    path: PathBuf,
-    /// Name of the current phase to print before next phase start.
-    phase: Arc<Mutex<Option<String>>>,
-}
+/// Drives the deploy spinner and the `[MM:SS] ✓ <phase>` lines. Held for the
+/// deploy's lifetime: construction installs the thread-local [`CONSOLE`], drop
+/// removes it. No `tracing` involvement - phases are pure `indicatif`; the build
+/// log file is written separately by `CriLog` at the podman call sites.
+pub struct DeployConsole;
 
-impl DeployLog {
-    pub fn open(path: &Path, unit: &UnitName, version: u32) -> io::Result<Self> {
+impl DeployConsole {
+    pub fn open(unit: &UnitName, version: u32) -> Self {
         let spinner = Spinner::with_style(
             format!("{unit} v{version}: starting"),
             crate::spinner::deploy_style(),
         );
-        let started = Instant::now();
-        let phase = Arc::new(Mutex::new(None));
-        let layer = DeployLayer {
-            bar: spinner.bar().clone(),
-            started,
-            phase: Arc::clone(&phase),
-        };
-        let dispatch = Dispatch::new(Registry::default().with(layer));
-
-        Ok(Self {
-            dispatch,
-            started,
-            spinner,
-            path: path.to_path_buf(),
-            phase,
-        })
-    }
-
-    pub fn elapsed(&self) -> Duration {
-        self.started.elapsed()
-    }
-
-    /// Make this deploy's subscriber the thread default. Hold the returned guard
-    /// for the deploy's lifetime so the `tracing` macros route here.
-    #[must_use]
-    pub fn set_default(&self) -> tracing::dispatcher::DefaultGuard {
-        tracing::dispatcher::set_default(&self.dispatch)
+        CONSOLE.with_borrow_mut(|console| {
+            *console = Some(ConsoleState {
+                spinner,
+                started: Instant::now(),
+                phase: None,
+            });
+        });
+        DeployConsole
     }
 
     /// Stop the spinner and print the success summary.
-    pub fn finish_ok(&self) -> Duration {
-        let elapsed = self.elapsed();
-        if let Some(prev) = self.phase.lock().expect("phase mutex poisoned").take() {
-            echo_phase_done(self.spinner.bar(), self.started, &prev);
-        }
-        self.spinner.finish();
-        eprintln!("[{}] {}  deployed", fmt_stamp(elapsed), success_mark());
-        elapsed
-    }
-
-    /// Stop the spinner and print the failure summary.
-    pub fn finish_err(&self) -> Duration {
-        let elapsed = self.elapsed();
-        let phase = self
-            .phase
-            .lock()
-            .expect("phase mutex poisoned")
-            .take()
-            .unwrap_or_else(|| self.spinner.bar().message());
-        self.spinner.finish();
-        // Only point at the build log if this deploy actually wrote one (app
-        // build / db restore); other unit types leave no file.
-        if self.path.exists() {
+    pub fn finish_ok(&self) {
+        CONSOLE.with_borrow_mut(|console| {
+            let Some(state) = console.as_mut() else {
+                return;
+            };
+            if let Some(prev) = state.phase.take() {
+                echo_phase_done(state.spinner.bar(), state.started, &prev);
+            }
+            state.spinner.finish();
             eprintln!(
-                "[{}] {}  {phase} failed. Log: {}",
-                fmt_stamp(elapsed),
-                error_mark(),
-                self.path.display()
+                "[{}] {}  deployed",
+                fmt_stamp(state.started.elapsed()),
+                success_mark()
             );
-        } else {
-            eprintln!("[{}] {}  {phase} failed", fmt_stamp(elapsed), error_mark());
+        });
+    }
+
+    /// Stop the spinner and print the failure summary, pointing at `log_path`
+    /// only when this deploy actually wrote a build log (app build / db
+    /// restore); other unit types leave no file.
+    pub fn finish_err(&self, log_path: &Path) {
+        CONSOLE.with_borrow_mut(|console| {
+            let Some(state) = console.as_mut() else {
+                return;
+            };
+            let phase = state
+                .phase
+                .take()
+                .unwrap_or_else(|| state.spinner.bar().message());
+            let stamp = fmt_stamp(state.started.elapsed());
+            state.spinner.finish();
+            if log_path.exists() {
+                eprintln!(
+                    "[{stamp}] {}  {phase} failed. Log: {}",
+                    error_mark(),
+                    log_path.display()
+                );
+            } else {
+                eprintln!("[{stamp}] {}  {phase} failed", error_mark());
+            }
+        });
+    }
+}
+
+impl Drop for DeployConsole {
+    fn drop(&mut self) {
+        CONSOLE.with_borrow_mut(|console| *console = None);
+    }
+}
+
+/// Print a warning: above the spinner while a deploy runs on the thread
+/// (matching the `[MM:SS] ✓ <phase>` lines), otherwise straight to stderr.
+pub fn warn(message: impl fmt::Display) {
+    emit("WARN", "warning", message);
+}
+
+/// Print an error, routed like [`warn`].
+pub fn error(message: impl fmt::Display) {
+    emit("ERROR", "error", message);
+}
+
+fn emit(deploy_tag: &str, plain_tag: &str, message: impl fmt::Display) {
+    CONSOLE.with_borrow(|console| match console.as_ref() {
+        Some(state) => {
+            let line = format!("[{}] {deploy_tag}: {message}", fmt_stamp(state.started.elapsed()));
+            crate::spinner::print_above(state.spinner.bar(), line.as_bytes());
         }
-        elapsed
-    }
-}
-
-/// Backs a single deploy: drives the spinner and echoes phase marks and
-/// WARN/ERROR to the console (above the spinner on a TTY). It no longer writes
-/// a file - the build log holds only captured podman output, written by
-/// `CriLog` at the subprocess call sites.
-struct DeployLayer {
-    bar: ProgressBar,
-    started: Instant,
-    /// Current, not-yet-finished phase name. Shared with [`DeployLog`].
-    phase: Arc<Mutex<Option<String>>>,
-}
-
-impl DeployLayer {
-    fn echo(&self, line: &str) {
-        crate::spinner::print_above(&self.bar, line.as_bytes());
-    }
-}
-
-impl<S: Subscriber> Layer<S> for DeployLayer {
-    fn on_new_span(&self, attrs: &Attributes<'_>, _id: &Id, _ctx: Context<'_, S>) {
-        if attrs.metadata().name() != PHASE_SPAN {
-            return;
-        }
-        let mut visitor = MessageVisitor::default();
-        attrs.record(&mut visitor);
-        let message = visitor.message;
-
-        // Leave a completed-phase line for the phase that just ended, then carry
-        // the new one on the live spinner.
-        let prev = self
-            .phase
-            .lock()
-            .expect("phase mutex poisoned")
-            .replace(message.clone());
-        self.bar.set_message(message.clone());
-        if let Some(prev) = prev {
-            echo_phase_done(&self.bar, self.started, &prev);
-        }
-    }
-
-    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-        // The build log holds only podman output now, so the file sink is gone;
-        // only WARN/ERROR still surface, echoed above the spinner. Debug
-        // narration and former child output have no sink and are dropped.
-        let prefix = match *event.metadata().level() {
-            Level::ERROR => "ERROR: ",
-            Level::WARN => "WARN: ",
-            _ => return,
-        };
-
-        let mut visitor = MessageVisitor::default();
-        event.record(&mut visitor);
-        let stamped = format!(
-            "[{}] {prefix}{}",
-            fmt_stamp(self.started.elapsed()),
-            visitor.message
-        );
-        self.echo(&stamped);
-    }
-}
-
-/// Process-wide fallback: prints `WARN`/`ERROR` to stderr, ignores the rest.
-/// A running deploy's [`DeployLog`] overrides it on that thread, so this only
-/// surfaces events emitted outside a deploy (e.g. `DeployStateGuard::drop`).
-/// No `max_level_hint` override, so the global level filter stays permissive and
-/// a deploy's `debug!` events still reach its file layer.
-struct StderrLayer;
-
-impl<S: Subscriber> Layer<S> for StderrLayer {
-    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-        let prefix = match *event.metadata().level() {
-            Level::ERROR => "error",
-            Level::WARN => "warning",
-            _ => return,
-        };
-        let mut visitor = MessageVisitor::default();
-        event.record(&mut visitor);
-        eprintln!("{prefix}: {}", visitor.message);
-    }
-}
-
-/// Install the fallback subscriber. Call once at startup; later calls are no-ops.
-pub fn init() {
-    let _ = tracing::subscriber::set_global_default(Registry::default().with(StderrLayer));
-}
-
-/// Captures an event's implicit `message` field (the format-string body).
-#[derive(Default)]
-struct MessageVisitor {
-    message: String,
-}
-
-impl Visit for MessageVisitor {
-    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
-        if field.name() == "message" {
-            self.message.clear();
-            let _ = write!(self.message, "{value:?}");
-        }
-    }
+        None => eprintln!("{plain_tag}: {message}"),
+    });
 }
 
 /// Print a `[mm:ss] ✓ <name>` line for a completed phase above the spinner,

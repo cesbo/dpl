@@ -279,7 +279,7 @@ impl TimersState {
             // record). Visible in inspect, but next_run is None so it never fires.
             let Some(next) = TimerState::next_occurrence(schedule, anchor) else {
                 let error = "schedule has no upcoming occurrence";
-                tracing::warn!("timer '{name}': {error}");
+                crate::log::warn(format!("timer '{name}': {error}"));
                 self.timers.insert(
                     name.clone(),
                     TimerState::invalid(schedule.clone(), anchor, error),
@@ -345,7 +345,7 @@ impl Drop for TimerLockGuard {
         if let Err(err) = std::fs::remove_file(&self.path)
             && err.kind() != io::ErrorKind::NotFound
         {
-            tracing::warn!("remove timer lock file {}: {err}", self.path.display());
+            crate::log::warn(format!("remove timer lock file {}: {err}", self.path.display()));
         }
     }
 }

@@ -15,8 +15,6 @@ use std::{
     thread,
 };
 
-use tracing::warn;
-
 use super::{
     DbConnectionParams,
     model::DbServerEngine,
@@ -117,7 +115,7 @@ impl DbServerEngine {
         let log = match CriLog::open(log_path, None) {
             Ok(log) => Some(log),
             Err(err) => {
-                warn!("write build log {}: {err}", log_path.display());
+                crate::log::warn(format!("write build log {}: {err}", log_path.display()));
                 None
             }
         };

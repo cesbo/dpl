@@ -7,14 +7,10 @@ use std::{
     },
 };
 
-use tracing::{
-    debug,
-    warn,
-};
-
 use super::model::ExportConfig;
 use crate::{
     config::UnitName,
+    log,
     log::cri_log::CriLog,
     podman::{
         NGINX_WWW_VOLUME,
@@ -80,14 +76,12 @@ impl<'a> PodmanContext<'a> {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        debug!("running: podman build --tag {}", &self.image_tag);
-
         let mut child = cmd.spawn().map_err(podman_spawn_error)?;
 
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
         if let Err(err) = CriLog::open(log_path, None).and_then(|log| log.capture(stdout, stderr)) {
-            warn!("write build log {}: {err}", log_path.display());
+            log::warn(format!("write build log {}: {err}", log_path.display()));
         }
 
         let status = child.wait()?;
@@ -134,13 +128,9 @@ impl<'a> PodmanContext<'a> {
             let source = export.source.trim_matches('/');
             let src = format!("{container}:/app/{source}/.");
 
-            match run_podman(&["cp", "-a", "--overwrite", &src, &dst.to_string_lossy()]) {
-                Ok(_) => {
-                    debug!("export {src} -> {} completed", dst.display());
-                }
-                Err(err) => {
-                    warn!("export {src} failed: {err}");
-                }
+            if let Err(err) = run_podman(&["cp", "-a", "--overwrite", &src, &dst.to_string_lossy()])
+            {
+                log::warn(format!("export {src} failed: {err}"));
             }
         }
 
@@ -156,8 +146,6 @@ impl<'a> PodmanContext<'a> {
         // Remove dangling images from local storage
         let _ = run_podman(&["image", "prune", "-f"]);
         let _ = run_podman(&["image", "prune", "-f", "--external"]);
-
-        debug!("removed app image");
     }
 
     /// Remove this version's exported files from the static volume.
@@ -167,13 +155,11 @@ impl<'a> PodmanContext<'a> {
             return;
         };
 
-        match remove_export_dir(&exports_root, self.name.as_str(), self.version) {
-            Ok(true) => debug!("removed exports {}_{}", self.name, self.version),
-            Ok(false) => {}
-            Err(err) => warn!(
+        if let Err(err) = remove_export_dir(&exports_root, self.name.as_str(), self.version) {
+            log::warn(format!(
                 "remove exports {}_{} failed: {err}",
                 self.name, self.version
-            ),
+            ));
         }
     }
 }
