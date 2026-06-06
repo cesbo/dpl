@@ -22,9 +22,6 @@ use crate::{
 };
 
 thread_local! {
-    /// The deploy console active on this thread, installed by [`DeployConsole`]
-    /// for the deploy's lifetime. `phase()` drives it, and [`StderrLayer`] reads
-    /// it to print `warn!`/`error!` above the spinner instead of corrupting it.
     static CONSOLE: RefCell<Option<ConsoleState>> = const { RefCell::new(None) };
 }
 
@@ -66,10 +63,7 @@ pub fn phase(message: impl fmt::Display) {
     });
 }
 
-/// Drives the deploy spinner and the `[MM:SS] ✓ <phase>` lines. Held for the
-/// deploy's lifetime: construction installs the thread-local [`CONSOLE`], drop
-/// removes it. No `tracing` involvement - phases are pure `indicatif`; the build
-/// log file is written separately by `CriLog` at the podman call sites.
+/// Drives the deploy spinner and the `[MM:SS] ✓ <phase>` lines.
 pub struct DeployConsole;
 
 impl DeployConsole {
@@ -106,9 +100,7 @@ impl DeployConsole {
         });
     }
 
-    /// Stop the spinner and print the failure summary, pointing at `log_path`
-    /// only when this deploy actually wrote a build log (app build / db
-    /// restore); other unit types leave no file.
+    /// Stop the spinner and print the failure summary.
     pub fn finish_err(&self, log_path: &Path) {
         CONSOLE.with_borrow_mut(|console| {
             let Some(state) = console.as_mut() else {
@@ -139,13 +131,12 @@ impl Drop for DeployConsole {
     }
 }
 
-/// Print a warning: above the spinner while a deploy runs on the thread
-/// (matching the `[MM:SS] ✓ <phase>` lines), otherwise straight to stderr.
+/// Print a warning above the spinner.
 pub fn warn(message: impl fmt::Display) {
     emit("WARN", "warning", message);
 }
 
-/// Print an error, routed like [`warn`].
+/// Print a error above the spinner.
 pub fn error(message: impl fmt::Display) {
     emit("ERROR", "error", message);
 }
@@ -153,16 +144,17 @@ pub fn error(message: impl fmt::Display) {
 fn emit(deploy_tag: &str, plain_tag: &str, message: impl fmt::Display) {
     CONSOLE.with_borrow(|console| match console.as_ref() {
         Some(state) => {
-            let line = format!("[{}] {deploy_tag}: {message}", fmt_stamp(state.started.elapsed()));
+            let line = format!(
+                "[{}] {deploy_tag}: {message}",
+                fmt_stamp(state.started.elapsed())
+            );
             crate::spinner::print_above(state.spinner.bar(), line.as_bytes());
         }
         None => eprintln!("{plain_tag}: {message}"),
     });
 }
 
-/// Print a `[mm:ss] ✓ <name>` line for a completed phase above the spinner,
-/// leaving it in the terminal while the spinner continues on its own line below.
-/// The stamp is cumulative elapsed since deploy start, matching [`fmt_stamp`].
+/// Print a `[mm:ss] ✓ <name>` line for a completed phase above the spinner.
 fn echo_phase_done(bar: &ProgressBar, started: Instant, name: &str) {
     let line = format!(
         "[{}] {}  {name}",
