@@ -7,11 +7,13 @@ use std::{
         self,
         BufRead,
         BufReader,
-        BufWriter,
         Read,
         Write,
     },
-    path::Path,
+    path::{
+        Path,
+        PathBuf,
+    },
     sync::Mutex,
     thread,
 };
@@ -20,6 +22,9 @@ use chrono::{
     SecondsFormat,
     Utc,
 };
+
+const MAX_SIZE: u64 = 20 * 1024 * 1024;
+const MAX_FILES: u32 = 1;
 
 /// Captures a process's stdout/stderr in the CRI `k8s-file` log format:
 ///
@@ -30,21 +35,39 @@ use chrono::{
 ///
 /// Each record is `<RFC3339Nano timestamp> <stream> <tag> <message>`. The tag is
 /// `F` for a full (newline-terminated) line, `P` for a partial final line with
-/// no trailing newline. Records are appended.
-/// Each record is flushed as it is written.
+/// no trailing newline.
 pub struct CriLog {
-    writer: Mutex<BufWriter<File>>,
+    path: PathBuf,
+    max_size: u64,
+    max_files: u32,
+    inner: Mutex<Inner>,
+}
+
+/// Current log file plus bytes written to it since the last rotation.
+struct Inner {
+    file: File,
+    written: u64,
 }
 
 impl CriLog {
     /// Open `path` for appending, creating parent dirs.
     pub fn open(path: &Path) -> io::Result<Self> {
+        Self::open_with_limits(path, MAX_SIZE, MAX_FILES)
+    }
+
+    fn open_with_limits(path: &Path, max_size: u64, max_files: u32) -> io::Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+
         let file = OpenOptions::new().create(true).append(true).open(path)?;
+        let written = file.metadata()?.len();
+
         Ok(CriLog {
-            writer: Mutex::new(BufWriter::new(file)),
+            path: path.to_path_buf(),
+            max_size,
+            max_files,
+            inner: Mutex::new(Inner { file, written }),
         })
     }
 
@@ -62,33 +85,75 @@ impl CriLog {
                 .join()
                 .unwrap_or_else(|_| Err(io::Error::other("stderr pump panicked")));
             out.and(err)
-        })?;
-
-        // Final safety net.
-        self.writer.lock().expect("cri log mutex poisoned").flush()
+        })
     }
 
     fn pump(&self, stream: &str, reader: impl Read) -> io::Result<()> {
         let mut reader = BufReader::new(reader);
         let mut buf = Vec::new();
+
         loop {
             buf.clear();
+
             if reader.read_until(b'\n', &mut buf)? == 0 {
                 break;
             }
-            let full = buf.last() == Some(&b'\n');
-            if full {
+
+            let mut tag = 'P';
+
+            if buf.ends_with(b"\n") {
+                buf.pop();
+                tag = 'F';
+            }
+
+            if buf.ends_with(b"\r") {
                 buf.pop();
             }
-            let tag = if full { 'F' } else { 'P' };
+
             let ts = Utc::now().to_rfc3339_opts(SecondsFormat::Nanos, true);
             let msg = String::from_utf8_lossy(&buf);
-            let mut w = self.writer.lock().expect("cri log mutex poisoned");
-            writeln!(w, "{ts} {stream} {tag} {msg}")?;
-            w.flush()?;
+            let record = format!("{ts} {stream} {tag} {msg}\n");
+            let mut inner = self.inner.lock().expect("cri log mutex poisoned");
+            inner.file.write_all(record.as_bytes())?;
+            inner.written += record.len() as u64;
+            if inner.written >= self.max_size {
+                inner.rotate(&self.path, self.max_files)?;
+            }
         }
+
         Ok(())
     }
+}
+
+impl Inner {
+    /// Move the current log into the rotation ring and reopen a fresh file.
+    fn rotate(&mut self, path: &Path, max_files: u32) -> io::Result<()> {
+        for i in (1 ..= max_files).rev() {
+            let src = if i == 1 {
+                path.to_path_buf()
+            } else {
+                rotated_path(path, i - 1)
+            };
+
+            match std::fs::rename(&src, rotated_path(path, i)) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
+        }
+
+        self.file = OpenOptions::new().create(true).append(true).open(path)?;
+        self.written = 0;
+
+        Ok(())
+    }
+}
+
+/// `<path>.<i>` - the i-th archived log in the rotation ring.
+fn rotated_path(path: &Path, i: u32) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(format!(".{i}"));
+    PathBuf::from(name)
 }
 
 #[cfg(test)]
@@ -234,5 +299,41 @@ mod tests {
         assert!(body.contains("first run"), "{body}");
         assert!(body.contains("second run"), "{body}");
         assert_eq!(body.lines().count(), 2, "{body}");
+    }
+
+    /// Past `max_size` the current log moves to `<path>.1` and a fresh file
+    /// continues - disk is bounded instead of growing without limit.
+    #[test]
+    fn rotates_past_max_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rot.log");
+        // Each record is ~47 bytes (30-char ts is fixed-width); a 500-byte cap
+        // rotates exactly once across these 20 lines, so nothing is dropped.
+        let log = CriLog::open_with_limits(&path, 500, 1).unwrap();
+
+        let mut input = Vec::new();
+        for i in 0 .. 20 {
+            input.extend_from_slice(format!("line {i}\n").as_bytes());
+        }
+        log.capture(&input[..], &b""[..]).unwrap();
+
+        let archive = rotated_path(&path, 1);
+        assert!(archive.exists(), "no rotated archive created");
+
+        let current = read_to_string(&path).unwrap();
+        let archived = read_to_string(&archive).unwrap();
+
+        // The oldest line rotated out of the current file into the archive.
+        assert!(
+            !current.contains("line 0"),
+            "current still holds oldest line"
+        );
+        assert!(archived.contains("line 0"), "archive missing oldest line");
+
+        // One rotation drops nothing: every line is on disk across the two files.
+        let combined = format!("{archived}{current}");
+        for i in 0 .. 20 {
+            assert!(combined.contains(&format!("line {i}")), "lost line {i}");
+        }
     }
 }
