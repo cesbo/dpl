@@ -18,10 +18,17 @@ use crate::{
         DeployError,
         UnitConfig,
     },
-    reference::ReferenceError,
     log,
+    reference::ReferenceError,
     state::DeployState,
 };
+
+pub struct DbConnectionParams<'a> {
+    pub server: &'a UnitName,
+    pub user: &'a str,
+    pub password: &'a str,
+    pub db_name: &'a str,
+}
 
 #[derive(Debug)]
 pub struct DbUnit<'a> {
@@ -99,17 +106,18 @@ impl<'a> DbUnit<'a> {
             ));
         }
 
+        let params = DbConnectionParams {
+            server: &self.config.server,
+            user: &self.config.user,
+            password: &user_password,
+            db_name: self.name.as_str(),
+        };
+
         if !exists {
             let _phase = log::phase("creating database");
             server_config
                 .engine
-                .create_database(
-                    &self.config.server,
-                    &root_password,
-                    self.name.as_str(),
-                    &self.config.user,
-                    &user_password,
-                )
+                .create_database(&params, &root_password)
                 .map_err(|e| {
                     DeployError::step_install(format!("create database '{}'", self.name), e)
                 })?;
@@ -122,13 +130,7 @@ impl<'a> DbUnit<'a> {
             })?;
             server_config
                 .engine
-                .restore(
-                    &self.config.server,
-                    &self.config.user,
-                    &user_password,
-                    self.name.as_str(),
-                    &mut input,
-                )
+                .restore(&params, &self.ctx.build_log_path(self.name), &mut input)
                 .map_err(|e| {
                     DeployError::step_install(format!("restore database '{}'", self.name), e)
                 })?;

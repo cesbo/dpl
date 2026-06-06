@@ -23,7 +23,8 @@ Files are grouped by kind, not by unit:
   - `{name}--deploy.lock` - advisory `flock(2)` held during a deploy
   - `{name}--timers.json` - timer run state
   - `{name}--timers.lock` - advisory `flock(2)` held while a timer runs
-- `{base_dir}/log/{name}.log` - last build log
+- `{base_dir}/log/{name}.build.log` - last build: captured podman build/restore
+  output, CRI `k8s-file` format; cleared at the start of each deploy
 - `{base_dir}/log/{name}.timers.log` - all timer run output for the unit, CRI
   `k8s-file` format with the timer name as a label column; rotated at 20mb
 - `{base_dir}/secrets/` - encrypted secrets (`master.key` plus `{name}.json`)

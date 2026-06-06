@@ -34,6 +34,7 @@ use crate::{
         UnitConfig,
         db::{
             DbConfig,
+            DbConnectionParams,
             DbServerConfig,
             wait_until_ready,
         },
@@ -144,16 +145,15 @@ fn backup(ctx: &MainContext, name: &UnitName, path: &str, gzip: bool) -> Result<
         let _ = err.write_all(line);
         let _ = err.write_all(b"\n");
     };
+    let params = DbConnectionParams {
+        server: &db_config.server,
+        user: &db_config.user,
+        password: &password,
+        db_name: name.as_str(),
+    };
     server_config
         .engine
-        .dump(
-            &db_config.server,
-            &db_config.user,
-            &password,
-            name.as_str(),
-            &mut out,
-            &mut on_stderr,
-        )
+        .dump(&params, &mut out, &mut on_stderr)
         .with_context(|| format!("back up database '{name}'"))?;
 
     out.flush().context("flush backup output")?;
@@ -212,7 +212,7 @@ fn drop(ctx: &MainContext, name: &UnitName) -> Result<()> {
         .with_context(|| format!("drop database '{name}'"))?;
 
     let _ = fs::remove_file(ctx.deploy_state_path(name));
-    let _ = fs::remove_file(ctx.build_log_path(name));
+    let _ = crate::log::cri_log::remove_all(ctx.build_log_path(name));
 
     eprintln!("{} dropped database '{name}'", success_mark());
 

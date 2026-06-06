@@ -19,7 +19,7 @@ use tracing::{
 use crate::{
     MainContext,
     config::UnitName,
-    scheduler::cri_log::CriLog,
+    log::cri_log::CriLog,
     timers::{
         TimerError,
         TimerState,

@@ -186,7 +186,7 @@ impl<'a> AppUnit<'a> {
 
         let _phase = log::phase("building app image");
         PodmanContext::new(self.name, version)
-            .build(deploy_dir)
+            .build(deploy_dir, &self.ctx.build_log_path(self.name))
             .map_err(|e| DeployError::step_build("build app image", e))?;
 
         Ok(())

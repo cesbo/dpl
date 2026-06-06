@@ -88,6 +88,8 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
         .with_context(|| format!("deploy unit '{name}'"))?;
 
     let log_path = ctx.build_log_path(name);
+    let _ = crate::log::cri_log::remove_all(&log_path);
+
     let log = match DeployLog::open(&log_path, name, version) {
         Ok(log) => log,
         Err(err) => {

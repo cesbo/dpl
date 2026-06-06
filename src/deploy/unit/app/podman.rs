@@ -15,7 +15,7 @@ use tracing::{
 use super::model::ExportConfig;
 use crate::{
     config::UnitName,
-    log::child_output,
+    log::cri_log::CriLog,
     podman::{
         NGINX_WWW_VOLUME,
         ensure_volume,
@@ -41,8 +41,7 @@ impl<'a> PodmanContext<'a> {
         }
     }
 
-    /// Build podman image, streams output into the build log.
-    pub fn build(&self, deploy_dir: &Path) -> io::Result<()> {
+    pub fn build(&self, deploy_dir: &Path, log_path: &Path) -> io::Result<()> {
         let artifacts_dir = deploy_dir.join("artifacts");
         let containerfile = artifacts_dir.join("containerfile");
 
@@ -85,23 +84,11 @@ impl<'a> PodmanContext<'a> {
 
         let mut child = cmd.spawn().map_err(podman_spawn_error)?;
 
-        // Worker threads don't inherit the deploy's thread-default subscriber,
-        // so capture it here and re-establish it inside each thread.
-        let dispatch = tracing::dispatcher::get_default(|d| d.clone());
-
         let stdout = child.stdout.take().unwrap();
-        let stdout_dispatch = dispatch.clone();
-        let stdout_handle = std::thread::spawn(move || {
-            tracing::dispatcher::with_default(&stdout_dispatch, || child_output(stdout));
-        });
-
         let stderr = child.stderr.take().unwrap();
-        let stderr_handle = std::thread::spawn(move || {
-            tracing::dispatcher::with_default(&dispatch, || child_output(stderr));
-        });
-
-        let _ = stdout_handle.join();
-        let _ = stderr_handle.join();
+        if let Err(err) = CriLog::open(log_path, None).and_then(|log| log.capture(stdout, stderr)) {
+            warn!("write build log {}: {err}", log_path.display());
+        }
 
         let status = child.wait()?;
         if !status.success() {

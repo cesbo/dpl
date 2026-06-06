@@ -114,11 +114,14 @@ impl MainContext {
             .join(format!("{}--timers.lock", unit.as_str()))
     }
 
+    /// Unit's last build: captured podman output in CRI format.
+    /// Build for app unit, restore for db unit.
+    /// `{base}/log/{unit}.build.log`
     pub fn build_log_path(&self, unit: &UnitName) -> PathBuf {
-        self.log_dir().join(format!("{}.log", unit.as_str()))
+        self.log_dir().join(format!("{}.build.log", unit.as_str()))
     }
 
-    /// Captured stdout/stderr from the unit's timers.
+    /// Unit's timers: captured podman output in CRI format
     /// `{base}/log/{unit}.timers.log`
     pub fn timers_log_path(&self, unit: &UnitName) -> PathBuf {
         self.log_dir().join(format!("{}.timers.log", unit.as_str()))

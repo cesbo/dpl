@@ -168,6 +168,23 @@ fn rotated_path(path: &Path, i: u32) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// Delete a CriLog file and its whole rotation ring.
+pub fn remove_all(path: impl AsRef<Path>) -> io::Result<()> {
+    let path = path.as_ref();
+    let mut targets = vec![path.to_path_buf()];
+    targets.extend((1 ..= MAX_FILES).map(|i| rotated_path(path, i)));
+
+    for target in targets {
+        match std::fs::remove_file(&target) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::{

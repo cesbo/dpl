@@ -22,6 +22,7 @@ use sea_query::{
 use super::model::DbServerEngine;
 use crate::{
     config::UnitName,
+    deploy::db::DbConnectionParams,
     podman::podman_spawn_error,
 };
 
@@ -83,17 +84,16 @@ impl DbServerEngine {
     /// Provision a new database + login user inside a running db-server container.
     pub fn create_database(
         self,
-        server: &UnitName,
+        params: &DbConnectionParams,
         root_password: &str,
-        db_name: &str,
-        username: &str,
-        password: &str,
     ) -> io::Result<()> {
-        let server = server.scoped_unit_name();
+        let server = params.server.scoped_unit_name();
         let sql = match self {
-            DbServerEngine::Postgresql => build_postgres_sql(db_name, username, password),
+            DbServerEngine::Postgresql => {
+                build_postgres_sql(params.db_name, params.user, params.password)
+            }
             DbServerEngine::Mariadb | DbServerEngine::Mysql => {
-                build_mysql_sql(db_name, username, password)
+                build_mysql_sql(params.db_name, params.user, params.password)
             }
         };
 

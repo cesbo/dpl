@@ -1,15 +1,11 @@
+pub mod cri_log;
+
 use std::{
     fmt::{
         self,
         Write as _,
     },
-    fs::OpenOptions,
-    io::{
-        self,
-        BufRead,
-        BufWriter,
-        Write,
-    },
+    io,
     path::{
         Path,
         PathBuf,
@@ -57,26 +53,6 @@ use crate::{
     spinner::Spinner,
 };
 
-/// Child-process (podman) output: file only `debug!(target: CHILD_TARGET, …)`.
-pub const CHILD_TARGET: &str = "dpl::child";
-
-/// Drain a child process's output stream to EOF, emitting each line to the
-/// build log as a [`CHILD_TARGET`] event (file-only).
-///
-/// Streams are usually drained on a worker thread that does not inherit the
-/// deploy's thread-default subscriber, so capture it with
-/// `tracing::dispatcher::get_default` and wrap this call in `with_default` for
-/// the lines to reach the log (see `app::podman` and `db::backup`).
-pub fn child_output<R: io::Read>(reader: R) {
-    let reader = io::BufReader::new(reader);
-    for line in reader.lines() {
-        let Ok(line) = line else {
-            break;
-        };
-        tracing::debug!(target: CHILD_TARGET, "{line}");
-    }
-}
-
 /// Name of the spans opened by [`phase`]; how [`DeployLayer`] tells a deploy
 /// phase apart from any other span. Must match the literal in [`phase`] (span
 /// names are static metadata, so the macro can't reference this constant).
@@ -106,7 +82,9 @@ pub fn phase(message: impl fmt::Display) -> tracing::span::EnteredSpan {
 
 /// Owns a per-deploy `tracing` subscriber and the deploy spinner. Install it as
 /// the thread-default dispatcher via [`set_default`](Self::set_default); logging
-/// then flows through the `tracing` macros. Writing happens in [`DeployLayer`].
+/// then flows through the `tracing` macros. Console output happens in
+/// [`DeployLayer`]; the build log file is written separately by `CriLog` at the
+/// podman call sites.
 pub struct DeployLog {
     dispatch: Dispatch,
     started: Instant,
@@ -118,15 +96,6 @@ pub struct DeployLog {
 
 impl DeployLog {
     pub fn open(path: &Path, unit: &UnitName, version: u32) -> io::Result<Self> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(path)?;
-
         let spinner = Spinner::with_style(
             format!("{unit} v{version}: starting"),
             crate::spinner::deploy_style(),
@@ -134,23 +103,19 @@ impl DeployLog {
         let started = Instant::now();
         let phase = Arc::new(Mutex::new(None));
         let layer = DeployLayer {
-            file: Mutex::new(BufWriter::new(file)),
             bar: spinner.bar().clone(),
             started,
             phase: Arc::clone(&phase),
         };
         let dispatch = Dispatch::new(Registry::default().with(layer));
 
-        let log = Self {
+        Ok(Self {
             dispatch,
             started,
             spinner,
             path: path.to_path_buf(),
             phase,
-        };
-        log.emit(|| tracing::debug!("deploy started: {unit} v{version}"));
-
-        Ok(log)
+        })
     }
 
     pub fn elapsed(&self) -> Duration {
@@ -162,12 +127,6 @@ impl DeployLog {
     #[must_use]
     pub fn set_default(&self) -> tracing::dispatcher::DefaultGuard {
         tracing::dispatcher::set_default(&self.dispatch)
-    }
-
-    /// Route `f` here regardless of the thread default, for the terminal lines
-    /// below which must always reach the build log.
-    fn emit(&self, f: impl FnOnce()) {
-        tracing::dispatcher::with_default(&self.dispatch, f);
     }
 
     /// Stop the spinner and print the success summary.
@@ -191,21 +150,27 @@ impl DeployLog {
             .take()
             .unwrap_or_else(|| self.spinner.bar().message());
         self.spinner.finish();
-        eprintln!(
-            "[{}] {}  {phase} failed. Log: {}",
-            fmt_stamp(elapsed),
-            error_mark(),
-            self.path.display()
-        );
+        // Only point at the build log if this deploy actually wrote one (app
+        // build / db restore); other unit types leave no file.
+        if self.path.exists() {
+            eprintln!(
+                "[{}] {}  {phase} failed. Log: {}",
+                fmt_stamp(elapsed),
+                error_mark(),
+                self.path.display()
+            );
+        } else {
+            eprintln!("[{}] {}  {phase} failed", fmt_stamp(elapsed), error_mark());
+        }
         elapsed
     }
 }
 
-/// Backs a single deploy: writes every event to the build-log file, and echoes
-/// phase/warn/error to the console (above the spinner on a TTY). `dpl::child`
-/// output stays file-only.
+/// Backs a single deploy: drives the spinner and echoes phase marks and
+/// WARN/ERROR to the console (above the spinner on a TTY). It no longer writes
+/// a file - the build log holds only captured podman output, written by
+/// `CriLog` at the subprocess call sites.
 struct DeployLayer {
-    file: Mutex<BufWriter<std::fs::File>>,
     bar: ProgressBar,
     started: Instant,
     /// Current, not-yet-finished phase name. Shared with [`DeployLog`].
@@ -213,12 +178,6 @@ struct DeployLayer {
 }
 
 impl DeployLayer {
-    fn write_file(&self, line: &str) {
-        let mut file = self.file.lock().expect("deploy log file mutex poisoned");
-        let _ = writeln!(file, "{line}");
-        let _ = file.flush();
-    }
-
     fn echo(&self, line: &str) {
         crate::spinner::print_above(&self.bar, line.as_bytes());
     }
@@ -232,12 +191,6 @@ impl<S: Subscriber> Layer<S> for DeployLayer {
         let mut visitor = MessageVisitor::default();
         attrs.record(&mut visitor);
         let message = visitor.message;
-
-        // Record the phase's start stamp in the build-log file.
-        self.write_file(&format!(
-            "[{}] {message}",
-            fmt_stamp(self.started.elapsed())
-        ));
 
         // Leave a completed-phase line for the phase that just ended, then carry
         // the new one on the live spinner.
@@ -253,25 +206,23 @@ impl<S: Subscriber> Layer<S> for DeployLayer {
     }
 
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-        let mut visitor = MessageVisitor::default();
-        event.record(&mut visitor);
-        let message = visitor.message;
-
-        let meta = event.metadata();
-        let (prefix, to_console) = match meta.target() {
-            CHILD_TARGET => ("", false),
-            _ => match *meta.level() {
-                Level::ERROR => ("ERROR: ", true),
-                Level::WARN => ("WARN: ", true),
-                _ => ("", false),
-            },
+        // The build log holds only podman output now, so the file sink is gone;
+        // only WARN/ERROR still surface, echoed above the spinner. Debug
+        // narration and former child output have no sink and are dropped.
+        let prefix = match *event.metadata().level() {
+            Level::ERROR => "ERROR: ",
+            Level::WARN => "WARN: ",
+            _ => return,
         };
 
-        let stamped = format!("[{}] {prefix}{message}", fmt_stamp(self.started.elapsed()));
-        self.write_file(&stamped);
-        if to_console {
-            self.echo(&stamped);
-        }
+        let mut visitor = MessageVisitor::default();
+        event.record(&mut visitor);
+        let stamped = format!(
+            "[{}] {prefix}{}",
+            fmt_stamp(self.started.elapsed()),
+            visitor.message
+        );
+        self.echo(&stamped);
     }
 }
 
@@ -385,79 +336,6 @@ pub fn fmt_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn events_are_written_to_the_log_file() {
-        // With the global fallback installed, a deploy's scoped subscriber must
-        // still receive `debug!` events (the global layer must not cap the level).
-        init();
-
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("build.log");
-
-        let name = UnitName::new("web").unwrap();
-        let log = DeployLog::open(&path, &name, 3).unwrap();
-        {
-            let _default = log.set_default();
-            let _phase = phase("building image");
-            tracing::debug!("running: podman build");
-            tracing::debug!(target: CHILD_TARGET, "STEP 1/4: FROM alpine");
-            tracing::warn!("export skipped");
-            tracing::error!("health check failed");
-        }
-        log.finish_err();
-
-        let body = std::fs::read_to_string(&path).unwrap();
-        let lines: Vec<&str> = body.lines().collect();
-
-        // Every event lands in the file (the leading `[mm:ss]` stamp varies).
-        assert!(lines.iter().any(|l| l.ends_with("deploy started: web v3")));
-        assert!(lines.iter().any(|l| l.ends_with("building image")));
-        assert!(lines.iter().any(|l| l.ends_with("running: podman build")));
-        assert!(lines.iter().any(|l| l.ends_with("STEP 1/4: FROM alpine")));
-        assert!(lines.iter().any(|l| l.ends_with("WARN: export skipped")));
-        assert!(
-            lines
-                .iter()
-                .any(|l| l.ends_with("ERROR: health check failed"))
-        );
-        assert!(lines.iter().any(|l| l.contains("failed")));
-    }
-
-    #[test]
-    fn child_output_from_a_spawned_thread_reaches_the_file() {
-        // The db restore drains the client's stderr on a separate thread, which
-        // does not inherit the deploy's thread-local subscriber. Callers must
-        // propagate the dispatcher (as `database.rs` does) for those lines to
-        // land in the build log; this guards that the propagation works.
-        init();
-
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("build.log");
-
-        let name = UnitName::new("db-sezam").unwrap();
-        let log = DeployLog::open(&path, &name, 7).unwrap();
-        {
-            let _default = log.set_default();
-            let _phase = phase("restoring database");
-
-            let dispatch = tracing::dispatcher::get_default(|d| d.clone());
-            std::thread::scope(|scope| {
-                scope.spawn(|| {
-                    let stream = b"ERROR 1064 (42000): syntax error\n".as_slice();
-                    tracing::dispatcher::with_default(&dispatch, || child_output(stream));
-                });
-            });
-        }
-        log.finish_err();
-
-        let body = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            body.lines()
-                .any(|l| l.ends_with("ERROR 1064 (42000): syntax error")),
-            "child stderr emitted from a spawned thread must reach the build log; got:\n{body}"
-        );
-    }
 
     #[test]
     fn fmt_stamp_under_hour() {

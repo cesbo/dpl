@@ -16,7 +16,10 @@ use std::{
 };
 
 pub use self::{
-    database::DbUnit,
+    database::{
+        DbConnectionParams,
+        DbUnit,
+    },
     model::{
         DbConfig,
         DbServerConfig,

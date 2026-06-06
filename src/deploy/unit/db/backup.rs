@@ -6,6 +6,7 @@ use std::{
         Read,
         Write,
     },
+    path::Path,
     process::{
         Command,
         ExitStatus,
@@ -14,10 +15,14 @@ use std::{
     thread,
 };
 
-use super::model::DbServerEngine;
+use tracing::warn;
+
+use super::{
+    DbConnectionParams,
+    model::DbServerEngine,
+};
 use crate::{
-    config::UnitName,
-    log::child_output,
+    log::cri_log::CriLog,
     podman::podman_spawn_error,
 };
 
@@ -29,20 +34,17 @@ impl DbServerEngine {
     /// and stall the dump.
     pub fn dump<W: Write>(
         self,
-        server: &UnitName,
-        user: &str,
-        password: &str,
-        db_name: &str,
+        params: &DbConnectionParams,
         out: &mut W,
         on_stderr: &mut (dyn FnMut(&[u8]) + Send),
     ) -> io::Result<()> {
-        let server = server.scoped_unit_name();
+        let server = params.server.scoped_unit_name();
         let password_env = self.client_password_env();
 
         let mut cmd = Command::new("podman");
-        cmd.env(password_env, password);
+        cmd.env(password_env, params.password);
         cmd.args(["exec", "-e", password_env, &server]);
-        cmd.args(self.dump_args(user, db_name));
+        cmd.args(self.dump_args(params.user, params.db_name));
 
         let mut child = cmd
             .stdin(Stdio::null())
@@ -79,19 +81,17 @@ impl DbServerEngine {
     /// is streamed to the build log.
     pub fn restore<R: Read>(
         self,
-        server: &UnitName,
-        user: &str,
-        password: &str,
-        db_name: &str,
+        params: &DbConnectionParams,
+        log_path: &Path,
         input: &mut R,
     ) -> io::Result<()> {
-        let server = server.scoped_unit_name();
+        let server = params.server.scoped_unit_name();
         let password_env = self.client_password_env();
 
         let mut cmd = Command::new("podman");
-        cmd.env(password_env, password);
+        cmd.env(password_env, params.password);
         cmd.args(["exec", "-i", "-e", password_env, &server]);
-        cmd.args(self.restore_args(user, db_name));
+        cmd.args(self.restore_args(params.user, params.db_name));
 
         let mut child = cmd
             .stdin(Stdio::piped())
@@ -110,15 +110,27 @@ impl DbServerEngine {
             .take()
             .ok_or_else(|| io::Error::other("failed to capture podman exec stderr"))?;
 
-        let dispatch = tracing::dispatcher::get_default(|d| d.clone());
+        // Stream the client's stderr into the unit's build log (CRI k8s-file,
+        // tagged `stderr`). If the log can't be opened, still drain stderr to a
+        // sink so the pipe empties and the client isn't wedged - logging is
+        // best-effort, the restore is not.
+        let log = match CriLog::open(log_path, None) {
+            Ok(log) => Some(log),
+            Err(err) => {
+                warn!("write build log {}: {err}", log_path.display());
+                None
+            }
+        };
         let copy_res = thread::scope(|scope| {
-            let drainer = scope
-                .spawn(|| tracing::dispatcher::with_default(&dispatch, || child_output(stderr)));
+            let drainer = scope.spawn(|| match &log {
+                Some(log) => log.capture(io::empty(), stderr),
+                None => io::copy(&mut BufReader::new(stderr), &mut io::sink()).map(|_| ()),
+            });
             let copy_res = io::copy(input, &mut stdin);
             // Close stdin so the client sees EOF, exits, and lets the drain
             // thread reach end-of-stderr; only then can the join below return.
             drop(stdin);
-            drainer.join().expect("stderr drain thread panicked");
+            let _ = drainer.join().expect("stderr drain thread panicked");
             copy_res
         });
 

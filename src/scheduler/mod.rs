@@ -1,4 +1,3 @@
-mod cri_log;
 mod tick;
 mod timer;
 
