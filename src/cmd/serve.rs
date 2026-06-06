@@ -47,7 +47,10 @@ pub fn run(ctx: &MainContext) -> Result<()> {
     signal_hook::flag::register(SIGHUP, Arc::clone(&reload))
         .with_context(|| format!("register {} signal", SIGHUP))?;
 
+    let mut supervisor = crate::scheduler::Supervisor::new();
+
     crate::scheduler::tick(ctx);
+    supervisor.reconcile(ctx);
 
     while !shutdown.load(Ordering::Relaxed) {
         if reload.swap(false, Ordering::Relaxed) {
@@ -70,7 +73,10 @@ pub fn run(ctx: &MainContext) -> Result<()> {
         }
 
         crate::scheduler::tick(ctx);
+        supervisor.reconcile(ctx);
     }
+
+    supervisor.shutdown();
 
     Ok(())
 }
