@@ -118,11 +118,10 @@ impl MainContext {
         self.log_dir().join(format!("{}.log", unit.as_str()))
     }
 
-    /// `{base}/log/{unit}--{timer}.log` - a timer's captured stdout/stderr in
-    /// CRI `k8s-file` format, appended across runs.
-    pub fn timer_log_path(&self, unit: &UnitName, timer: &str) -> PathBuf {
-        self.log_dir()
-            .join(format!("{}--{}.log", unit.as_str(), timer))
+    /// Captured stdout/stderr from the unit's timers.
+    /// `{base}/log/{unit}.timers.log`
+    pub fn timers_log_path(&self, unit: &UnitName) -> PathBuf {
+        self.log_dir().join(format!("{}.timers.log", unit.as_str()))
     }
 
     pub fn resolve_secret(&self, name: &SecretName) -> Result<String, SecretError> {

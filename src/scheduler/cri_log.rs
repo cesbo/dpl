@@ -36,10 +36,14 @@ const MAX_FILES: u32 = 1;
 /// Each record is `<RFC3339Nano timestamp> <stream> <tag> <message>`. The tag is
 /// `F` for a full (newline-terminated) line, `P` for a partial final line with
 /// no trailing newline.
+///
+/// An optional `label` adds a column before the message:
+/// (`<ts> <stream> <tag> <label> <message>`)
 pub struct CriLog {
     path: PathBuf,
     max_size: u64,
     max_files: u32,
+    label: Option<String>,
     inner: Mutex<Inner>,
 }
 
@@ -50,12 +54,16 @@ struct Inner {
 }
 
 impl CriLog {
-    /// Open `path` for appending, creating parent dirs.
-    pub fn open(path: &Path) -> io::Result<Self> {
-        Self::open_with_limits(path, MAX_SIZE, MAX_FILES)
+    pub fn open(path: &Path, label: Option<&str>) -> io::Result<Self> {
+        Self::open_with_limits(path, label, MAX_SIZE, MAX_FILES)
     }
 
-    fn open_with_limits(path: &Path, max_size: u64, max_files: u32) -> io::Result<Self> {
+    fn open_with_limits(
+        path: &Path,
+        label: Option<&str>,
+        max_size: u64,
+        max_files: u32,
+    ) -> io::Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -67,6 +75,7 @@ impl CriLog {
             path: path.to_path_buf(),
             max_size,
             max_files,
+            label: label.map(str::to_string),
             inner: Mutex::new(Inner { file, written }),
         })
     }
@@ -112,7 +121,10 @@ impl CriLog {
 
             let ts = Utc::now().to_rfc3339_opts(SecondsFormat::Nanos, true);
             let msg = String::from_utf8_lossy(&buf);
-            let record = format!("{ts} {stream} {tag} {msg}\n");
+            let record = match &self.label {
+                Some(label) => format!("{ts} {stream} {tag} {label} {msg}\n"),
+                None => format!("{ts} {stream} {tag} {msg}\n"),
+            };
             let mut inner = self.inner.lock().expect("cri log mutex poisoned");
             inner.file.write_all(record.as_bytes())?;
             inner.written += record.len() as u64;
@@ -186,7 +198,7 @@ mod tests {
     fn writes_full_lines_per_stream() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("job.log");
-        let log = CriLog::open(&path).unwrap();
+        let log = CriLog::open(&path, None).unwrap();
         log.capture(&b"out one\nout two\n"[..], &b"err one\n"[..])
             .unwrap();
 
@@ -213,7 +225,7 @@ mod tests {
     fn final_line_without_newline_is_partial() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("job.log");
-        let log = CriLog::open(&path).unwrap();
+        let log = CriLog::open(&path, None).unwrap();
         log.capture(&b"done\nno newline"[..], &b""[..]).unwrap();
 
         let body = read_to_string(&path).unwrap();
@@ -252,7 +264,7 @@ mod tests {
     fn line_is_flushed_before_eof() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("live.log");
-        let log = CriLog::open(&path).unwrap();
+        let log = CriLog::open(&path, None).unwrap();
         let (tx, rx) = mpsc::channel::<Vec<u8>>();
 
         thread::scope(|s| {
@@ -286,11 +298,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("job.log");
 
-        CriLog::open(&path)
+        CriLog::open(&path, None)
             .unwrap()
             .capture(&b"first run\n"[..], &b""[..])
             .unwrap();
-        CriLog::open(&path)
+        CriLog::open(&path, None)
             .unwrap()
             .capture(&b"second run\n"[..], &b""[..])
             .unwrap();
@@ -309,7 +321,7 @@ mod tests {
         let path = dir.path().join("rot.log");
         // Each record is ~47 bytes (30-char ts is fixed-width); a 500-byte cap
         // rotates exactly once across these 20 lines, so nothing is dropped.
-        let log = CriLog::open_with_limits(&path, 500, 1).unwrap();
+        let log = CriLog::open_with_limits(&path, None, 500, 1).unwrap();
 
         let mut input = Vec::new();
         for i in 0 .. 20 {
@@ -335,5 +347,27 @@ mod tests {
         for i in 0 .. 20 {
             assert!(combined.contains(&format!("line {i}")), "lost line {i}");
         }
+    }
+
+    /// A `label` is inserted as a column before the message, so a single shared
+    /// log (e.g. a unit's `timers.log`) can carry many sources.
+    #[test]
+    fn label_is_written_as_a_column() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("unit.timers.log");
+        CriLog::open(&path, Some("backup"))
+            .unwrap()
+            .capture(&b"rsync done\n"[..], &b""[..])
+            .unwrap();
+
+        let body = read_to_string(&path).unwrap();
+        let line = body.lines().next().unwrap();
+        let mut f = line.splitn(5, ' ');
+        let ts = f.next().unwrap();
+        assert!(ts.ends_with('Z') && ts.contains('.'), "ts: {line}");
+        assert_eq!(f.next().unwrap(), "stdout", "{line}");
+        assert_eq!(f.next().unwrap(), "F", "{line}");
+        assert_eq!(f.next().unwrap(), "backup", "{line}");
+        assert_eq!(f.next().unwrap(), "rsync done", "{line}");
     }
 }

@@ -88,9 +88,16 @@ pub fn run_timer(
     // timer still ran, so record its real outcome rather than masking it.
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
-    let log_path = ctx.timer_log_path(name, timer_name);
-    if let Err(err) = CriLog::open(&log_path).and_then(|log| log.capture(stdout, stderr)) {
-        warn!("timer '{timer_name}': write log {}: {err}", log_path.display());
+    let log_path = ctx.timers_log_path(name);
+    match CriLog::open(&log_path, Some(timer_name)).and_then(|log| log.capture(stdout, stderr)) {
+        Ok(_) => {}
+        Err(err) => {
+            warn!(
+                "timer '{}': write log {}: {err}",
+                timer_name,
+                log_path.display()
+            );
+        }
     }
 
     let status = child.wait();
