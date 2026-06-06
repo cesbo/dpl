@@ -149,9 +149,8 @@ impl<'a> HttpServerUnit<'a> {
         cmd.volume(NGINX_WWW_VOLUME, NGINX_WWW_MOUNT);
         cmd.volume(self.conf_volume(), "/etc/nginx/conf.d");
 
-        // `exec_run` only returns when the exec itself fails.
-        let err = cmd.exec(&self.config.image);
-        Err(RunError::new("exec podman run", err))
+        cmd.supervise(&self.config.image, &self.ctx.runtime_log_path(self.name))
+            .map_err(|e| RunError::new("supervise podman run", e))
     }
 
     /// Stop and remove the http-server container.

@@ -136,9 +136,8 @@ impl<'a> DbServerUnit<'a> {
 
         cmd.volume(format!("{container}-data"), engine.data_path());
 
-        // `exec_run` only returns when the exec itself fails.
-        let err = cmd.exec(self.config.image());
-        Err(RunError::new("exec podman run", err))
+        cmd.supervise(self.config.image(), &self.ctx.runtime_log_path(self.name))
+            .map_err(|e| RunError::new("supervise podman run", e))
     }
 
     /// Stop and remove the db-server container.

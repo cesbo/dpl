@@ -5,7 +5,9 @@ servers, databases, domains), keeps encrypted secrets on disk, and performs
 one-shot deploys: extract a `.tar.gz`, render artifacts from MiniJinja
 templates, run `podman build`, and (re)install the generated systemd service.
 
-`dpl` is not a daemon. Every command runs to completion in the foreground.
+Most `dpl` commands run to completion in the foreground. The exception is
+`dpl serve`: a long-running daemon, started by systemd, that runs the in-process
+timer scheduler.
 
 ## Requirements
 

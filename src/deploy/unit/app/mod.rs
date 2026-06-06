@@ -313,9 +313,9 @@ impl<'a> AppUnit<'a> {
             cmd.volume(&volume.source, &volume.path);
         }
 
-        // `exec_run` only returns when the exec itself fails.
-        let err = cmd.exec(format!("localhost/{}:{}", self.name, version));
-        Err(RunError::new("exec podman run", err))
+        let image = format!("localhost/{}:{}", self.name, version);
+        cmd.supervise(image, &self.ctx.runtime_log_path(self.name))
+            .map_err(|e| RunError::new("supervise podman run", e))
     }
 
     /// Stop and remove the app container.

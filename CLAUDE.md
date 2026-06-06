@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-dpl is a single static-binary deploy CLI that manages local units (`app`, `db-server`, `db`, `domain`, `http-server`) on one host. It uses `podman` to run containers and `systemd` to supervise them. It runs as root, is not a daemon, and has no server-side component.
+dpl is a single static-binary deploy CLI that manages local units (`app`, `db-server`, `db`, `domain`, `http-server`) on one host. It uses `podman` to run containers and `systemd` to supervise them. It runs as root and has no server-side component; the only long-running process is the `dpl serve` scheduler daemon.
 
 This project is in active development; backward compatibility is NOT required. Make breaking changes freely whenever they improve the design - do not preserve legacy behavior, deprecated APIs, or compatibility shims.
 

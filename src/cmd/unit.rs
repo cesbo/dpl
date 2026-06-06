@@ -347,16 +347,13 @@ pub fn timer(ctx: &MainContext, name: &UnitName, timer_name: &str) -> Result<()>
 fn print_failure(ctx: &MainContext, name: &UnitName, failure: &DeployFailure) {
     print_field("Error", &failure.error);
 
-    // A runtime failure (the health check) lives in the container's own log;
-    // every earlier stage is in the build log.
+    // A runtime failure (the health check) lives in the container's runtime
+    // log; every earlier stage is in the build log.
     println!();
     if failure.stage == DeployStage::Startup {
-        let runtime_log_name = format!("{}.log", name.scoped_unit_name());
-        let runtime_log_path = Path::new(crate::podman::PODMAN_LOG_DIR).join(runtime_log_name);
-        print_field("Runtime log", runtime_log_path.display());
+        print_field("Runtime log", ctx.runtime_log_path(name).display());
     } else {
-        let build_log_path = ctx.build_log_path(name);
-        print_field("Build log", build_log_path.display());
+        print_field("Build log", ctx.build_log_path(name).display());
     }
 }
 

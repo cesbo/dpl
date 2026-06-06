@@ -127,6 +127,12 @@ impl MainContext {
         self.log_dir().join(format!("{}.timers.log", unit.as_str()))
     }
 
+    /// Unit's runtime container: stdout/stderr captured by `dpl start` in CRI
+    /// format. `{base}/log/{unit}.runtime.log`
+    pub fn runtime_log_path(&self, unit: &UnitName) -> PathBuf {
+        self.log_dir().join(format!("{}.runtime.log", unit.as_str()))
+    }
+
     pub fn resolve_secret(&self, name: &SecretName) -> Result<String, SecretError> {
         let Some(master_key) = &self.master_key else {
             return Err(SecretError::KeyNotFound);
