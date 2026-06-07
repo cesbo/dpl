@@ -100,6 +100,7 @@ pub struct TimerConfig {
     /// Description
     pub description: Option<String>,
     /// Schedule in cron format (standard 5-field).
+    #[serde(deserialize_with = "crate::config::deserialize_cron")]
     pub schedule: Cron,
     /// Script to run
     pub script: String,
