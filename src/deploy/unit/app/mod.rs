@@ -220,7 +220,6 @@ impl<'a> AppUnit<'a> {
         let phase_name = format!("waiting for app '{}'", self.name);
         log::phase(&phase_name);
         if let Err(err) = crate::podman::health::check(self.name, runtime.port) {
-            log::error(format!("{err}"));
             return Err(DeployError::step_startup(phase_name, err));
         }
 

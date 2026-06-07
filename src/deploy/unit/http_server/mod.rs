@@ -50,7 +50,6 @@ impl<'a> HttpServerUnit<'a> {
         let phase_name = format!("waiting for http-server '{}'", self.name);
         log::phase(&phase_name);
         if let Err(err) = health::check(self.name, HTTP_PORT) {
-            log::error(format!("{err}"));
             return Err(DeployError::step_startup(phase_name, err));
         }
 

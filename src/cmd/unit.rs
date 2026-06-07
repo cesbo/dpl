@@ -115,11 +115,16 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
             Ok(())
         }
         Err(err) => {
-            // Record the failing stage and cause before converting to Reported.
-            if let Some((stage, message)) = err.failure() {
-                state.set_failed(stage, message);
-            }
-            console.finish_err(&log_path);
+            // Record the failing stage and cause, then surface the cause once on
+            // the console before converting to Reported (main stays quiet).
+            let cause = match err.failure() {
+                Some((stage, message)) => {
+                    state.set_failed(stage, message.clone());
+                    message
+                }
+                None => String::new(),
+            };
+            console.finish_err(&cause, &log_path);
             Err(anyhow::Error::new(DeployError::Reported))
         }
     }
