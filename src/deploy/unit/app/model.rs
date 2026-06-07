@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use croner::Cron;
 use serde::{
     Deserialize,
     Serialize,
@@ -9,7 +10,6 @@ use crate::{
     MainContext,
     config::{
         EnvList,
-        Schedule,
         UnitName,
     },
     deploy::UnitConfig,
@@ -100,7 +100,7 @@ pub struct TimerConfig {
     /// Description
     pub description: Option<String>,
     /// Schedule in cron format (standard 5-field).
-    pub schedule: Schedule,
+    pub schedule: Cron,
     /// Script to run
     pub script: String,
     /// When true, the timer is not rendered or installed
