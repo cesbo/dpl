@@ -235,7 +235,7 @@ impl<'a> AppUnit<'a> {
             .timers
             .iter()
             .filter(|t| !t.disabled)
-            .map(|t| (t.name.clone(), t.schedule.clone()))
+            .map(|t| (t.name.clone(), t.schedule.as_cron().clone()))
             .collect();
 
         let (_lock, mut timers) = match TimersState::acquire(self.ctx, self.name) {
