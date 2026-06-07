@@ -2,21 +2,26 @@ use chrono::{
     DateTime,
     Utc,
 };
+
 use crate::{
     MainContext,
-    deploy::list_units,
     log,
     scheduler::run_timer,
-    state::DeployLockGuard,
+    state::{
+        DeployLockGuard,
+        DeployState,
+    },
     timers::TimersState,
 };
 
 pub fn tick(ctx: &MainContext) {
     let now = Utc::now();
 
-    for (name, _) in list_units(ctx, |_| true) {
-        // Timers can attach to any unit type, but only a unit that has been
-        // deployed with timers has a state file.
+    for (name, state) in DeployState::list(ctx) {
+        if !state.supervised {
+            continue;
+        }
+
         if !ctx.timers_state_path(&name).exists() {
             continue;
         }
@@ -38,7 +43,9 @@ pub fn tick(ctx: &MainContext) {
             Ok(Some(_deploy_guard)) => {
                 for timer_name in due {
                     if let Err(err) = run_timer(ctx, &name, &mut timers, &timer_name) {
-                        log::warn(format!("scheduler: timer '{timer_name}' on '{name}': {err}"));
+                        log::warn(format!(
+                            "scheduler: timer '{timer_name}' on '{name}': {err}"
+                        ));
                     }
                 }
             }
