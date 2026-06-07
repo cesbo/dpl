@@ -32,8 +32,21 @@ use crate::{
     },
 };
 
-/// Delay before a crashed container is restarted.
-const RESTART_BACKOFF: Duration = Duration::from_secs(5);
+/// First delay before a crashed container is restarted.
+/// Doubles per consecutive crash up to [`RESTART_BACKOFF_CAP`].
+const RESTART_BACKOFF_BASE: Duration = Duration::from_secs(2);
+
+/// Ceiling on the exponential restart backoff.
+const RESTART_BACKOFF_CAP: Duration = Duration::from_secs(60);
+
+/// A child that ran at least this long before dying is treated as a fresh
+/// transient crash, not part of a loop: the backoff resets to the base.
+const STABLE_RUN: Duration = Duration::from_secs(30);
+
+/// Cap the doubling exponent so the `1 << n` shift can't overflow; the result is
+/// clamped to [`RESTART_BACKOFF_CAP`] long before this bites.
+const MAX_BACKOFF_SHIFT: u32 = 16;
+
 /// Upper bound on waiting for a child to exit during shutdown before SIGKILL.
 const STOP_REAP_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -43,9 +56,11 @@ const STOP_REAP_TIMEOUT: Duration = Duration::from_secs(30);
 enum Action {
     /// `Check`/`Ready`: keep the container running, restart it if it dies.
     Ensure,
+
     /// `Building`/`Idle`: a deploy is mid-flight or the unit isn't live - leave
     /// a running container alone (don't start, don't stop), just reap an exit.
     Passive,
+
     /// `Failed`/no state: stop and forget the container.
     Stop,
 }
@@ -63,8 +78,13 @@ struct ManagedUnit {
     name: UnitName,
     /// The `dpl start <unit>` child, while one is running.
     child: Option<Child>,
+    /// When the current child was spawned; lets a death decide whether the run
+    /// was stable enough to reset the backoff.
+    started_at: Option<Instant>,
     /// When set, don't respawn until this instant (post-crash backoff).
     backoff_until: Option<Instant>,
+    /// Consecutive crashes without a stable run; drives the exponential backoff.
+    consecutive_failures: u32,
     /// active_version observed when adopted; a redeploy bumps it and re-adopts.
     active_version: Option<u32>,
 }
@@ -74,10 +94,34 @@ impl ManagedUnit {
         ManagedUnit {
             name,
             child: None,
+            started_at: None,
             backoff_until: None,
+            consecutive_failures: 0,
             active_version,
         }
     }
+
+    /// Record a crash and arm the next (exponential) backoff.
+    fn note_crash(&mut self, now: Instant) {
+        let stable = self
+            .started_at
+            .is_some_and(|started| now.duration_since(started) >= STABLE_RUN);
+        self.consecutive_failures = if stable {
+            1
+        } else {
+            self.consecutive_failures + 1
+        };
+        self.child = None;
+        self.started_at = None;
+        self.backoff_until = Some(now + backoff_delay(self.consecutive_failures));
+    }
+}
+
+fn backoff_delay(failures: u32) -> Duration {
+    let exp = failures.saturating_sub(1).min(MAX_BACKOFF_SHIFT);
+    RESTART_BACKOFF_BASE
+        .saturating_mul(1 << exp)
+        .min(RESTART_BACKOFF_CAP)
 }
 
 /// Launches and supervises long-running unit containers for the `dpl serve`
@@ -107,11 +151,10 @@ impl Supervisor {
     }
 
     /// One reconcile pass: stop containers no longer wanted, then act on each
-    /// runtime unit per its deploy status.
-    pub fn reconcile(&mut self, ctx: &MainContext) {
-        let Some(exe) = self.self_exe.clone() else {
-            return;
-        };
+    /// runtime unit per its deploy status. Returns the earliest pending respawn
+    /// deadline so the caller can wake exactly then instead of polling blindly.
+    pub fn reconcile(&mut self, ctx: &MainContext) -> Option<Instant> {
+        let exe = self.self_exe.clone()?;
 
         // Every unit handed off to serve (the `supervised` flag), straight from
         // deploy state - the configs are never read.
@@ -152,6 +195,8 @@ impl Supervisor {
                 }
             }
         }
+
+        next_wake(&self.managed)
     }
 
     /// Stop every supervised container and reap its child. Called once when the
@@ -175,6 +220,18 @@ impl Supervisor {
     }
 }
 
+/// Earliest pending respawn: the soonest backoff among managed units with no live
+/// child (those awaiting a respawn). `None` = nothing pending. After a reconcile
+/// pass any surviving `backoff_until` is in the future, since `drive` spawns once
+/// `now >= backoff_until`.
+fn next_wake(managed: &HashMap<UnitName, ManagedUnit>) -> Option<Instant> {
+    managed
+        .values()
+        .filter(|m| m.child.is_none())
+        .filter_map(|m| m.backoff_until)
+        .min()
+}
+
 /// Ensure a `Check`/`Ready` unit's container is running: reap a dead child and
 /// schedule a backoff restart, or spawn one once the backoff elapses. A
 /// redeploy (new active version) re-adopts from scratch.
@@ -183,6 +240,7 @@ fn drive(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit, active: Option<u32>
         stop_child(m);
         m.active_version = active;
         m.backoff_until = None;
+        m.consecutive_failures = 0;
     }
 
     let now = Instant::now();
@@ -193,14 +251,12 @@ fn drive(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit, active: Option<u32>
                     "supervisor: '{}' exited; restarting",
                     m.name.as_str()
                 ));
-                m.child = None;
-                m.backoff_until = Some(now + RESTART_BACKOFF);
+                m.note_crash(now);
             }
             Ok(None) => {}
             Err(err) => {
                 log::warn(format!("supervisor: wait '{}': {err}", m.name.as_str()));
-                m.child = None;
-                m.backoff_until = Some(now + RESTART_BACKOFF);
+                m.note_crash(now);
             }
         }
     } else if !podman::is_running(&m.name) {
@@ -213,16 +269,19 @@ fn drive(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit, active: Option<u32>
     }
 }
 
-/// Spawn `dpl start <unit>`; back off on spawn failure.
+/// Spawn `dpl start <unit>`; back off (exponentially) on spawn failure.
 fn spawn(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit) {
+    let now = Instant::now();
     match spawn_child(exe, ctx.base(), &m.name) {
         Ok(child) => {
             m.child = Some(child);
+            m.started_at = Some(now);
             m.backoff_until = None;
         }
         Err(err) => {
             log::warn(format!("supervisor: start '{}': {err}", m.name.as_str()));
-            m.backoff_until = Some(Instant::now() + RESTART_BACKOFF);
+            m.consecutive_failures += 1;
+            m.backoff_until = Some(now + backoff_delay(m.consecutive_failures));
         }
     }
 }
@@ -292,6 +351,72 @@ mod tests {
             master_key: None,
         };
         (dir, ctx)
+    }
+
+    fn managed_with(name: &str, backoff_until: Option<Instant>) -> (UnitName, ManagedUnit) {
+        let name = UnitName::new(name).unwrap();
+        let mut m = ManagedUnit::new(name.clone(), None);
+        m.backoff_until = backoff_until;
+        (name, m)
+    }
+
+    #[test]
+    fn next_wake_returns_soonest_pending_backoff() {
+        let now = Instant::now();
+        let t0 = now + Duration::from_secs(5);
+        let t1 = now + Duration::from_secs(30);
+
+        let mut managed = HashMap::new();
+        managed.extend([
+            managed_with("late", Some(t1)),
+            managed_with("soon", Some(t0)),
+            managed_with("none", None),
+        ]);
+
+        assert_eq!(next_wake(&managed), Some(t0));
+    }
+
+    #[test]
+    fn next_wake_empty_is_none() {
+        assert!(next_wake(&HashMap::new()).is_none());
+    }
+
+    #[test]
+    fn backoff_delay_doubles_then_caps() {
+        assert_eq!(backoff_delay(1), RESTART_BACKOFF_BASE);
+        assert_eq!(backoff_delay(2), Duration::from_secs(2));
+        assert_eq!(backoff_delay(3), Duration::from_secs(4));
+        assert_eq!(backoff_delay(4), Duration::from_secs(8));
+        // Clamped at the cap, and the huge-exponent path stays clamped (no shift
+        // overflow).
+        assert_eq!(backoff_delay(20), RESTART_BACKOFF_CAP);
+        assert_eq!(backoff_delay(u32::MAX), RESTART_BACKOFF_CAP);
+    }
+
+    #[test]
+    fn crash_escalates_then_resets_after_stable_run() {
+        let name = UnitName::new("app").unwrap();
+        let now = Instant::now();
+        let mut m = ManagedUnit::new(name, None);
+
+        // A fast crash (ran < STABLE_RUN) escalates the streak.
+        m.started_at = Some(now - Duration::from_secs(1));
+        m.note_crash(now);
+        assert_eq!(m.consecutive_failures, 1);
+        assert_eq!(m.backoff_until, Some(now + backoff_delay(1)));
+
+        m.started_at = Some(now - Duration::from_secs(1));
+        m.note_crash(now);
+        assert_eq!(m.consecutive_failures, 2);
+        assert_eq!(m.backoff_until, Some(now + backoff_delay(2)));
+
+        // A crash after a stable run resets the streak to a single failure.
+        m.started_at = Some(now - (STABLE_RUN + Duration::from_secs(1)));
+        m.note_crash(now);
+        assert_eq!(m.consecutive_failures, 1);
+        assert_eq!(m.backoff_until, Some(now + backoff_delay(1)));
+        assert!(m.child.is_none());
+        assert!(m.started_at.is_none());
     }
 
     #[test]

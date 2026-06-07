@@ -15,7 +15,10 @@ use std::{
         },
     },
     thread,
-    time::Duration,
+    time::{
+        Duration,
+        Instant,
+    },
 };
 
 use anyhow::{
@@ -25,6 +28,7 @@ use anyhow::{
 };
 use fs4::fs_std::FileExt;
 use signal_hook::consts::{
+    SIGCHLD,
     SIGHUP,
     SIGINT,
     SIGTERM,
@@ -50,16 +54,27 @@ pub fn run(ctx: &MainContext) -> Result<()> {
     signal_hook::flag::register(SIGHUP, Arc::clone(&reload))
         .with_context(|| format!("register {} signal", SIGHUP))?;
 
+    // SIGCHLD wakes the loop the instant a supervised child dies, so a crashed
+    // container is noticed immediately instead of at the next poll.
+    let child_exit = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(SIGCHLD, Arc::clone(&child_exit))
+        .with_context(|| format!("register {} signal", SIGCHLD))?;
+
     let mut supervisor = crate::scheduler::Supervisor::new();
 
     crate::scheduler::tick(ctx);
-    supervisor.reconcile(ctx);
+    let mut next_wake = supervisor.reconcile(ctx);
 
     while !shutdown.load(Ordering::Relaxed) {
-        // Sleep up to POLL_INTERVAL in slices, waking early on shutdown or SIGHUP.
-        let mut remaining = POLL_INTERVAL;
+        // Sleep until the next pending respawn.
+        let mut remaining = next_wake
+            .map(|at| at.saturating_duration_since(Instant::now()))
+            .unwrap_or(POLL_INTERVAL)
+            .min(POLL_INTERVAL);
+
         while !shutdown.load(Ordering::Relaxed)
             && !reload.load(Ordering::Relaxed)
+            && !child_exit.load(Ordering::Relaxed)
             && !remaining.is_zero()
         {
             let slice = remaining.min(SLEEP_SLICE);
@@ -72,8 +87,9 @@ pub fn run(ctx: &MainContext) -> Result<()> {
         }
 
         reload.store(false, Ordering::Relaxed);
+        child_exit.store(false, Ordering::Relaxed);
         crate::scheduler::tick(ctx);
-        supervisor.reconcile(ctx);
+        next_wake = supervisor.reconcile(ctx);
     }
 
     supervisor.shutdown();
