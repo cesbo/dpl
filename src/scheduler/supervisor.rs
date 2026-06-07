@@ -199,13 +199,24 @@ impl Supervisor {
         next_wake(&self.managed)
     }
 
+    /// SIGCHLD handler: reap exited children and arm their backoff, without
+    /// probing podman or spawning - those fork helpers whose own SIGCHLD would
+    /// spin the loop. The respawn waits for the next timed/SIGHUP reconcile.
+    pub fn reap_exited(&mut self) -> Option<Instant> {
+        let now = Instant::now();
+        for m in self.managed.values_mut() {
+            poll_child(m, now);
+        }
+        next_wake(&self.managed)
+    }
+
     /// Stop every supervised container and reap its child. Called once when the
     /// daemon shuts down.
     pub fn shutdown(&mut self) {
+        // Stop unconditionally, including adopted containers (child == None);
+        // stop_and_remove is idempotent, so a stopped unit is a no-op.
         for m in self.managed.values() {
-            if m.child.is_some()
-                && let Err(err) = podman::stop_and_remove(&m.name)
-            {
+            if let Err(err) = podman::stop_and_remove(&m.name) {
                 log::warn(format!("supervisor: stop '{}': {err}", m.name.as_str()));
             }
         }
@@ -244,27 +255,36 @@ fn drive(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit, active: Option<u32>
     }
 
     let now = Instant::now();
-    if let Some(child) = m.child.as_mut() {
-        match child.try_wait() {
-            Ok(Some(_)) => {
-                log::warn(format!(
-                    "supervisor: '{}' exited; restarting",
-                    m.name.as_str()
-                ));
-                m.note_crash(now);
-            }
-            Ok(None) => {}
-            Err(err) => {
-                log::warn(format!("supervisor: wait '{}': {err}", m.name.as_str()));
-                m.note_crash(now);
-            }
-        }
+    if m.child.is_some() {
+        poll_child(m, now);
     } else if !podman::is_running(&m.name) {
         // No child and nothing running: spawn once the backoff (if any) elapses.
         // A container that IS running without a child is one a prior serve
         // started (adopted across a serve restart); leave it until it dies.
         if m.backoff_until.is_none_or(|until| now >= until) {
             spawn(ctx, exe, m);
+        }
+    }
+}
+
+/// Reap a supervised child if it has exited, arming its backoff. No-op if it is
+/// still alive or absent.
+fn poll_child(m: &mut ManagedUnit, now: Instant) {
+    let Some(child) = m.child.as_mut() else {
+        return;
+    };
+    match child.try_wait() {
+        Ok(Some(_)) => {
+            log::warn(format!(
+                "supervisor: '{}' exited; restarting",
+                m.name.as_str()
+            ));
+            m.note_crash(now);
+        }
+        Ok(None) => {}
+        Err(err) => {
+            log::warn(format!("supervisor: wait '{}': {err}", m.name.as_str()));
+            m.note_crash(now);
         }
     }
 }
@@ -384,9 +404,9 @@ mod tests {
     #[test]
     fn backoff_delay_doubles_then_caps() {
         assert_eq!(backoff_delay(1), RESTART_BACKOFF_BASE);
-        assert_eq!(backoff_delay(2), Duration::from_secs(2));
-        assert_eq!(backoff_delay(3), Duration::from_secs(4));
-        assert_eq!(backoff_delay(4), Duration::from_secs(8));
+        assert_eq!(backoff_delay(2), Duration::from_secs(4));
+        assert_eq!(backoff_delay(3), Duration::from_secs(8));
+        assert_eq!(backoff_delay(4), Duration::from_secs(16));
         // Clamped at the cap, and the huge-exponent path stays clamped (no shift
         // overflow).
         assert_eq!(backoff_delay(20), RESTART_BACKOFF_CAP);

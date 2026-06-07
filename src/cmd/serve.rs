@@ -48,25 +48,38 @@ pub fn run(ctx: &MainContext) -> Result<()> {
             .with_context(|| format!("register {} signal", signal))?;
     }
 
-    // SIGHUP wakes the loop early to reconcile now (a deploy sends it after
-    // handing a container off to the supervisor).
+    // SIGHUP: a deploy handed off a container - reconcile now.
     let reload = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(SIGHUP, Arc::clone(&reload))
         .with_context(|| format!("register {} signal", SIGHUP))?;
 
-    // SIGCHLD wakes the loop the instant a supervised child dies, so a crashed
-    // container is noticed immediately instead of at the next poll.
+    // SIGCHLD: a supervised child died - restart it promptly, not at next poll.
     let child_exit = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(SIGCHLD, Arc::clone(&child_exit))
         .with_context(|| format!("register {} signal", SIGCHLD))?;
 
-    let mut supervisor = crate::scheduler::Supervisor::new();
+    // Timers run on their own thread so a slow timer script can't stall
+    // container supervision.
+    thread::scope(|scope| {
+        scope.spawn(|| timer_loop(ctx, &shutdown));
+        supervise(ctx, &shutdown, &reload, &child_exit);
+    });
 
-    crate::scheduler::tick(ctx);
+    Ok(())
+}
+
+/// Supervise containers: sleep until the next respawn or a signal, then
+/// reconcile. The wake cause decides how much work to do (see below).
+fn supervise(
+    ctx: &MainContext,
+    shutdown: &AtomicBool,
+    reload: &AtomicBool,
+    child_exit: &AtomicBool,
+) {
+    let mut supervisor = crate::scheduler::Supervisor::new();
     let mut next_wake = supervisor.reconcile(ctx);
 
     while !shutdown.load(Ordering::Relaxed) {
-        // Sleep until the next pending respawn.
         let mut remaining = next_wake
             .map(|at| at.saturating_duration_since(Instant::now()))
             .unwrap_or(POLL_INTERVAL)
@@ -86,15 +99,38 @@ pub fn run(ctx: &MainContext) -> Result<()> {
             break;
         }
 
-        reload.store(false, Ordering::Relaxed);
-        child_exit.store(false, Ordering::Relaxed);
-        crate::scheduler::tick(ctx);
-        next_wake = supervisor.reconcile(ctx);
+        // Clear before the work: a signal during reconcile re-arms the flag and
+        // is serviced next pass, never lost.
+        let reloaded = reload.swap(false, Ordering::Relaxed);
+        let child_died = child_exit.swap(false, Ordering::Relaxed);
+
+        // A bare SIGCHLD only reaps our children. A full reconcile forks podman,
+        // whose own SIGCHLD would re-trigger it into a spin - so only SIGHUP and
+        // the timeout take the full path.
+        next_wake = if remaining.is_zero() || reloaded {
+            supervisor.reconcile(ctx)
+        } else if child_died {
+            supervisor.reap_exited()
+        } else {
+            next_wake
+        };
     }
 
     supervisor.shutdown();
+}
 
-    Ok(())
+/// Fire due timers every [`POLL_INTERVAL`] until shutdown.
+fn timer_loop(ctx: &MainContext, shutdown: &AtomicBool) {
+    while !shutdown.load(Ordering::Relaxed) {
+        crate::scheduler::tick(ctx);
+
+        let mut remaining = POLL_INTERVAL;
+        while !shutdown.load(Ordering::Relaxed) && !remaining.is_zero() {
+            let slice = remaining.min(SLEEP_SLICE);
+            thread::sleep(slice);
+            remaining = remaining.saturating_sub(slice);
+        }
+    }
 }
 
 /// Single-instance `flock` and pidfile in one file, held for the daemon's
