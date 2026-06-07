@@ -5,6 +5,7 @@ use std::{
         OpenOptions,
     },
     io,
+    os::unix::fs::FileExt as UnixFileExt,
     path::PathBuf,
     sync::{
         Arc,
@@ -43,6 +44,8 @@ pub fn run(ctx: &MainContext) -> Result<()> {
             .with_context(|| format!("register {} signal", signal))?;
     }
 
+    // SIGHUP wakes the loop early to reconcile now (a deploy sends it after
+    // handing a container off to the supervisor).
     let reload = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(SIGHUP, Arc::clone(&reload))
         .with_context(|| format!("register {} signal", SIGHUP))?;
@@ -53,25 +56,22 @@ pub fn run(ctx: &MainContext) -> Result<()> {
     supervisor.reconcile(ctx);
 
     while !shutdown.load(Ordering::Relaxed) {
-        if reload.swap(false, Ordering::Relaxed) {
-            // sighup
-        }
-
+        // Sleep up to POLL_INTERVAL in slices, waking early on shutdown or SIGHUP.
         let mut remaining = POLL_INTERVAL;
-        while !shutdown.load(Ordering::Relaxed) {
-            if remaining > SLEEP_SLICE {
-                thread::sleep(SLEEP_SLICE);
-                remaining = remaining.saturating_sub(SLEEP_SLICE);
-            } else {
-                thread::sleep(remaining);
-                break;
-            }
+        while !shutdown.load(Ordering::Relaxed)
+            && !reload.load(Ordering::Relaxed)
+            && !remaining.is_zero()
+        {
+            let slice = remaining.min(SLEEP_SLICE);
+            thread::sleep(slice);
+            remaining = remaining.saturating_sub(slice);
         }
 
         if shutdown.load(Ordering::Relaxed) {
             break;
         }
 
+        reload.store(false, Ordering::Relaxed);
         crate::scheduler::tick(ctx);
         supervisor.reconcile(ctx);
     }
@@ -81,8 +81,11 @@ pub fn run(ctx: &MainContext) -> Result<()> {
     Ok(())
 }
 
-/// Holds the single-instance `flock` for the daemon's lifetime.
+/// Single-instance `flock` and pidfile in one file, held for the daemon's
+/// lifetime. The exclusive lock enforces one `dpl serve`; the PID written into
+/// the same file lets a deploy find the daemon and SIGHUP it (see [`notify`]).
 struct SchedulerLock {
+    // Held for the daemon's lifetime: closing the fd releases the flock.
     #[allow(dead_code)]
     file: File,
     path: PathBuf,
@@ -90,15 +93,17 @@ struct SchedulerLock {
 
 impl SchedulerLock {
     fn acquire(ctx: &MainContext) -> Result<Self> {
-        let state_dir = ctx.state_dir();
-        fs::create_dir_all(&state_dir).context("create state directory")?;
-        let path = state_dir.join("scheduler.lock");
+        fs::create_dir_all(ctx.state_dir()).context("create state directory")?;
+        let path = ctx.scheduler_pid_path();
+        // Do NOT truncate on open: a losing second instance must not wipe the
+        // winner's PID before its lock attempt fails. We rewrite the PID only
+        // after the lock is ours.
         let file = OpenOptions::new()
             .create(true)
-            .truncate(true)
+            .truncate(false)
             .write(true)
             .open(&path)
-            .context("create scheduler lock file")?;
+            .context("create scheduler pidfile")?;
 
         let lock = file
             .try_lock_exclusive()
@@ -107,6 +112,15 @@ impl SchedulerLock {
         if !lock {
             bail!("scheduler already started");
         }
+
+        // Lock is ours: rewrite in place (write then truncate to length). In
+        // place, not temp+rename - a rename would swap the inode and orphan the
+        // flock.
+        let pid = std::process::id().to_string();
+        file.write_all_at(pid.as_bytes(), 0)
+            .context("write scheduler pidfile")?;
+        file.set_len(pid.len() as u64)
+            .context("truncate scheduler pidfile")?;
 
         Ok(SchedulerLock { file, path })
     }
@@ -117,7 +131,10 @@ impl Drop for SchedulerLock {
         if let Err(err) = std::fs::remove_file(&self.path)
             && err.kind() != io::ErrorKind::NotFound
         {
-            crate::log::warn(format!("remove scheduler lock '{}': {err}", self.path.display()));
+            crate::log::warn(format!(
+                "remove scheduler pidfile '{}': {err}",
+                self.path.display()
+            ));
         }
     }
 }

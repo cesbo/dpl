@@ -49,12 +49,14 @@ pub enum DeployStateError {
     NoActiveVersion,
 }
 
-#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeployStatus {
     #[default]
     Idle,
     Building,
+    /// Built and active, awaiting startup verification (deploy health-checks).
+    Check,
     Ready,
     Failed,
 }
@@ -115,6 +117,10 @@ pub struct DeployState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<DeployFailure>,
 
+    /// True once this unit was handed off to `dpl serve` to run a container.
+    #[serde(default)]
+    pub supervised: bool,
+
     #[serde(skip)]
     path: PathBuf,
 }
@@ -146,6 +152,7 @@ impl DeployState {
                     last_version: 0,
                     last_status: Default::default(),
                     failure: None,
+                    supervised: false,
                     path,
                 });
             }
@@ -159,6 +166,29 @@ impl DeployState {
         state.path = path;
 
         Ok(state)
+    }
+
+    /// Every unit that has a deploy state file.
+    pub fn list(ctx: &MainContext) -> Vec<(UnitName, DeployState)> {
+        const SUFFIX: &str = "--deploy.json";
+
+        let Ok(entries) = std::fs::read_dir(ctx.state_dir()) else {
+            return Vec::new();
+        };
+
+        let mut units: Vec<(UnitName, DeployState)> = entries
+            .flatten()
+            .filter_map(|entry| {
+                let file_name = entry.file_name();
+                let stem = file_name.to_str()?.strip_suffix(SUFFIX)?;
+                let name = UnitName::new(stem).ok()?;
+                let state = DeployState::load(ctx, &name).ok()?;
+                Some((name, state))
+            })
+            .collect();
+
+        units.sort_by(|a, b| a.0.cmp(&b.0));
+        units
     }
 
     fn save(&self) -> Result<(), DeployStateError> {
@@ -215,8 +245,7 @@ impl DeployState {
         Ok(next_version)
     }
 
-    /// Marks the latest deploy attempt failed, recording the [`DeployStage`] it
-    /// failed in and the human-readable `message` cause for later inspection.
+    /// Marks the latest deploy attempt failed.
     pub fn set_failed(&mut self, stage: DeployStage, message: String) {
         self.last_status = DeployStatus::Failed;
         self.updated_at = Utc::now();
@@ -224,6 +253,16 @@ impl DeployState {
             stage,
             error: message,
         });
+        let _ = self.save();
+    }
+
+    /// Marks the build active but not yet verified.
+    pub fn set_check(&mut self) {
+        self.active_version = Some(self.last_version);
+        self.last_status = DeployStatus::Check;
+        self.supervised = true;
+        self.updated_at = Utc::now();
+        self.failure = None;
         let _ = self.save();
     }
 
@@ -284,7 +323,10 @@ impl Drop for DeployLockGuard {
         if let Err(err) = std::fs::remove_file(&self.path)
             && err.kind() != io::ErrorKind::NotFound
         {
-            crate::log::warn(format!("remove deploy lock file {}: {err}", self.path.display()));
+            crate::log::warn(format!(
+                "remove deploy lock file {}: {err}",
+                self.path.display()
+            ));
         }
     }
 }
@@ -300,6 +342,7 @@ mod tests {
             last_version: 0,
             last_status: Default::default(),
             failure: None,
+            supervised: false,
             path: dir.join(".deploy.state"),
         }
     }

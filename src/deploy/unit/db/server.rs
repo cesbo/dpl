@@ -1,5 +1,4 @@
 use std::{
-    path::Path,
     thread::sleep,
     time::{
         Duration,
@@ -7,10 +6,7 @@ use std::{
     },
 };
 
-use super::{
-    artifacts,
-    model::DbServerConfig,
-};
+use super::model::DbServerConfig;
 use crate::{
     MainContext,
     config::UnitName,
@@ -20,7 +16,6 @@ use crate::{
     },
     log,
     state::DeployState,
-    systemd,
 };
 
 const PING_TIMEOUT: Duration = Duration::from_secs(60);
@@ -38,14 +33,41 @@ impl<'a> DbServerUnit<'a> {
         Self { ctx, name, config }
     }
 
+    /// Hand the container off to the `dpl serve` daemon and wait until the
+    /// engine accepts connections. db-server has no build artifacts: `dpl start`
+    /// pulls the image and injects the root secret at runtime.
     pub fn deploy(self, state: &mut DeployState) -> Result<(), DeployError> {
-        self.install_inner(Path::new(systemd::SYSTEMD_DIR))?;
-        state.set_ready();
-        Ok(())
+        let root_password = self.ctx.resolve_secret(&self.config.secret).map_err(|e| {
+            DeployError::step_prepare(format!("resolve secret '{}'", &self.config.secret), e)
+        })?;
+
+        state.set_check();
+        crate::scheduler::notify(self.ctx);
+
+        log::phase(format!("waiting for db-server '{}'", self.name));
+        let deadline = Instant::now() + PING_TIMEOUT;
+        loop {
+            if self
+                .config
+                .engine
+                .ping(self.name, &root_password, None)
+                .is_ok()
+            {
+                state.set_ready();
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(DeployError::step_startup(
+                    format!("waiting for db-server '{}'", self.name),
+                    std::io::Error::other("timeout"),
+                ));
+            }
+            sleep(PING_INTERVAL);
+        }
     }
 
     /// Bring the db-server up if it isn't already running.
-    /// When the systemd service is active this is a no-op.
+    /// When the container is already running this is a no-op.
     pub fn reload_or_deploy(self) -> Result<(), DeployError> {
         if crate::podman::is_running(self.name) {
             return Ok(());
@@ -68,51 +90,6 @@ impl<'a> DbServerUnit<'a> {
                 }
                 Err(err)
             }
-        }
-    }
-
-    fn install_inner(&self, systemd_dir: &Path) -> Result<(), DeployError> {
-        let root_password = self.ctx.resolve_secret(&self.config.secret).map_err(|e| {
-            DeployError::step_prepare(format!("resolve secret '{}'", &self.config.secret), e)
-        })?;
-
-        artifacts::create_service_file(systemd_dir, self.ctx, self.name, self.config.engine)
-            .map_err(|e| DeployError::step_install("render db-server service", e))?;
-
-        systemd::reload().map_err(|e| DeployError::step_install("reload systemd", e))?;
-
-        {
-            let service_name = format!("{}.service", self.name.scoped_unit_name());
-            log::phase(format!("starting db-server '{}'", self.name));
-            if systemd::is_active(&service_name) {
-                systemd::restart_service(&service_name).map_err(|e| {
-                    DeployError::step_install(format!("restart service for '{}'", self.name), e)
-                })?;
-            } else {
-                systemd::enable_service(&service_name).map_err(|e| {
-                    DeployError::step_install(format!("enable service for '{}'", self.name), e)
-                })?;
-            }
-        }
-
-        log::phase(format!("waiting for db-server '{}'", self.name));
-        let deadline = Instant::now() + PING_TIMEOUT;
-        loop {
-            if self
-                .config
-                .engine
-                .ping(self.name, &root_password, None)
-                .is_ok()
-            {
-                return Ok(());
-            }
-            if Instant::now() >= deadline {
-                return Err(DeployError::step_startup(
-                    format!("waiting for db-server '{}'", self.name),
-                    std::io::Error::other("timeout"),
-                ));
-            }
-            sleep(PING_INTERVAL);
         }
     }
 

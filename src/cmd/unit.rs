@@ -162,6 +162,14 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
             );
             print_field(LATEST_DEPLOY, info);
         }
+        DeployStatus::Check => {
+            let info = format!(
+                "Version {} starting · since {}",
+                state.last_version,
+                fmt_ago(&now, &state.updated_at)
+            );
+            print_field(LATEST_DEPLOY, info);
+        }
         DeployStatus::Failed => {
             let stage = match &state.failure {
                 Some(DeployFailure { stage, .. }) => format!(" during {}", stage),

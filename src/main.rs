@@ -11,7 +11,6 @@ mod scheduler;
 mod secret;
 mod spinner;
 mod state;
-mod systemd;
 mod timers;
 
 use std::{

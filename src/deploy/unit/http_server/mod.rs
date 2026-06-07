@@ -1,8 +1,6 @@
 mod artifacts;
 mod model;
 
-use std::path::Path;
-
 pub use self::model::HttpServerConfig;
 use crate::{
     MainContext,
@@ -20,7 +18,6 @@ use crate::{
         volume_mountpoint,
     },
     state::DeployState,
-    systemd,
 };
 
 const HTTP_PORT: u16 = 80;
@@ -44,13 +41,25 @@ impl<'a> HttpServerUnit<'a> {
     }
 
     pub fn deploy(self, state: &mut DeployState) -> Result<(), DeployError> {
-        self.install_inner(Path::new(systemd::SYSTEMD_DIR))?;
+        self.install_inner()?;
+
+        // Hand the container off to serve, then wait until nginx is listening.
+        state.set_check();
+        crate::scheduler::notify(self.ctx);
+
+        let phase_name = format!("waiting for http-server '{}'", self.name);
+        log::phase(&phase_name);
+        if let Err(err) = health::check(self.name, HTTP_PORT) {
+            log::error(format!("{err}"));
+            return Err(DeployError::step_startup(phase_name, err));
+        }
+
         state.set_ready();
         Ok(())
     }
 
     /// Make this http-server reflect on-disk config:
-    ///   - if its systemd service is active, ask nginx to reload (fast path);
+    ///   - if its container is running, ask nginx to reload (fast path);
     ///   - otherwise run a full deploy under the unit's own DeployState lock,
     ///     so a dependent unit (e.g. a domain) can trigger the chain.
     pub fn reload_or_deploy(self) -> Result<(), DeployError> {
@@ -84,10 +93,10 @@ impl<'a> HttpServerUnit<'a> {
         }
     }
 
-    /// Render this unit's `00-dpl.conf` into its conf volume, render the
-    /// systemd service, then (re)start the container - restart forces
-    /// `podman run --replace --rm` to recreate it.
-    fn install_inner(&self, systemd_dir: &Path) -> Result<(), DeployError> {
+    /// Set up the volumes nginx needs: write `00-dpl.conf` into the unit's conf
+    /// volume and ensure the shared www volume exists. Starting the container is
+    /// the serve daemon's job (see `deploy`).
+    fn install_inner(&self) -> Result<(), DeployError> {
         let conf_volume = self.conf_volume();
         let conf_dir = ensure_volume(&conf_volume)
             .and_then(|_| volume_mountpoint(&conf_volume))
@@ -101,32 +110,6 @@ impl<'a> HttpServerUnit<'a> {
         ensure_volume(NGINX_WWW_VOLUME).map_err(|e| {
             DeployError::step_install(format!("get volume '{NGINX_WWW_VOLUME}'"), e)
         })?;
-
-        artifacts::create_service_file(systemd_dir, self)
-            .map_err(|e| DeployError::step_install("create service file for http-server", e))?;
-
-        systemd::reload().map_err(|e| DeployError::step_install("reload systemd", e))?;
-
-        {
-            let service_name = format!("{}.service", self.name.scoped_unit_name());
-            log::phase(format!("starting http-server '{}'", self.name));
-            if systemd::is_active(&service_name) {
-                systemd::restart_service(&service_name).map_err(|e| {
-                    DeployError::step_install(format!("restart service for '{}'", self.name), e)
-                })?;
-            } else {
-                systemd::enable_service(&service_name).map_err(|e| {
-                    DeployError::step_install(format!("enable service for '{}'", self.name), e)
-                })?;
-            }
-        }
-
-        let phase_name = format!("waiting for http-server '{}'", self.name);
-        log::phase(&phase_name);
-        if let Err(err) = health::check(self.name, HTTP_PORT) {
-            log::error(format!("{err}"));
-            return Err(DeployError::step_startup(phase_name, err));
-        }
 
         Ok(())
     }

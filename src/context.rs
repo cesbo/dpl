@@ -80,6 +80,12 @@ impl MainContext {
         self.base.join(STATE_DIR)
     }
 
+    /// `{base}/state/scheduler.pid` - PID of the running `dpl serve`.
+    /// The daemon holds an exclusive lock on this file.
+    pub fn scheduler_pid_path(&self) -> PathBuf {
+        self.state_dir().join("scheduler.pid")
+    }
+
     /// `{base}/log` - per-unit build logs.
     pub fn log_dir(&self) -> PathBuf {
         self.base.join(LOG_DIR)
@@ -114,23 +120,24 @@ impl MainContext {
             .join(format!("{}--timers.lock", unit.as_str()))
     }
 
-    /// Unit's last build: captured podman output in CRI format.
+    /// `{base}/log/{unit}.build.log` - unit's last build.
+    /// Captured podman output in CRI format.
     /// Build for app unit, restore for db unit.
-    /// `{base}/log/{unit}.build.log`
     pub fn build_log_path(&self, unit: &UnitName) -> PathBuf {
         self.log_dir().join(format!("{}.build.log", unit.as_str()))
     }
 
-    /// Unit's timers: captured podman output in CRI format
-    /// `{base}/log/{unit}.timers.log`
+    /// `{base}/log/{unit}.timers.log` - unit's timers.
+    /// Captured podman output in CRI format
     pub fn timers_log_path(&self, unit: &UnitName) -> PathBuf {
         self.log_dir().join(format!("{}.timers.log", unit.as_str()))
     }
 
-    /// Unit's runtime container: stdout/stderr captured by `dpl start` in CRI
-    /// format. `{base}/log/{unit}.runtime.log`
+    /// `{base}/log/{unit}.runtime.log` - unit's runtime container.
+    /// stdout/stderr captured by `dpl start` in CRI format.
     pub fn runtime_log_path(&self, unit: &UnitName) -> PathBuf {
-        self.log_dir().join(format!("{}.runtime.log", unit.as_str()))
+        self.log_dir()
+            .join(format!("{}.runtime.log", unit.as_str()))
     }
 
     pub fn resolve_secret(&self, name: &SecretName) -> Result<String, SecretError> {

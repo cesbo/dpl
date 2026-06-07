@@ -20,13 +20,11 @@ use crate::{
         ArtifactError,
         render_template,
     },
-    config::UnitName,
 };
 
 const CONTAINERFILE_TEMPLATE: &str = "containerfile";
 const BUILD_SH_TEMPLATE: &str = "build-sh";
 const RUN_SH_TEMPLATE: &str = "run-sh";
-const APP_SERVICE_TEMPLATE: &str = "app-service";
 
 static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
     let mut env = Environment::new();
@@ -45,18 +43,12 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
         .unwrap();
     env.add_template(RUN_SH_TEMPLATE, include_str!("templates/run.sh.jinja"))
         .unwrap();
-    env.add_template(
-        APP_SERVICE_TEMPLATE,
-        include_str!("templates/app-service.jinja"),
-    )
-    .unwrap();
 
     env
 });
 
 pub struct ArtifactsContext<'a> {
     pub ctx: &'a MainContext,
-    pub name: &'a UnitName,
     pub config: &'a AppConfig,
 }
 
@@ -128,23 +120,6 @@ impl<'a> ArtifactsContext<'a> {
             },
         )?;
 
-        let dpl_bin = std::env::current_exe().map_err(ArtifactError::CurrentExe)?;
-
-        // The service only delegates to `dpl start`/`dpl stop`; the version,
-        // volumes, database wait-gates, and log path are resolved at runtime by
-        // those commands, so they no longer belong in the unit file.
-        let file_name = format!("{}.service", self.name.scoped_unit_name());
-        let path = artifacts_dir.join(&file_name);
-        write_artifact(
-            path,
-            APP_SERVICE_TEMPLATE,
-            context! {
-                dpl_bin => dpl_bin.to_string_lossy(),
-                dpl_base => self.ctx.base().to_string_lossy(),
-                name => &self.name,
-            },
-        )?;
-
         Ok(())
     }
 }
@@ -164,7 +139,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        config::EnvList,
+        config::{
+            EnvList,
+            UnitName,
+        },
         deploy::unit::app::model::*,
     };
 
@@ -259,7 +237,6 @@ mod tests {
 
         let artifacts = ArtifactsContext {
             ctx: &ctx,
-            name: &name,
             config: &config,
         };
 
@@ -278,7 +255,6 @@ mod tests {
         assert!(artifacts_dir.join("build-2.sh").exists());
         assert!(!artifacts_dir.join("build-3.sh").exists());
         assert!(artifacts_dir.join("build-4.sh").exists());
-        assert!(artifacts_dir.join("dpl--my-app.service").exists());
 
         // Enabled timers reach the container through run.sh's `timer--<name>`
         // dispatch; the disabled one is skipped. The scheduler (not a cron file)
@@ -291,26 +267,6 @@ mod tests {
         assert!(
             !run_sh.contains("timer--purge"),
             "disabled timer must not be rendered:\n{run_sh}"
-        );
-
-        // The service only delegates to `dpl start`/`dpl stop`; container logic
-        // (db wait gates, the podman run, volumes) is resolved at runtime.
-        let service = fs::read_to_string(artifacts_dir.join("dpl--my-app.service")).unwrap();
-        assert!(
-            service.contains("start my-app"),
-            "missing `dpl start` delegation:\n{service}"
-        );
-        assert!(
-            service.contains("stop my-app"),
-            "missing `dpl stop` delegation:\n{service}"
-        );
-        assert!(
-            !service.contains("podman run") && !service.contains("ExecStartPre"),
-            "service must not embed container logic:\n{service}"
-        );
-        assert!(
-            !service.contains("db wait"),
-            "db wait gates must move into `dpl start`:\n{service}"
         );
     }
 
@@ -353,7 +309,6 @@ mod tests {
         };
         let artifacts = ArtifactsContext {
             ctx: &ctx,
-            name: &name,
             config: &config,
         };
 

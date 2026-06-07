@@ -123,14 +123,6 @@ pub enum DbServerEngine {
 }
 
 impl DbServerEngine {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            DbServerEngine::Postgresql => "postgresql",
-            DbServerEngine::Mariadb => "mariadb",
-            DbServerEngine::Mysql => "mysql",
-        }
-    }
-
     pub fn image(&self, version: &str) -> String {
         match self {
             DbServerEngine::Postgresql => format!("docker.io/library/postgres:{version}"),
@@ -510,7 +502,6 @@ secret: app1-pass
     #[test]
     fn metadata_postgres() {
         let engine = DbServerEngine::Postgresql;
-        assert_eq!(engine.as_str(), "postgresql");
         assert_eq!(
             engine.image("18-alpine"),
             "docker.io/library/postgres:18-alpine"
@@ -522,7 +513,6 @@ secret: app1-pass
         assert_eq!(engine.url_scheme(), "postgresql");
 
         let engine = DbServerEngine::Mariadb;
-        assert_eq!(engine.as_str(), "mariadb");
         assert_eq!(engine.image("12"), "docker.io/library/mariadb:12");
         assert_eq!(engine.data_path(), "/var/lib/mysql");
         assert_eq!(engine.password_env(), "MARIADB_ROOT_PASSWORD");
@@ -531,7 +521,6 @@ secret: app1-pass
         assert_eq!(engine.url_scheme(), "mysql");
 
         let engine = DbServerEngine::Mysql;
-        assert_eq!(engine.as_str(), "mysql");
         assert_eq!(engine.image("8.4"), "docker.io/library/mysql:8.4");
         assert_eq!(engine.data_path(), "/var/lib/mysql");
         assert_eq!(engine.password_env(), "MYSQL_ROOT_PASSWORD");

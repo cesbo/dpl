@@ -3,11 +3,13 @@
 `dpl` is a single-binary deploy CLI. It manages local units (apps, database
 servers, databases, domains), keeps encrypted secrets on disk, and performs
 one-shot deploys: extract a `.tar.gz`, render artifacts from MiniJinja
-templates, run `podman build`, and (re)install the generated systemd service.
+templates, run `podman build`, then hand the container off to the `dpl serve`
+daemon to run.
 
 Most `dpl` commands run to completion in the foreground. The exception is
-`dpl serve`: a long-running daemon, started by systemd, that runs the in-process
-timer scheduler.
+`dpl serve`: a long-running daemon (started by systemd) that runs the in-process
+timer scheduler and supervises every unit's container - starting it, restarting
+it if it exits, and stopping it on shutdown.
 
 ## Requirements
 
@@ -216,14 +218,15 @@ dpl inspect myapp                                   # JSON status
 ```
 
 A deploy acquires `.deploy.lock`, bumps the version, renders artifacts, runs
-`podman build`, exports configured files, (re)installs the systemd service,
-runs the health check, and prints the elapsed time. Non-zero exit on any
+`podman build`, exports configured files, marks the build for startup and
+nudges `dpl serve` to bring the container up (SIGHUP), waits for the health
+check, then marks it ready and prints the elapsed time. Non-zero exit on any
 failure.
 
 `dpl inspect` prints sections (`deploy`, `container` for app units). Each
 field carries a `health` signal (`ok`, `warn`, `down`, `unknown`). Deploy
-`status` is one of `idle`, `building`, `ready`, `failed`. On `failed`, an
-`error` field carries the message.
+`status` is one of `idle`, `building`, `check`, `ready`, `failed`. On `failed`,
+an `error` field carries the message.
 
 ## Notes
 

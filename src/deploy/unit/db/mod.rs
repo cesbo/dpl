@@ -1,4 +1,3 @@
-mod artifacts;
 mod backup;
 mod console;
 mod database;
@@ -23,7 +22,6 @@ pub use self::{
     model::{
         DbConfig,
         DbServerConfig,
-        DbServerEngine,
     },
     server::DbServerUnit,
 };

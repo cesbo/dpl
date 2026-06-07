@@ -1,7 +1,6 @@
 mod artifacts;
 mod model;
 mod podman;
-mod systemd;
 
 use std::{
     fs,
@@ -21,7 +20,6 @@ pub use self::model::AppConfig;
 use self::{
     artifacts::ArtifactsContext,
     podman::PodmanContext,
-    systemd::SystemdContext,
 };
 use crate::{
     MainContext,
@@ -73,7 +71,6 @@ impl<'a> AppUnit<'a> {
 
         let artifacts = ArtifactsContext {
             ctx: self.ctx,
-            name: self.name,
             config: &self.config,
         };
 
@@ -95,7 +92,7 @@ impl<'a> AppUnit<'a> {
         let temp_dir = self.prepare(archive)?;
         self.deploy_worker(version, temp_dir.path(), state)?;
 
-        state.set_ready();
+        self.start_via_serve(state)?;
         self.redeploy_dependent_domains();
 
         Ok(())
@@ -186,7 +183,7 @@ impl<'a> AppUnit<'a> {
         Ok(())
     }
 
-    fn install_inner(&self, deploy_dir: &Path, version: u32) -> Result<(), DeployError> {
+    fn install_inner(&self, _deploy_dir: &Path, version: u32) -> Result<(), DeployError> {
         if !self.config.exports.is_empty() {
             log::phase("exporting files");
             PodmanContext::new(self.name, version)
@@ -194,37 +191,40 @@ impl<'a> AppUnit<'a> {
                 .map_err(|e| DeployError::step_install("export files", e))?;
         }
 
-        // A static build-and-export unit has no runtime: nothing to install.
-        // The build + export above is the whole deploy.
-        let Some(runtime) = &self.config.runtime else {
+        // A static build-and-export unit has no runtime: nothing else to install.
+        // The build + export above is the whole deploy. Starting the container is
+        // the serve daemon's job (see `start_via_serve`).
+        if self.config.runtime.is_none() {
             return Ok(());
-        };
-
-        let systemd_ctx = SystemdContext::new(self.name);
-
-        {
-            log::phase("installing app service");
-            systemd_ctx
-                .install_app(deploy_dir)
-                .map_err(|e| DeployError::step_install("install app service", e))?;
-        }
-
-        {
-            let phase_name = "waiting for app".to_string();
-            log::phase(&phase_name);
-            if let Err(err) = crate::podman::health::check(self.name, runtime.port) {
-                log::error(format!("{err}"));
-                return Err(DeployError::step_startup(phase_name, err));
-            }
-
-            systemd_ctx
-                .set_restart_value("always")
-                .map_err(|e| DeployError::step_install("set restart policy to 'always'", e))?;
         }
 
         log::phase("registering timers");
         self.register_timers();
 
+        Ok(())
+    }
+
+    /// Hand the container off to the `dpl serve` daemon and wait for it to come
+    /// up. Marks the build `Check` (active, unverified), nudges serve to start
+    /// it, then runs the readiness check and flips to `Ready`. A static unit has
+    /// no container and is `Ready` immediately.
+    fn start_via_serve(&self, state: &mut DeployState) -> Result<(), DeployError> {
+        let Some(runtime) = &self.config.runtime else {
+            state.set_ready();
+            return Ok(());
+        };
+
+        state.set_check();
+        crate::scheduler::notify(self.ctx);
+
+        let phase_name = format!("waiting for app '{}'", self.name);
+        log::phase(&phase_name);
+        if let Err(err) = crate::podman::health::check(self.name, runtime.port) {
+            log::error(format!("{err}"));
+            return Err(DeployError::step_startup(phase_name, err));
+        }
+
+        state.set_ready();
         Ok(())
     }
 
@@ -251,7 +251,11 @@ impl<'a> AppUnit<'a> {
     }
 
     fn uninstall_inner(&self, version: u32) {
-        SystemdContext::new(self.name).uninstall_app();
+        // Stop the running container (serve was supervising it) before dropping
+        // its image; serve sees the unit leave `Ready` and won't restart it.
+        if let Err(err) = crate::podman::stop_and_remove(self.name) {
+            log::warn(format!("stop container '{}': {err}", self.name));
+        }
 
         let podman_ctx = PodmanContext::new(self.name, version);
         podman_ctx.remove_exports();
