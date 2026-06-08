@@ -93,11 +93,11 @@ impl DeployError {
     }
 }
 
-/// A container-lifecycle failure from `dpl start` / `dpl stop`. Unlike
+/// A container-lifecycle failure from internal runtime commands like
+/// `dpl start`. Unlike
 /// [`DeployError`], these never feed `DeployState` (no version, no build log,
-/// no recorded stage) — the systemd service runs them independently of any
-/// deploy — so the error only carries the failing step and its cause for the
-/// CLI to print.
+/// no recorded stage), so the error only carries the failing step and its cause
+/// for the CLI to print.
 #[derive(Debug, Error)]
 #[error("{info}")]
 pub struct RunError {

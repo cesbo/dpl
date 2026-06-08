@@ -45,6 +45,7 @@ dpl --base /opt/dpl <command> [args]
 |---------|---------|
 | `dpl check <name>`   | Validate config and reference graph |
 | `dpl deploy <name> [path]` | Deploy a unit. App: `.tar.gz` (or `-`). Db: optional SQL dump to restore |
+| `dpl undeploy <name>` | Remove a unit's active deployment from service |
 | `dpl inspect <name>` | Print runtime state as JSON |
 | `dpl serve` | Run the long-lived local serve process |
 | `dpl db wait\|console\|backup` | Database operations |
@@ -242,6 +243,8 @@ Deploys do not start containers directly. They mark the unit `check`, then
 SIGHUP the running `dpl serve` process. Serve reconciles deploy state, starts
 `check`/`ready` runtime units via child `dpl start <unit>` processes, restarts
 them with backoff if they exit, and stops supervised containers on shutdown.
+Use `dpl undeploy <unit>` to remove a unit from service; it clears the active
+deployment state so serve and timers stop treating the unit as desired.
 
 Serve also runs the timer loop. Due app timers are executed through
 `dpl timer <unit> <timer>`, which runs the timer script inside the running

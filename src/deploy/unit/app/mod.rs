@@ -256,9 +256,7 @@ impl<'a> AppUnit<'a> {
             log::warn(format!("stop container '{}': {err}", self.name));
         }
 
-        let podman_ctx = PodmanContext::new(self.name, version);
-        podman_ctx.remove_exports();
-        podman_ctx.remove();
+        remove_version_artifacts(self.name, version);
     }
 
     pub fn inspect(&self) -> Result<(), DeployError> {
@@ -321,21 +319,12 @@ impl<'a> AppUnit<'a> {
             .map_err(|e| RunError::new("run podman foreground", e))
     }
 
-    /// Stop and remove the app container.
-    pub fn stop(&self) -> Result<(), RunError> {
-        if self.config.runtime.is_none() {
-            return Err(RunError::new(
-                format!(
-                    "app '{}' is a static export unit with no container",
-                    self.name
-                ),
-                io::Error::other("nothing to stop"),
-            ));
-        }
+}
 
-        crate::podman::stop_and_remove(self.name)
-            .map_err(|e| RunError::new(format!("stop container '{}'", self.name), e))
-    }
+pub(crate) fn remove_version_artifacts(name: &UnitName, version: u32) {
+    let podman_ctx = PodmanContext::new(name, version);
+    podman_ctx.remove_exports();
+    podman_ctx.remove();
 }
 
 fn save_archive<R: Read>(archive: R, dst: &Path) -> io::Result<()> {

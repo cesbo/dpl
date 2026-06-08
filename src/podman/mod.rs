@@ -54,7 +54,7 @@ pub fn run_podman(args: &[&str]) -> io::Result<String> {
 }
 
 /// Stop and remove a unit's container. Idempotent: `--ignore` makes a missing
-/// container a no-op. This is the body of `dpl stop`.
+/// container a no-op.
 pub fn stop_and_remove(name: &UnitName) -> io::Result<()> {
     let container = name.scoped_unit_name();
     run_podman(&["stop", "--ignore", &container])?;

@@ -117,9 +117,4 @@ impl<'a> DbServerUnit<'a> {
             .map_err(|e| RunError::new("run podman foreground", e))
     }
 
-    /// Stop and remove the db-server container.
-    pub fn stop(&self) -> Result<(), RunError> {
-        crate::podman::stop_and_remove(self.name)
-            .map_err(|e| RunError::new(format!("stop container '{}'", self.name), e))
-    }
 }

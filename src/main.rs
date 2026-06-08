@@ -67,14 +67,15 @@ enum Command {
         name: config::UnitName,
     },
 
-    /// Start a unit's container (the systemd service's ExecStart)
+    /// Start a unit's container (internal: called by `dpl serve`)
+    #[command(hide = true)]
     Start {
         /// Unit name
         name: config::UnitName,
     },
 
-    /// Stop a unit's container (the systemd service's ExecStop)
-    Stop {
+    /// Remove a unit's active deployment from service
+    Undeploy {
         /// Unit name
         name: config::UnitName,
     },
@@ -122,7 +123,7 @@ fn run() -> Result<()> {
         Command::Deploy { name, path } => cmd::unit::deploy(&ctx, &name, path.as_deref()),
         Command::Inspect { name } => cmd::unit::inspect(&ctx, &name),
         Command::Start { name } => cmd::unit::start(&ctx, &name),
-        Command::Stop { name } => cmd::unit::stop(&ctx, &name),
+        Command::Undeploy { name } => cmd::unit::undeploy(&ctx, &name),
         Command::Timer { name, timer } => cmd::unit::timer(&ctx, &name, &timer),
         Command::Serve => cmd::serve::run(&ctx),
         Command::Secret(args) => cmd::secret::run(&ctx, args),

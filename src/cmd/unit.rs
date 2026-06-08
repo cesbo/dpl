@@ -37,6 +37,7 @@ use crate::{
         fmt_ago,
         fmt_duration,
         print_field,
+        success_mark,
     },
     state::{
         DeployFailure,
@@ -314,20 +315,33 @@ pub fn start(ctx: &MainContext, name: &UnitName) -> Result<()> {
     result.with_context(|| format!("start unit '{name}'"))
 }
 
-/// Stop a unit's container.
-pub fn stop(ctx: &MainContext, name: &UnitName) -> Result<()> {
-    let unit = load_unit(ctx, name)?;
+/// Remove a unit's active deployment from service.
+pub fn undeploy(ctx: &MainContext, name: &UnitName) -> Result<()> {
+    let (_guard, mut state) =
+        DeployState::acquire(ctx, name).with_context(|| format!("acquire unit '{name}'"))?;
 
-    let result = match unit {
-        UnitConfig::App(config) => AppUnit::new(ctx, name, config).stop(),
-        UnitConfig::DbServer(config) => DbServerUnit::new(ctx, name, config).stop(),
-        UnitConfig::HttpServer(config) => HttpServerUnit::new(ctx, name, config).stop(),
-        UnitConfig::Db(_) | UnitConfig::Domain(_) => {
-            bail!("{} unit has no runtime container", unit.kind())
-        }
-    };
+    let outcome = state
+        .undeploy()
+        .with_context(|| format!("update deploy state for unit '{name}'"))?;
 
-    result.with_context(|| format!("stop unit '{name}'"))
+    crate::serve::notify(ctx);
+
+    let unit = UnitConfig::load(ctx, name).ok();
+    if state.supervised {
+        crate::podman::stop_and_remove(name).with_context(|| format!("stop container '{name}'"))?;
+    }
+
+    if let (Some(active_version), Some(UnitConfig::App(_))) = (outcome.active_version, unit) {
+        crate::deploy::app::remove_version_artifacts(name, active_version);
+    }
+
+    if outcome.changed {
+        eprintln!("{} undeployed '{name}'", success_mark());
+    } else {
+        eprintln!("{} '{name}' is already undeployed", success_mark());
+    }
+
+    Ok(())
 }
 
 /// Run one of a unit's timers.

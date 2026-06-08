@@ -49,6 +49,12 @@ pub enum DeployStateError {
     NoActiveVersion,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UndeployOutcome {
+    pub active_version: Option<u32>,
+    pub changed: bool,
+}
+
 #[derive(Default, Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeployStatus {
@@ -274,6 +280,30 @@ impl DeployState {
         self.failure = None;
         let _ = self.save();
     }
+
+    /// Remove the active deployment from service. The unit can become live again
+    /// only through a later deploy, which will set `supervised` at hand-off.
+    pub fn undeploy(&mut self) -> Result<UndeployOutcome, DeployStateError> {
+        let active_version = self.active_version;
+        let changed = self.active_version.is_some()
+            || self.supervised
+            || self.last_status != DeployStatus::Idle
+            || self.failure.is_some();
+
+        if changed {
+            self.active_version = None;
+            self.last_status = DeployStatus::Idle;
+            self.supervised = false;
+            self.failure = None;
+            self.updated_at = Utc::now();
+            self.save()?;
+        }
+
+        Ok(UndeployOutcome {
+            active_version,
+            changed,
+        })
+    }
 }
 
 /// Holds an OS-level exclusive `flock` on `state/{unit}--deploy.lock`.
@@ -362,5 +392,23 @@ mod tests {
             failure.error,
             "waiting for app: container exited with code 1 (ran 2s)"
         );
+    }
+
+    #[test]
+    fn undeploy_clears_active_runtime_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = state_at(dir.path());
+        state.bump_version().unwrap();
+        state.set_check();
+        state.set_ready();
+
+        let outcome = state.undeploy().unwrap();
+
+        assert_eq!(outcome.active_version, Some(1));
+        assert!(outcome.changed);
+        assert_eq!(state.active_version, None);
+        assert_eq!(state.last_status, DeployStatus::Idle);
+        assert!(!state.supervised);
+        assert!(state.failure.is_none());
     }
 }
