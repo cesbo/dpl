@@ -1,4 +1,3 @@
-mod artifacts;
 mod model;
 
 pub use self::model::HttpServerConfig;
@@ -15,12 +14,14 @@ use crate::{
         NGINX_WWW_VOLUME,
         ensure_volume,
         health,
-        volume_mountpoint,
+        write_volume_file,
     },
     state::DeployState,
 };
 
 const HTTP_PORT: u16 = 80;
+const GLOBAL_CONFIG_FILE: &str = "00-dpl.conf";
+const GLOBAL_CONFIG: &str = include_str!("templates/00-dpl.conf");
 
 #[derive(Debug)]
 pub struct HttpServerUnit<'a> {
@@ -97,14 +98,13 @@ impl<'a> HttpServerUnit<'a> {
     /// `dpl serve` starts the container (see `deploy`).
     fn install_inner(&self) -> Result<(), DeployError> {
         let conf_volume = self.conf_volume();
-        let conf_dir = ensure_volume(&conf_volume)
-            .and_then(|_| volume_mountpoint(&conf_volume))
-            .map_err(|e| {
-                DeployError::step_install(format!("resolve volume '{conf_volume}' mountpoint"), e)
-            })?;
-
-        artifacts::write_global_config(&conf_dir)
-            .map_err(|e| DeployError::step_install("write global config for http-server", e))?;
+        write_volume_file(
+            &conf_volume,
+            &self.config.image,
+            GLOBAL_CONFIG_FILE,
+            GLOBAL_CONFIG,
+        )
+        .map_err(|e| DeployError::step_install("write global config for http-server", e))?;
 
         ensure_volume(NGINX_WWW_VOLUME).map_err(|e| {
             DeployError::step_install(format!("get volume '{NGINX_WWW_VOLUME}'"), e)

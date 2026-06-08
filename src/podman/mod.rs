@@ -3,8 +3,9 @@ pub mod inspect;
 mod run;
 
 use std::{
+    fs,
     io,
-    path::PathBuf,
+    path::Path,
     process::{
         Command,
         Stdio,
@@ -25,6 +26,8 @@ pub const NGINX_WWW_VOLUME: &str = "dpl-www";
 
 /// Mount base of [`NGINX_WWW_VOLUME`] inside the nginx container.
 pub const NGINX_WWW_MOUNT: &str = "/var/www";
+
+const VOLUME_WRITE_MOUNT_PREFIX: &str = "/tmp/dpl-volume-write-";
 
 pub fn podman_spawn_error(err: io::Error) -> io::Error {
     if err.kind() == io::ErrorKind::NotFound {
@@ -70,13 +73,77 @@ pub fn ensure_volume(name: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Resolve the host mountpoint of a named volume.
-pub fn volume_mountpoint(name: &str) -> io::Result<PathBuf> {
-    let mountpoint = run_podman(&["volume", "inspect", name, "--format", "{{.Mountpoint}}"])?;
-    if mountpoint.is_empty() {
-        return Err(io::Error::other(format!("volume {name} has no mountpoint")));
+/// Write a UTF-8 file into a named volume without touching the volume's host
+/// mountpoint.
+pub fn write_volume_file(volume: &str, image: &str, path: &str, content: &str) -> io::Result<()> {
+    let rel_path = normalize_volume_file_path(path)?;
+    ensure_volume(volume)?;
+
+    let mount = temporary_volume_write_mount();
+    let volume_arg = format!("{volume}:{mount}");
+    let container = temporary_volume_write_container();
+    let temp_dir = tempfile::tempdir()?;
+    let local_file = temp_dir.path().join(&rel_path);
+    if let Some(parent) = local_file.parent() {
+        fs::create_dir_all(parent)?;
     }
-    Ok(PathBuf::from(mountpoint))
+    fs::write(&local_file, content)?;
+
+    run_podman(&[
+        "create",
+        "--name",
+        &container,
+        "--volume",
+        &volume_arg,
+        image,
+    ])?;
+
+    let src = temp_dir_content_arg(temp_dir.path());
+    let dst = format!("{container}:{mount}");
+    let copy_result = run_podman(&["cp", "--overwrite", &src, &dst]);
+    let remove_result = run_podman(&["rm", "-f", "-v", "--ignore", &container]);
+
+    copy_result?;
+    remove_result?;
+    Ok(())
+}
+
+fn temporary_volume_write_mount() -> String {
+    format!("{VOLUME_WRITE_MOUNT_PREFIX}{}", cuid::cuid2())
+}
+
+fn temporary_volume_write_container() -> String {
+    format!("dpl-volume-write-{}", cuid::cuid2())
+}
+
+fn temp_dir_content_arg(path: &Path) -> String {
+    format!("{}/.", path.display())
+}
+
+fn normalize_volume_file_path(path: &str) -> io::Result<String> {
+    if path.is_empty() || path.starts_with('/') || path.contains('\'') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "volume file path must be relative and must not contain single quotes",
+        ));
+    }
+
+    let mut normalized = String::new();
+    for item in path.split('/') {
+        if item.is_empty() || item == "." || item == ".." {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "volume file path must not contain empty, current or parent segments",
+            ));
+        }
+
+        if !normalized.is_empty() {
+            normalized.push('/');
+        }
+        normalized.push_str(item);
+    }
+
+    Ok(normalized)
 }
 
 /// Subset of `podman container inspect` we surface in reports.
@@ -244,5 +311,17 @@ mod tests {
 
         // A short/garbled row (fewer columns than expected) yields `None`.
         assert!(parse_stats("0.50%\t12.3MB / 4.0GB").is_none());
+    }
+
+    #[test]
+    fn normalizes_volume_file_path() {
+        assert_eq!(
+            normalize_volume_file_path("nginx/example.conf").unwrap(),
+            "nginx/example.conf"
+        );
+        assert!(normalize_volume_file_path("/example.conf").is_err());
+        assert!(normalize_volume_file_path("nginx//example.conf").is_err());
+        assert!(normalize_volume_file_path("nginx/../example.conf").is_err());
+        assert!(normalize_volume_file_path("bad'name.conf").is_err());
     }
 }

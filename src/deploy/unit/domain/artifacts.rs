@@ -1,8 +1,4 @@
-use std::{
-    fs,
-    path::Path,
-    sync::LazyLock,
-};
+use std::sync::LazyLock;
 
 use minijinja::{
     Environment,
@@ -52,15 +48,17 @@ pub struct ArtifactsContext<'a> {
 }
 
 impl<'a> ArtifactsContext<'a> {
-    /// Render the nginx config and write it as `<unit-name>.conf` into the
-    /// given `conf_dir`.
-    pub fn save(&self, conf_dir: &Path) -> Result<(), ArtifactError> {
+    pub fn filename(&self) -> String {
+        format!("{}.conf", self.name)
+    }
+
+    pub fn render(&self) -> Result<String, ArtifactError> {
         let mut routes = Vec::new();
         for route in &self.config.routes {
             routes.push(RenderRoute::new(self.ctx, route)?);
         }
 
-        let content = render_template(
+        render_template(
             &TEMPLATES,
             NGINX_CONFIG_TEMPLATE,
             context! {
@@ -69,14 +67,7 @@ impl<'a> ArtifactsContext<'a> {
                 custom_config => &self.config.custom_config,
                 routes => routes,
             },
-        )?;
-
-        fs::create_dir_all(conf_dir).map_err(ArtifactError::CreateDir)?;
-
-        let path = conf_dir.join(format!("{}.conf", self.name));
-        fs::write(&path, content).map_err(ArtifactError::Write)?;
-
-        Ok(())
+        )
     }
 }
 
