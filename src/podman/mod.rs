@@ -1,7 +1,6 @@
 pub mod health;
 pub mod inspect;
 mod run;
-mod supervise;
 
 use std::{
     io,

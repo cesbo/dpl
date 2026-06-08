@@ -113,8 +113,8 @@ impl<'a> DbServerUnit<'a> {
 
         cmd.volume(format!("{container}-data"), engine.data_path());
 
-        cmd.supervise(self.config.image(), &self.ctx.runtime_log_path(self.name))
-            .map_err(|e| RunError::new("supervise podman run", e))
+        cmd.run_foreground(self.config.image(), &self.ctx.runtime_log_path(self.name))
+            .map_err(|e| RunError::new("run podman foreground", e))
     }
 
     /// Stop and remove the db-server container.

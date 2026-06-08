@@ -317,8 +317,8 @@ impl<'a> AppUnit<'a> {
         }
 
         let image = format!("localhost/{}:{}", self.name, version);
-        cmd.supervise(image, &self.ctx.runtime_log_path(self.name))
-            .map_err(|e| RunError::new("supervise podman run", e))
+        cmd.run_foreground(image, &self.ctx.runtime_log_path(self.name))
+            .map_err(|e| RunError::new("run podman foreground", e))
     }
 
     /// Stop and remove the app container.

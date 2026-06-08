@@ -131,8 +131,8 @@ impl<'a> HttpServerUnit<'a> {
         cmd.volume(NGINX_WWW_VOLUME, NGINX_WWW_MOUNT);
         cmd.volume(self.conf_volume(), "/etc/nginx/conf.d");
 
-        cmd.supervise(&self.config.image, &self.ctx.runtime_log_path(self.name))
-            .map_err(|e| RunError::new("supervise podman run", e))
+        cmd.run_foreground(&self.config.image, &self.ctx.runtime_log_path(self.name))
+            .map_err(|e| RunError::new("run podman foreground", e))
     }
 
     /// Stop and remove the http-server container.

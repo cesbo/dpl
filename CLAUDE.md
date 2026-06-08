@@ -37,7 +37,8 @@ The unit model plus typed cross-unit references is the novel core; preserve it a
 ## Code conventions
 
 - In comments use regular hyphen - for dashes, not em dash — or en dash –
-- Keep comments lean: state the intent in a line or two, not the implementation. The code already shows *how*; the comment exists for the *why* that isn't obvious. Don't narrate each branch or restate what the next line does.
+- AI agents must keep comments concise and useful. Prefer no comment when the code is already self-explanatory. Add a comment only for non-obvious intent, invariants, external contracts, safety/lifecycle constraints, or IDE-facing API summaries.
+- Comments should explain *why* or *what contract matters*, not narrate *how* the next line works. Keep doc comments to one short sentence by default, and keep inline comments to one line unless the surrounding behavior is genuinely subtle.
 
 ## Design Decisions
 
