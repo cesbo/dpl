@@ -91,8 +91,8 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
         .map_err(|e| DeployError::step_prepare("begin deploy", e))
         .with_context(|| format!("deploy unit '{name}'"))?;
 
-    let log_path = ctx.build_log_path(name);
-    let _ = crate::log::cri_log::remove_all(&log_path);
+    let build_log_path = ctx.build_log_path(name);
+    let _ = crate::log::cri_log::remove_all(&build_log_path);
 
     let console = DeployConsole::open(name, version);
 
@@ -121,9 +121,13 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
         Err(err) => {
             // Record the failing stage and cause, then surface the cause once on
             // the console before converting to Reported (main stays quiet).
+            let mut log_path = build_log_path;
             let cause = match err.failure() {
                 Some((stage, message)) => {
                     state.set_failed(stage, message.clone());
+                    if stage == DeployStage::Startup {
+                        log_path = ctx.runtime_log_path(name);
+                    }
                     message
                 }
                 None => String::new(),

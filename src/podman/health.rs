@@ -34,7 +34,7 @@ pub enum HealthCheckError {
     #[error("port {expected} not reachable; found {}", .found.join(", "))]
     WrongBinding { expected: u16, found: Vec<String> },
 
-    #[error("timed out waiting for port {expected}")]
+    #[error("timed out waiting for port {expected}; make sure dpl serve is running")]
     Timeout { expected: u16 },
 }
 
