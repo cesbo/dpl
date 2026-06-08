@@ -3,11 +3,11 @@ mod artifacts;
 mod cmd;
 mod config;
 mod context;
-mod daemon;
 mod deploy;
 mod log;
 mod podman;
 mod reference;
+mod serve;
 mod secret;
 mod spinner;
 mod state;
@@ -87,7 +87,7 @@ enum Command {
         timer: String,
     },
 
-    /// Run the in-process daemon
+    /// Run the in-process serve loop
     Serve,
 
     /// Manage encrypted runtime secrets

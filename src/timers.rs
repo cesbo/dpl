@@ -66,7 +66,7 @@ pub enum TimerError {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum TimerOutcome {
-    /// Registered with the daemon, awaiting its first run.
+    /// Registered with `dpl serve`, awaiting its first run.
     Idle,
     /// A run is in progress.
     Running,

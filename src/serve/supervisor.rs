@@ -124,8 +124,8 @@ fn backoff_delay(failures: u32) -> Duration {
         .min(RESTART_BACKOFF_CAP)
 }
 
-/// Launches and supervises long-running unit containers for the `dpl serve`
-/// daemon. It spawns `dpl start <unit>` as a child, watches it, and restarts it
+/// Launches and supervises long-running unit containers for `dpl serve`.
+/// It spawns `dpl start <unit>` as a child, watches it, and restarts it
 /// when it dies. Reconciled once per serve tick (and on SIGHUP).
 ///
 /// The managed set comes entirely from deploy state files.
@@ -210,8 +210,8 @@ impl Supervisor {
         next_wake(&self.managed)
     }
 
-    /// Stop every supervised container and reap its child. Called once when the
-    /// daemon shuts down.
+    /// Stop every supervised container and reap its child. Called once when
+    /// `dpl serve` shuts down.
     pub fn shutdown(&mut self) {
         // Stop unconditionally, including adopted containers (child == None);
         // stop_and_remove is idempotent, so a stopped unit is a no-op.

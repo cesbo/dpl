@@ -5,8 +5,8 @@ use chrono::{
 
 use crate::{
     MainContext,
-    daemon::run_timer,
     log,
+    serve::run_timer,
     state::{
         DeployLockGuard,
         DeployState,
@@ -29,7 +29,7 @@ pub fn tick(ctx: &MainContext) {
         let (_timer_lock, mut timers) = match TimersState::acquire(ctx, &name) {
             Ok(acquired) => acquired,
             Err(err) => {
-                log::warn(format!("daemon: acquire timers for '{name}': {err}"));
+                log::warn(format!("serve: acquire timers for '{name}': {err}"));
                 continue;
             }
         };
@@ -43,13 +43,13 @@ pub fn tick(ctx: &MainContext) {
             Ok(Some(_deploy_guard)) => {
                 for timer_name in due {
                     if let Err(err) = run_timer(ctx, &name, &mut timers, &timer_name) {
-                        log::warn(format!("daemon: timer '{timer_name}' on '{name}': {err}"));
+                        log::warn(format!("serve: timer '{timer_name}' on '{name}': {err}"));
                     }
                 }
             }
             // Busy with a deploy; these timers run on a later tick.
             Ok(None) => {}
-            Err(err) => log::warn(format!("daemon: deploy lock '{name}': {err}")),
+            Err(err) => log::warn(format!("serve: deploy lock '{name}': {err}")),
         }
     }
 }

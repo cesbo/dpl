@@ -33,7 +33,7 @@ impl<'a> DbServerUnit<'a> {
         Self { ctx, name, config }
     }
 
-    /// Hand the container off to the `dpl serve` daemon and wait until the
+    /// Hand the container off to `dpl serve` and wait until the
     /// engine accepts connections. db-server has no build artifacts: `dpl start`
     /// pulls the image and injects the root secret at runtime.
     pub fn deploy(self, state: &mut DeployState) -> Result<(), DeployError> {
@@ -42,7 +42,7 @@ impl<'a> DbServerUnit<'a> {
         })?;
 
         state.set_check();
-        crate::daemon::notify(self.ctx);
+        crate::serve::notify(self.ctx);
 
         log::phase(format!("waiting for db-server '{}'", self.name));
         let deadline = Instant::now() + PING_TIMEOUT;

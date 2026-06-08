@@ -44,7 +44,7 @@ const POLL_INTERVAL: Duration = Duration::from_secs(10);
 const SLEEP_SLICE: Duration = Duration::from_millis(250);
 
 pub fn run(ctx: &MainContext) -> Result<()> {
-    let _lock = DaemonLock::acquire(ctx)?;
+    let _lock = ServeLock::acquire(ctx)?;
 
     let shutdown = Arc::new(AtomicBool::new(false));
     for signal in [SIGTERM, SIGINT] {
@@ -80,7 +80,7 @@ fn supervise(
     reload: &AtomicBool,
     child_exit: &AtomicBool,
 ) {
-    let mut supervisor = crate::daemon::Supervisor::new();
+    let mut supervisor = crate::serve::Supervisor::new();
     let mut next_wake = supervisor.reconcile(ctx);
 
     while !shutdown.load(Ordering::Relaxed) {
@@ -126,7 +126,7 @@ fn supervise(
 /// Fire due timers every [`POLL_INTERVAL`] until shutdown.
 fn timer_loop(ctx: &MainContext, shutdown: &AtomicBool) {
     while !shutdown.load(Ordering::Relaxed) {
-        crate::daemon::tick(ctx);
+        crate::serve::tick(ctx);
 
         let mut remaining = POLL_INTERVAL;
         while !shutdown.load(Ordering::Relaxed) && !remaining.is_zero() {
@@ -137,20 +137,20 @@ fn timer_loop(ctx: &MainContext, shutdown: &AtomicBool) {
     }
 }
 
-/// Single-instance `flock` and pidfile in one file, held for the daemon's
+/// Single-instance `flock` and pidfile in one file, held for the serve process's
 /// lifetime. The exclusive lock enforces one `dpl serve`; the PID written into
-/// the same file lets a deploy find the daemon and SIGHUP it (see [`notify`]).
-struct DaemonLock {
-    // Held for the daemon's lifetime: closing the fd releases the flock.
+/// the same file lets a deploy find `dpl serve` and SIGHUP it (see [`notify`]).
+struct ServeLock {
+    // Held for the serve process's lifetime: closing the fd releases the flock.
     #[allow(dead_code)]
     file: File,
     path: PathBuf,
 }
 
-impl DaemonLock {
+impl ServeLock {
     fn acquire(ctx: &MainContext) -> Result<Self> {
         fs::create_dir_all(ctx.state_dir()).context("create state directory")?;
-        let path = ctx.daemon_pid_path();
+        let path = ctx.serve_pid_path();
         // Do NOT truncate on open: a losing second instance must not wipe the
         // winner's PID before its lock attempt fails. We rewrite the PID only
         // after the lock is ours.
@@ -159,12 +159,12 @@ impl DaemonLock {
             .truncate(false)
             .write(true)
             .open(&path)
-            .context("create daemon pidfile")?;
+            .context("create serve pidfile")?;
 
-        let lock = file.try_lock_exclusive().context("acquire daemon lock")?;
+        let lock = file.try_lock_exclusive().context("acquire serve lock")?;
 
         if !lock {
-            bail!("daemon already started");
+            bail!("serve already started");
         }
 
         // Lock is ours: rewrite in place (write then truncate to length). In
@@ -173,23 +173,23 @@ impl DaemonLock {
         let pid = std::process::id().to_string();
         let mut file = file;
         file.seek(SeekFrom::Start(0))
-            .context("seek daemon pidfile")?;
+            .context("seek serve pidfile")?;
         file.write_all(pid.as_bytes())
-            .context("write daemon pidfile")?;
+            .context("write serve pidfile")?;
         file.set_len(pid.len() as u64)
-            .context("truncate daemon pidfile")?;
+            .context("truncate serve pidfile")?;
 
-        Ok(DaemonLock { file, path })
+        Ok(ServeLock { file, path })
     }
 }
 
-impl Drop for DaemonLock {
+impl Drop for ServeLock {
     fn drop(&mut self) {
         if let Err(err) = std::fs::remove_file(&self.path)
             && err.kind() != io::ErrorKind::NotFound
         {
             crate::log::warn(format!(
-                "remove daemon pidfile '{}': {err}",
+                "remove serve pidfile '{}': {err}",
                 self.path.display()
             ));
         }

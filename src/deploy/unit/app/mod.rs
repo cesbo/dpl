@@ -193,7 +193,7 @@ impl<'a> AppUnit<'a> {
 
         // A static build-and-export unit has no runtime: nothing else to install.
         // The build + export above is the whole deploy. Starting the container is
-        // the serve daemon's job (see `start_via_serve`).
+        // `dpl serve` starts the container (see `start_via_serve`).
         if self.config.runtime.is_none() {
             return Ok(());
         }
@@ -204,7 +204,7 @@ impl<'a> AppUnit<'a> {
         Ok(())
     }
 
-    /// Hand the container off to the `dpl serve` daemon and wait for it to come
+    /// Hand the container off to `dpl serve` and wait for it to come
     /// up. Marks the build `Check` (active, unverified), nudges serve to start
     /// it, then runs the readiness check and flips to `Ready`. A static unit has
     /// no container and is `Ready` immediately.
@@ -215,7 +215,7 @@ impl<'a> AppUnit<'a> {
         };
 
         state.set_check();
-        crate::daemon::notify(self.ctx);
+        crate::serve::notify(self.ctx);
 
         let phase_name = format!("waiting for app '{}'", self.name);
         log::phase(&phase_name);

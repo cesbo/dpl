@@ -352,7 +352,7 @@ pub fn timer(ctx: &MainContext, name: &UnitName, timer_name: &str) -> Result<()>
         return Ok(());
     };
 
-    crate::daemon::run_timer(ctx, name, &mut timers, timer_name)
+    crate::serve::run_timer(ctx, name, &mut timers, timer_name)
         .with_context(|| format!("run timer '{timer_name}' on unit '{name}'"))
 }
 

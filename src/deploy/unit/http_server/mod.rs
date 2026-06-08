@@ -45,7 +45,7 @@ impl<'a> HttpServerUnit<'a> {
 
         // Hand the container off to serve, then wait until nginx is listening.
         state.set_check();
-        crate::daemon::notify(self.ctx);
+        crate::serve::notify(self.ctx);
 
         let phase_name = format!("waiting for http-server '{}'", self.name);
         log::phase(&phase_name);
@@ -94,7 +94,7 @@ impl<'a> HttpServerUnit<'a> {
 
     /// Set up the volumes nginx needs: write `00-dpl.conf` into the unit's conf
     /// volume and ensure the shared www volume exists. Starting the container is
-    /// the serve daemon's job (see `deploy`).
+    /// `dpl serve` starts the container (see `deploy`).
     fn install_inner(&self) -> Result<(), DeployError> {
         let conf_volume = self.conf_volume();
         let conf_dir = ensure_volume(&conf_volume)

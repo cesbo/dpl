@@ -257,13 +257,12 @@ mod tests {
         assert!(artifacts_dir.join("build-4.sh").exists());
 
         // Enabled timers reach the container through run.sh's `timer--<name>`
-        // dispatch; the disabled one is skipped. The daemon (not a cron file)
-        // now decides when each fires.
         let run_sh = fs::read_to_string(artifacts_dir.join("run.sh")).unwrap();
         assert!(
             run_sh.contains("timer--cleanup") && run_sh.contains("timer--sync"),
             "missing timer dispatch in run.sh:\n{run_sh}"
         );
+        // the disabled one is skipped.
         assert!(
             !run_sh.contains("timer--purge"),
             "disabled timer must not be rendered:\n{run_sh}"
