@@ -14,7 +14,7 @@ This project is in active development; backward compatibility is NOT required. M
 - Run the CLI: `cargo run -- --base <scratch-dir> <subcommand>`.
 - Most logic is unit-tested against temp dirs and needs nothing installed. Exercising a real deploy needs `podman` + `systemd` on the host.
 
-Formatting: there is no checked-in `rustfmt.toml`, but imports are hand-formatted as merged-by-crate, one item per line, with std / external / `crate` in separate `use` blocks. Do not run `cargo fmt` blindly - on stable it reformats every import block and creates unrelated churn. Match the surrounding import style by hand.
+Formatting: do not use `cargo fmt` in this repository. Formatting is handled by rust-analyzer.
 
 ## Architecture
 

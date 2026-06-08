@@ -4,8 +4,12 @@ use std::{
         File,
         OpenOptions,
     },
-    io,
-    os::unix::fs::FileExt as UnixFileExt,
+    io::{
+        self,
+        Seek,
+        SeekFrom,
+        Write,
+    },
     path::PathBuf,
     sync::{
         Arc,
@@ -167,7 +171,10 @@ impl DaemonLock {
         // place, not temp+rename - a rename would swap the inode and orphan the
         // flock.
         let pid = std::process::id().to_string();
-        file.write_all_at(pid.as_bytes(), 0)
+        let mut file = file;
+        file.seek(SeekFrom::Start(0))
+            .context("seek daemon pidfile")?;
+        file.write_all(pid.as_bytes())
             .context("write daemon pidfile")?;
         file.set_len(pid.len() as u64)
             .context("truncate daemon pidfile")?;
