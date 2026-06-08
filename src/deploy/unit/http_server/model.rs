@@ -1,6 +1,9 @@
 use serde::{
     Deserialize,
+    Deserializer,
     Serialize,
+    Serializer,
+    de,
 };
 
 use crate::{
@@ -9,6 +12,7 @@ use crate::{
 };
 
 const DEFAULT_IMAGE: &str = "docker.io/library/nginx:stable";
+const DEFAULT_HTTP_PORT: u16 = 80;
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -16,12 +20,66 @@ pub struct HttpServerConfig {
     #[serde(default = "default_image")]
     pub image: String,
 
+    #[serde(default = "default_http_port")]
+    pub http_port: u16,
+
     #[serde(default)]
-    pub https: bool,
+    pub https_port: HttpPort,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HttpPort {
+    Disabled,
+    Port(u16),
+}
+
+impl Default for HttpPort {
+    fn default() -> Self {
+        Self::Disabled
+    }
 }
 
 fn default_image() -> String {
     DEFAULT_IMAGE.to_string()
+}
+
+fn default_http_port() -> u16 {
+    DEFAULT_HTTP_PORT
+}
+
+impl<'de> Deserialize<'de> for HttpPort {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum ConfigValue {
+            Port(u16),
+            Disabled(bool),
+        }
+
+        match Option::<ConfigValue>::deserialize(deserializer)? {
+            None => Ok(Self::Disabled),
+            Some(ConfigValue::Port(port)) => Ok(Self::Port(port)),
+            Some(ConfigValue::Disabled(false)) => Ok(Self::Disabled),
+            Some(ConfigValue::Disabled(true)) => Err(de::Error::custom(
+                "https_port must be a port number or false",
+            )),
+        }
+    }
+}
+
+impl Serialize for HttpPort {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Disabled => serializer.serialize_bool(false),
+            Self::Port(port) => serializer.serialize_u16(*port),
+        }
+    }
 }
 
 impl HttpServerConfig {
@@ -40,7 +98,8 @@ mod tests {
     fn parse_minimal_config_uses_defaults() {
         let config: HttpServerConfig = serde_yaml::from_str("{}").unwrap();
         assert_eq!(config.image, DEFAULT_IMAGE);
-        assert!(!config.https);
+        assert_eq!(config.http_port, DEFAULT_HTTP_PORT);
+        assert_eq!(config.https_port, HttpPort::Disabled);
     }
 
     #[test]
@@ -48,12 +107,36 @@ mod tests {
         let config: HttpServerConfig = serde_yaml::from_str(
             r#"
 image: docker.io/library/nginx:1.27
-https: true
+http_port: 8080
+https_port: 8443
 "#,
         )
         .unwrap();
         assert_eq!(config.image, "docker.io/library/nginx:1.27");
-        assert!(config.https);
+        assert_eq!(config.http_port, 8080);
+        assert_eq!(config.https_port, HttpPort::Port(8443));
+    }
+
+    #[test]
+    fn parse_https_port_false_as_disabled() {
+        let config: HttpServerConfig = serde_yaml::from_str("https_port: false\n").unwrap();
+        assert_eq!(config.https_port, HttpPort::Disabled);
+    }
+
+    #[test]
+    fn parse_https_port_null_as_disabled() {
+        let config: HttpServerConfig = serde_yaml::from_str("https_port: null\n").unwrap();
+        assert_eq!(config.https_port, HttpPort::Disabled);
+    }
+
+    #[test]
+    fn reject_https_port_true() {
+        let err = serde_yaml::from_str::<HttpServerConfig>("https_port: true\n").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("https_port must be a port number or false"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

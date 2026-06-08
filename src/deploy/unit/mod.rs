@@ -161,6 +161,7 @@ mod tests {
     use super::*;
     use crate::{
         config::SecretName,
+        deploy::http_server::HttpPort,
         reference::ReferenceErrorKind,
     };
 
@@ -191,7 +192,8 @@ routes:
             r#"
 type: http-server
 image: docker.io/library/nginx:1.27
-https: true
+http_port: 8080
+https_port: 8443
 "#,
         )
         .unwrap();
@@ -200,7 +202,8 @@ https: true
             panic!("expected http-server variant");
         };
         assert_eq!(http.image, "docker.io/library/nginx:1.27");
-        assert!(http.https);
+        assert_eq!(http.http_port, 8080);
+        assert_eq!(http.https_port, HttpPort::Port(8443));
     }
 
     #[test]
@@ -211,7 +214,8 @@ https: true
             panic!("expected http-server variant");
         };
         assert_eq!(http.image, "docker.io/library/nginx:stable");
-        assert!(!http.https);
+        assert_eq!(http.http_port, 80);
+        assert_eq!(http.https_port, HttpPort::Disabled);
     }
 
     #[test]

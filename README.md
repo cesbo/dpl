@@ -138,6 +138,22 @@ exports:
 
 References are validated by `dpl check`.
 
+## HTTP server units
+
+An `http-server` unit runs nginx and publishes HTTP on the host.
+
+```yaml
+type: http-server
+image: docker.io/library/nginx:stable
+http_port: 8080
+https_port: false
+```
+
+- `http_port` - host HTTP port to publish to nginx's container port 80
+  (default: `80`)
+- `https_port` - host HTTPS port to publish to nginx's container port 443;
+  omit it or set `false` to disable HTTPS publishing
+
 ## Database units
 
 - **`db-server`** - containerized DBMS (PostgreSQL, MariaDB, or MySQL). One

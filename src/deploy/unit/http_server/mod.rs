@@ -1,6 +1,9 @@
 mod model;
 
-pub use self::model::HttpServerConfig;
+pub use self::model::{
+    HttpPort,
+    HttpServerConfig,
+};
 use crate::{
     MainContext,
     config::UnitName,
@@ -135,9 +138,9 @@ impl<'a> HttpServerUnit<'a> {
         let mut cmd = crate::podman::PodmanRun::new(&container)
             .map_err(|e| RunError::new(format!("prepare podman to run '{}'", self.name), e))?;
 
-        cmd.publish(HTTP_PORT, HTTP_PORT);
-        if self.config.https {
-            cmd.publish(443, 443);
+        cmd.publish(self.config.http_port, HTTP_PORT);
+        if let HttpPort::Port(https_port) = self.config.https_port {
+            cmd.publish(https_port, 443);
         }
 
         cmd.volume(NGINX_WWW_VOLUME, NGINX_WWW_MOUNT);
