@@ -2,7 +2,9 @@ use std::collections::BTreeSet;
 
 use croner::Cron;
 use serde::{
+    de,
     Deserialize,
+    Deserializer,
     Serialize,
 };
 
@@ -76,6 +78,7 @@ pub struct VolumeConfig {
     /// Source is a podman volume name or full path to the host directory
     pub source: String,
     /// Path inside the container where the volume will be mounted
+    #[serde(deserialize_with = "deserialize_absolute_container_path")]
     pub path: String,
 }
 
@@ -85,10 +88,25 @@ pub struct VolumeConfig {
 pub struct ExportConfig {
     /// Description
     pub description: Option<String>,
-    /// Path inside the container where static files located
+    /// Absolute path inside the container where static files are located
+    #[serde(deserialize_with = "deserialize_absolute_container_path")]
     pub source: String,
     /// URL path where the exported files will be accessible
     pub path: String,
+}
+
+fn deserialize_absolute_container_path<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if value.starts_with('/') && !value.trim_end_matches('/').is_empty() {
+        Ok(value)
+    } else {
+        Err(de::Error::custom(
+            "container path must be absolute and not root",
+        ))
+    }
 }
 
 /// Timers to start scripts periodically in the container
@@ -365,6 +383,62 @@ mod tests {
         };
         assert!(app.runtime.is_none());
         assert!(app.unit_deps().is_empty());
+    }
+
+    #[test]
+    fn parse_export_rejects_relative_source() {
+        let err = serde_yaml::from_str::<UnitConfig>(
+            "type: app\nimage: alpine\nbuilds: []\nexports:\n  - source: dist\n    path: /\n",
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("container path must be absolute and not root"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_export_rejects_root_source() {
+        let err = serde_yaml::from_str::<UnitConfig>(
+            "type: app\nimage: alpine\nbuilds: []\nexports:\n  - source: /\n    path: /\n",
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("container path must be absolute and not root"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_volume_rejects_relative_path() {
+        let err = serde_yaml::from_str::<UnitConfig>(
+            "type: app\nimage: alpine\nbuilds: []\nvolumes:\n  - source: app-data\n    path: data\nruntime:\n  port: 8080\n  cmd: ./run\n",
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("container path must be absolute and not root"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_volume_rejects_root_path() {
+        let err = serde_yaml::from_str::<UnitConfig>(
+            "type: app\nimage: alpine\nbuilds: []\nvolumes:\n  - source: app-data\n    path: /\nruntime:\n  port: 8080\n  cmd: ./run\n",
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("container path must be absolute and not root"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

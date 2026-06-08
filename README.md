@@ -94,9 +94,11 @@ timers:
 - `runtime` - the long-running service: `port` (listened on, also used for the
   readiness check and `${app:url}`/`${app:socket}` refs), `cmd`, optional
   `init` pre-start script, and `env`
-- `volumes` - persistent storage (survives redeploys)
+- `volumes` - persistent storage (survives redeploys). `path` must be an
+  absolute container path and cannot be `/`
 - `exports` - copies files from the built image into the shared nginx web
-  volume so domain units can serve them
+  volume so domain units can serve them. `source` must be an absolute path
+  inside the image and cannot be `/`
 - `timers` - periodic in-container scripts
 
 ### Static sites (no runtime)

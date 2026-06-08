@@ -125,8 +125,7 @@ impl<'a> PodmanContext<'a> {
             }
             std::fs::create_dir_all(&dst)?;
 
-            let source = export.source.trim_matches('/');
-            let src = format!("{container}:/app/{source}/.");
+            let src = container_export_source(&container, &export.source);
 
             if let Err(err) = run_podman(&["cp", "-a", "--overwrite", &src, &dst.to_string_lossy()])
             {
@@ -161,6 +160,15 @@ impl<'a> PodmanContext<'a> {
                 self.name, self.version
             ));
         }
+    }
+}
+
+fn container_export_source(container: &str, source: &str) -> String {
+    let source = source.trim_end_matches('/');
+    if source.is_empty() {
+        format!("{container}:/.")
+    } else {
+        format!("{container}:{source}/.")
     }
 }
 
@@ -202,5 +210,17 @@ mod tests {
     fn remove_export_dir_missing_is_ok() {
         let dir = TempDir::new().unwrap();
         assert!(!remove_export_dir(dir.path(), "web", 9).unwrap());
+    }
+
+    #[test]
+    fn container_export_source_uses_absolute_path_as_is() {
+        assert_eq!(
+            container_export_source("dpl-export-1", "/app/dist"),
+            "dpl-export-1:/app/dist/."
+        );
+        assert_eq!(
+            container_export_source("dpl-export-1", "/srv/site/"),
+            "dpl-export-1:/srv/site/."
+        );
     }
 }
