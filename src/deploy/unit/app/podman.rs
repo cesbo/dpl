@@ -17,7 +17,6 @@ use crate::{
         ensure_volume,
         podman_spawn_error,
         run_podman,
-        volume_mountpoint,
     },
 };
 
@@ -103,38 +102,27 @@ impl<'a> PodmanContext<'a> {
             return Ok(());
         }
 
-        // Ensure the volume exists, then resolve its host mountpoint so we can
-        // copy into it with `podman cp` (cp targets host paths, not volumes).
         ensure_volume(NGINX_WWW_VOLUME)?;
-        let exports_root = volume_mountpoint(NGINX_WWW_VOLUME)?;
-        std::fs::create_dir_all(&exports_root)?;
-
-        let version_dir = exports_root.join(format!("{}_{}", self.name, self.version));
-        std::fs::create_dir_all(&version_dir)?;
-
-        let container = format!("dpl-export-{}", cuid::cuid2());
-
-        run_podman(&["create", "--name", &container, &self.image_tag])?;
+        let version_dir = format!("{}_{}", self.name, self.version);
 
         for export in exports {
-            let mut dst = version_dir.clone();
-            for item in export.path.trim_start_matches('/').split('/') {
-                if !item.is_empty() {
-                    dst = dst.join(item);
-                }
-            }
-            std::fs::create_dir_all(&dst)?;
+            let mount = export_mount_path();
+            let volume_arg = format!("{NGINX_WWW_VOLUME}:{mount}");
+            let src = export.source.trim_end_matches('/');
+            let dst = export_destination(&mount, &version_dir, &export.path);
+            let script = format!("set -eu\nmkdir -p '{dst}'\ncp -a '{src}'/. '{dst}'/",);
 
-            let src = container_export_source(&container, &export.source);
-
-            if let Err(err) = run_podman(&["cp", "-a", "--overwrite", &src, &dst.to_string_lossy()])
-            {
-                log::warn(format!("export {src} failed: {err}"));
-            }
+            run_podman(&[
+                "run",
+                "--rm",
+                "--volume",
+                &volume_arg,
+                &self.image_tag,
+                "/bin/sh",
+                "-c",
+                &script,
+            ])?;
         }
-
-        // Always remove the temporary container
-        let _ = run_podman(&["rm", &container]);
 
         Ok(())
     }
@@ -149,12 +137,25 @@ impl<'a> PodmanContext<'a> {
 
     /// Remove this version's exported files from the static volume.
     pub fn remove_exports(&self) {
-        // If the volume does not exist there is nothing to clean up.
-        let Ok(exports_root) = volume_mountpoint(NGINX_WWW_VOLUME) else {
+        if run_podman(&["volume", "exists", NGINX_WWW_VOLUME]).is_err() {
             return;
-        };
+        }
 
-        if let Err(err) = remove_export_dir(&exports_root, self.name.as_str(), self.version) {
+        let mount = export_mount_path();
+        let volume_arg = format!("{NGINX_WWW_VOLUME}:{mount}");
+        let dir = format!("{mount}/{}_{}", self.name, self.version);
+        let script = format!("rm -rf -- '{dir}'");
+
+        if let Err(err) = run_podman(&[
+            "run",
+            "--rm",
+            "--volume",
+            &volume_arg,
+            &self.image_tag,
+            "/bin/sh",
+            "-c",
+            &script,
+        ]) {
             log::warn(format!(
                 "remove exports {}_{} failed: {err}",
                 self.name, self.version
@@ -163,64 +164,38 @@ impl<'a> PodmanContext<'a> {
     }
 }
 
-fn container_export_source(container: &str, source: &str) -> String {
-    let source = source.trim_end_matches('/');
-    if source.is_empty() {
-        format!("{container}:/.")
-    } else {
-        format!("{container}:{source}/.")
-    }
+fn export_mount_path() -> String {
+    format!("/tmp/dpl-export-{}", cuid::cuid2())
 }
 
-/// Remove a single `<name>_<version>` export dir. Returns whether it existed.
-fn remove_export_dir(exports_root: &Path, name: &str, version: u32) -> io::Result<bool> {
-    let dir = exports_root.join(format!("{name}_{version}"));
-
-    match std::fs::remove_dir_all(&dir) {
-        Ok(()) => Ok(true),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(err) => Err(err),
+fn export_destination(mount: &str, version_dir: &str, path: &str) -> String {
+    let mut dst = format!("{mount}/{version_dir}");
+    for item in path.trim_start_matches('/').split('/') {
+        if !item.is_empty() {
+            dst.push('/');
+            dst.push_str(item);
+        }
     }
+    dst
 }
 
 #[cfg(test)]
 mod tests {
-    use tempfile::TempDir;
-
     use super::*;
 
     #[test]
-    fn remove_export_dir_removes_only_the_given_version() {
-        let dir = TempDir::new().unwrap();
-        let root = dir.path();
-
-        for name in ["web_1", "web_2", "webapp_1"] {
-            std::fs::create_dir(root.join(name)).unwrap();
-        }
-
-        assert!(remove_export_dir(root, "web", 1).unwrap());
-
-        assert!(!root.join("web_1").exists());
-        // Other versions and prefix-related units are untouched.
-        assert!(root.join("web_2").exists());
-        assert!(root.join("webapp_1").exists());
-    }
-
-    #[test]
-    fn remove_export_dir_missing_is_ok() {
-        let dir = TempDir::new().unwrap();
-        assert!(!remove_export_dir(dir.path(), "web", 9).unwrap());
-    }
-
-    #[test]
-    fn container_export_source_uses_absolute_path_as_is() {
+    fn export_destination_places_path_under_version_dir() {
         assert_eq!(
-            container_export_source("dpl-export-1", "/app/dist"),
-            "dpl-export-1:/app/dist/."
+            export_destination("/tmp/dpl-export-test", "web_3", "/"),
+            "/tmp/dpl-export-test/web_3"
         );
         assert_eq!(
-            container_export_source("dpl-export-1", "/srv/site/"),
-            "dpl-export-1:/srv/site/."
+            export_destination("/tmp/dpl-export-test", "web_3", "/static"),
+            "/tmp/dpl-export-test/web_3/static"
+        );
+        assert_eq!(
+            export_destination("/tmp/dpl-export-test", "web_3", "assets/css"),
+            "/tmp/dpl-export-test/web_3/assets/css"
         );
     }
 }
