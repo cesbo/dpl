@@ -100,17 +100,13 @@ impl DeployConsole {
         });
     }
 
-    /// Stop the spinner and print the failure summary: the failing phase, the
-    /// flattened cause, and a log hint when a log was written.
+    /// Stop the spinner and print the failure summary.
     pub fn finish_err(&self, cause: &str, log_path: &Path) {
         CONSOLE.with_borrow_mut(|console| {
             let Some(state) = console.as_mut() else {
                 return;
             };
-            let phase = state
-                .phase
-                .take()
-                .unwrap_or_else(|| state.spinner.bar().message());
+            state.phase.take();
             let stamp = fmt_stamp(state.started.elapsed());
             state.spinner.finish();
             let detail = if cause.is_empty() {
@@ -119,13 +115,10 @@ impl DeployConsole {
                 format!(": {cause}")
             };
             if log_path.exists() {
-                eprintln!(
-                    "[{stamp}] {}  {phase} failed{detail}. Log: {}",
-                    error_mark(),
-                    log_path.display()
-                );
+                eprintln!("[{stamp}] {}  failed{detail}", error_mark());
+                eprintln!("{}Log: {}", " ".repeat(stamp.len() + 6), log_path.display());
             } else {
-                eprintln!("[{stamp}] {}  {phase} failed{detail}", error_mark());
+                eprintln!("[{stamp}] {}  failed{detail}", error_mark());
             }
         });
     }
