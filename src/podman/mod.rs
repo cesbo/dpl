@@ -71,6 +71,17 @@ pub fn ensure_volume(name: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// Return whether the named image exists locally.
+pub fn image_exists(image: &str) -> bool {
+    run_podman(&["image", "exists", image]).is_ok()
+}
+
+/// Pull the named image into local storage.
+pub fn pull_image(image: &str) -> io::Result<()> {
+    run_podman(&["pull", image])?;
+    Ok(())
+}
+
 /// Write a file into a named volume.
 pub fn write_volume_file(
     volume: &str,

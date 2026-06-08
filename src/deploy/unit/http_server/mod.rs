@@ -14,6 +14,8 @@ use crate::{
         NGINX_WWW_VOLUME,
         ensure_volume,
         health,
+        image_exists,
+        pull_image,
         write_volume_file,
     },
     state::DeployState,
@@ -93,11 +95,20 @@ impl<'a> HttpServerUnit<'a> {
         }
     }
 
+    /// Hand the container off to `dpl serve` and wait until the
+    /// engine accepts connections.
     /// Set up the volumes nginx needs: write `00-dpl.conf` into the unit's conf
-    /// volume and ensure the shared www volume exists. Starting the container is
-    /// `dpl serve` starts the container (see `deploy`).
+    /// volume and ensure the shared www volume exists.
     fn install_inner(&self) -> Result<(), DeployError> {
         let conf_volume = self.conf_volume();
+
+        if !image_exists(&self.config.image) {
+            log::phase("downloading http-server image");
+            pull_image(&self.config.image)
+                .map_err(|e| DeployError::step_install("download http-server image", e))?;
+        }
+
+        log::phase("writing http-server config");
         write_volume_file(
             &conf_volume,
             &self.config.image,
@@ -106,6 +117,7 @@ impl<'a> HttpServerUnit<'a> {
         )
         .map_err(|e| DeployError::step_install("write global config for http-server", e))?;
 
+        log::phase("preparing www volume");
         ensure_volume(NGINX_WWW_VOLUME).map_err(|e| {
             DeployError::step_install(format!("get volume '{NGINX_WWW_VOLUME}'"), e)
         })?;

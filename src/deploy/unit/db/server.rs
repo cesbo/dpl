@@ -15,6 +15,10 @@ use crate::{
         RunError,
     },
     log,
+    podman::{
+        image_exists,
+        pull_image,
+    },
     state::DeployState,
 };
 
@@ -34,12 +38,18 @@ impl<'a> DbServerUnit<'a> {
     }
 
     /// Hand the container off to `dpl serve` and wait until the
-    /// engine accepts connections. db-server has no build artifacts: `dpl start`
-    /// pulls the image and injects the root secret at runtime.
+    /// engine accepts connections.
     pub fn deploy(self, state: &mut DeployState) -> Result<(), DeployError> {
         let root_password = self.ctx.resolve_secret(&self.config.secret).map_err(|e| {
             DeployError::step_prepare(format!("resolve secret '{}'", &self.config.secret), e)
         })?;
+
+        let image = self.config.image();
+        if !image_exists(&image) {
+            log::phase("downloading db-server image");
+            pull_image(&image)
+                .map_err(|e| DeployError::step_install("download db-server image", e))?;
+        }
 
         state.set_check();
         crate::serve::notify(self.ctx);
