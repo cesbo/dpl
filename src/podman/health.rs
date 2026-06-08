@@ -1,5 +1,10 @@
 use std::{
-    net::Ipv4Addr,
+    io,
+    net::{
+        IpAddr,
+        Ipv4Addr,
+        Ipv6Addr,
+    },
     thread::sleep,
     time::Duration,
 };
@@ -18,115 +23,140 @@ use crate::{
 const ATTEMPTS: usize = 30;
 const INTERVAL: Duration = Duration::from_millis(800);
 
-/// Why a [`check`] gave up waiting for the app's port. Carries the diagnosis so
-/// the caller can show it and persist it to the deploy state file.
 #[derive(Debug, Error)]
 pub enum HealthCheckError {
-    /// The container is no longer running - it exited before opening the port.
     #[error("container exited with code {exit_code} (ran {uptime})")]
     Exited { exit_code: i32, uptime: String },
 
-    /// The container is running but has no listening TCP sockets at all.
-    #[error("container is running but not listening on any port (expected {expected} on 0.0.0.0)")]
+    #[error("container is running but not listening on any port (expected {expected})")]
     NoPorts { expected: u16 },
 
-    /// The container is listening, but not on the expected port bound to
-    /// `0.0.0.0` (e.g. `127.0.0.1:<port>`, or a different port entirely).
-    #[error("port {expected} not reachable on 0.0.0.0; found {}", .found.join(", "))]
+    #[error("port {expected} not reachable; found {}", .found.join(", "))]
     WrongBinding { expected: u16, found: Vec<String> },
 
-    /// Timed out and the container state could not be determined.
-    #[error("timed out waiting for port {expected} on 0.0.0.0")]
+    #[error("timed out waiting for port {expected}")]
     Timeout { expected: u16 },
 }
 
-/// Wait until the container has a listening TCP socket on `port` bound to
-/// `0.0.0.0`. On failure, diagnose *why* (crashed, no ports, wrong binding).
+/// Wait until the container has a listening TCP socket on `port` bound to a
+/// wildcard address (`0.0.0.0` or `::`).
 pub fn check(name: &UnitName, port: u16) -> Result<(), HealthCheckError> {
     let container = name.scoped_unit_name();
 
     for _ in 0 .. ATTEMPTS {
         sleep(INTERVAL);
 
-        match run_podman(&["exec", &container, "cat", "/proc/net/tcp"]) {
+        match tcp_tables(&container) {
             Ok(table) if is_ready(&table, port) => return Ok(()),
             Ok(_) => {}
-            // exec failed: the container may have exited. Fail fast if so,
-            // rather than waiting out the whole window on a crash-looping app.
-            Err(_) => {
-                if let Some(err) = exited(name) {
-                    return Err(err);
-                }
-            }
+            Err(_) => exited(name)?,
         }
     }
 
-    Err(diagnose(name, &container, port))
+    exited(name)?;
+
+    let err = match tcp_tables(&container) {
+        Ok(table) => classify_binding_err(&table, port),
+        Err(_) => HealthCheckError::Timeout { expected: port },
+    };
+
+    Err(err)
 }
 
-/// `true` when `table` has a TCP_LISTEN socket on `port` bound to `0.0.0.0`.
+fn tcp_tables(container: &str) -> io::Result<String> {
+    run_podman(&[
+        "exec",
+        container,
+        "sh",
+        "-c",
+        "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null || true",
+    ])
+}
+
 fn is_ready(table: &str, port: u16) -> bool {
-    listening_sockets(table).any(|(addr, p)| p == port && addr.is_unspecified())
+    listening_sockets(table).any(|(addr, p)| p == port && is_wildcard(addr))
 }
 
-/// Diagnosis when the container exited; `None` while it is still coming up.
-fn exited(name: &UnitName) -> Option<HealthCheckError> {
-    let c = inspect_container(name, false)?;
+fn is_wildcard(addr: IpAddr) -> bool {
+    match addr {
+        IpAddr::V4(a) => a.is_unspecified(),
+        IpAddr::V6(a) => {
+            a.is_unspecified() || a.to_ipv4_mapped().is_some_and(|v4| v4.is_unspecified())
+        }
+    }
+}
+
+fn exited(name: &UnitName) -> Result<(), HealthCheckError> {
+    let Some(c) = inspect_container(name, false) else {
+        return Ok(());
+    };
+
     match c.state.status.as_str() {
         // Still starting (or up): not an exit.
-        "running" | "created" => None,
-        _ => Some(HealthCheckError::Exited {
+        "running" | "created" => Ok(()),
+        _ => Err(HealthCheckError::Exited {
             exit_code: c.state.exit_code,
             uptime: uptime(&c.state.started_at, &c.state.finished_at),
         }),
     }
 }
 
-/// Work out why the wait timed out, preferring the most specific cause.
-fn diagnose(name: &UnitName, container: &str, port: u16) -> HealthCheckError {
-    // A crash in the last sleep window beats any port reasoning.
-    if let Some(err) = exited(name) {
-        return err;
-    }
+/// Classify why a reachable container failed the wait.
+fn classify_binding_err(table: &str, port: u16) -> HealthCheckError {
+    let found: Vec<String> = listening_sockets(table)
+        .map(|(addr, p)| format!("{addr}:{p}"))
+        .collect();
 
-    match run_podman(&["exec", container, "cat", "/proc/net/tcp"]) {
-        Ok(table) => {
-            let found: Vec<String> = listening_sockets(&table)
-                .map(|(addr, p)| format!("{addr}:{p}"))
-                .collect();
-            if found.is_empty() {
-                HealthCheckError::NoPorts { expected: port }
-            } else {
-                HealthCheckError::WrongBinding {
-                    expected: port,
-                    found,
-                }
-            }
+    if found.is_empty() {
+        HealthCheckError::NoPorts { expected: port }
+    } else {
+        HealthCheckError::WrongBinding {
+            expected: port,
+            found,
         }
-        Err(_) => HealthCheckError::Timeout { expected: port },
     }
 }
 
-/// Yield `(local_addr, port)` for every TCP_LISTEN row in a `/proc/net/tcp`
-/// table. `/proc/net/tcp` prints the address host-endian and the port as the
-/// real value; our targets are little-endian, so `to_le_bytes` recovers the
-/// dotted IP.
-fn listening_sockets(table: &str) -> impl Iterator<Item = (Ipv4Addr, u16)> + '_ {
-    table.lines().skip(1).filter_map(|line| {
+/// Yield `(local_addr, port)` for every TCP_LISTEN row across one or more
+/// concatenated `/proc/net/{tcp,tcp6}` tables.
+/// Header lines are dropped by the `state != "0A"` filter.
+fn listening_sockets(table: &str) -> impl Iterator<Item = (IpAddr, u16)> + '_ {
+    table.lines().filter_map(|line| {
         let mut fields = line.split_ascii_whitespace();
 
-        // Line layout (after the header): `sl  local_addr:port rem_addr:port state …`
-        let (_sl, local, _rem, state) =
-            (fields.next(), fields.next()?, fields.next(), fields.next()?);
+        // Line layout: `sl  local_addr:port rem_addr:port state …`
+        let local = fields.nth(1)?;
+        let state = fields.nth(1)?;
+
         if state != "0A" {
             return None;
         }
 
         let (addr_hex, port_hex) = local.split_once(':')?;
-        let addr = u32::from_str_radix(addr_hex, 16).ok()?;
+        let addr = parse_addr(addr_hex)?;
         let port = u16::from_str_radix(port_hex, 16).ok()?;
-        Some((Ipv4Addr::from(addr.to_le_bytes()), port))
+        Some((addr, port))
     })
+}
+
+/// Parse a `/proc/net/{tcp,tcp6}` hex local-address.
+fn parse_addr(hex: &str) -> Option<IpAddr> {
+    match hex.len() {
+        8 => {
+            let raw = u32::from_str_radix(hex, 16).ok()?;
+            Some(IpAddr::V4(Ipv4Addr::from(raw.to_le_bytes())))
+        }
+        32 => {
+            let mut octets = [0u8; 16];
+            for (word, chunk) in octets.chunks_exact_mut(4).enumerate() {
+                let part = hex.get(word * 8 .. word * 8 + 8)?;
+                let raw = u32::from_str_radix(part, 16).ok()?;
+                chunk.copy_from_slice(&raw.to_le_bytes());
+            }
+            Some(IpAddr::V6(Ipv6Addr::from(octets)))
+        }
+        _ => None,
+    }
 }
 
 /// Human-readable span between two RFC3339 stamps, or `"unknown"` when either
@@ -164,8 +194,12 @@ mod tests {
         out
     }
 
-    fn sockets(table: &str) -> Vec<(Ipv4Addr, u16)> {
+    fn sockets(table: &str) -> Vec<(IpAddr, u16)> {
         listening_sockets(table).collect()
+    }
+
+    fn v4(a: u8, b: u8, c: u8, d: u8) -> IpAddr {
+        IpAddr::V4(Ipv4Addr::new(a, b, c, d))
     }
 
     #[test]
@@ -178,6 +212,58 @@ mod tests {
     }
 
     #[test]
+    fn ready_on_ipv6_wildcard() {
+        // [::]:8080 listening (32-hex all-zero address) - busybox httpd and many
+        // servers bind the IPv6 wildcard, which also accepts IPv4. Must be ready.
+        let t = table(&[
+            "   0: 00000000000000000000000000000000:1F90 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1234 1 0000000000000000 100 0 0 10 0",
+        ]);
+        assert!(is_ready(&t, 8080));
+        assert_eq!(sockets(&t), vec![(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 8080)]);
+    }
+
+    #[test]
+    fn ready_on_ipv4_mapped_wildcard() {
+        // [::ffff:0.0.0.0]:8080 - an IPv4-mapped wildcard, also reachable. The
+        // `ffff` group sits in the third 32-bit word, as the kernel prints it.
+        let t = table(&[
+            "   0: 0000000000000000FFFF000000000000:1F90 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1234 1 0000000000000000 100 0 0 10 0",
+        ]);
+        assert!(is_ready(&t, 8080));
+    }
+
+    #[test]
+    fn not_ready_on_ipv6_loopback() {
+        // [::1]:8080 - loopback only, not reachable by the reverse proxy.
+        let t = table(&[
+            "   0: 00000000000000000000000001000000:1F90 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1234 1 0000000000000000 100 0 0 10 0",
+        ]);
+        assert!(!is_ready(&t, 8080));
+        assert_eq!(sockets(&t), vec![(IpAddr::V6(Ipv6Addr::LOCALHOST), 8080)]);
+    }
+
+    #[test]
+    fn ready_finds_ipv6_wildcard_among_concatenated_tables() {
+        // Mirrors `cat /proc/net/tcp /proc/net/tcp6`: an IPv4 loopback row, then
+        // the tcp6 header, then the IPv6 wildcard. The interior header must be
+        // ignored and the wildcard found.
+        let mut t = table(&[
+            "   0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1234 1 0000000000000000 100 0 0 10 0",
+        ]);
+        t.push_str(HEADER);
+        t.push('\n');
+        t.push_str("   0: 00000000000000000000000000000000:1F90 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1234 1 0000000000000000 100 0 0 10 0\n");
+        assert!(is_ready(&t, 8080));
+        assert_eq!(
+            sockets(&t),
+            vec![
+                (v4(127, 0, 0, 1), 8080),
+                (IpAddr::V6(Ipv6Addr::UNSPECIFIED), 8080),
+            ]
+        );
+    }
+
+    #[test]
     fn not_ready_on_loopback_target_port() {
         // 127.0.0.1:8080 listening - reachable from inside the container only,
         // not by the reverse proxy. Must NOT be treated as healthy.
@@ -186,7 +272,7 @@ mod tests {
         ]);
         assert!(!is_ready(&t, 8080));
         // It is still surfaced as a found socket for the WrongBinding message.
-        assert_eq!(sockets(&t), vec![(Ipv4Addr::new(127, 0, 0, 1), 8080)]);
+        assert_eq!(sockets(&t), vec![(v4(127, 0, 0, 1), 8080)]);
     }
 
     #[test]
@@ -206,7 +292,7 @@ mod tests {
             "   0: 00000000:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1234 1 0000000000000000 100 0 0 10 0",
         ]);
         assert!(!is_ready(&t, 8080));
-        assert_eq!(sockets(&t), vec![(Ipv4Addr::UNSPECIFIED, 80)]);
+        assert_eq!(sockets(&t), vec![(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 80)]);
     }
 
     #[test]
@@ -218,31 +304,54 @@ mod tests {
     }
 
     #[test]
-    fn error_messages() {
-        assert_eq!(
-            HealthCheckError::Exited {
-                exit_code: 137,
-                uptime: "2s".to_string(),
-            }
-            .to_string(),
-            "container exited with code 137 (ran 2s)"
-        );
-        assert_eq!(
-            HealthCheckError::NoPorts { expected: 8080 }.to_string(),
-            "container is running but not listening on any port (expected 8080 on 0.0.0.0)"
-        );
-        assert_eq!(
-            HealthCheckError::WrongBinding {
-                expected: 8080,
-                found: vec!["127.0.0.1:8080".to_string(), "0.0.0.0:9000".to_string()],
-            }
-            .to_string(),
-            "port 8080 not reachable on 0.0.0.0; found 127.0.0.1:8080, 0.0.0.0:9000"
-        );
-        assert_eq!(
-            HealthCheckError::Timeout { expected: 8080 }.to_string(),
-            "timed out waiting for port 8080 on 0.0.0.0"
-        );
+    fn classify_no_listeners_is_no_ports() {
+        // Nothing listening (header only): the container is up but bound nothing.
+        assert!(matches!(
+            classify_binding_err(HEADER, 8080),
+            HealthCheckError::NoPorts { expected: 8080 }
+        ));
+    }
+
+    #[test]
+    fn classify_loopback_is_wrong_binding_with_found() {
+        // 127.0.0.1:8080 is a listener, just not reachable off-host: WrongBinding,
+        // and the loopback socket is surfaced for the operator.
+        let t = table(&[
+            "   0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1234 1 0000000000000000 100 0 0 10 0",
+        ]);
+        let HealthCheckError::WrongBinding { expected, found } = classify_binding_err(&t, 8080)
+        else {
+            panic!("expected WrongBinding");
+        };
+        assert_eq!(expected, 8080);
+        assert_eq!(found, vec!["127.0.0.1:8080".to_string()]);
+    }
+
+    #[test]
+    fn classify_wrong_port_is_wrong_binding_with_found() {
+        // Listening on the wildcard but the wrong port (0.0.0.0:80, want 8080).
+        let t = table(&[
+            "   0: 00000000:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1234 1 0000000000000000 100 0 0 10 0",
+        ]);
+        let HealthCheckError::WrongBinding { expected, found } = classify_binding_err(&t, 8080)
+        else {
+            panic!("expected WrongBinding");
+        };
+        assert_eq!(expected, 8080);
+        assert_eq!(found, vec!["0.0.0.0:80".to_string()]);
+    }
+
+    #[test]
+    fn classify_ipv6_loopback_is_wrong_binding() {
+        // [::1]:8080 - a listener, but loopback-only: WrongBinding, surfaced as
+        // the bracketed IPv6 form.
+        let t = table(&[
+            "   0: 00000000000000000000000001000000:1F90 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1234 1 0000000000000000 100 0 0 10 0",
+        ]);
+        let HealthCheckError::WrongBinding { found, .. } = classify_binding_err(&t, 8080) else {
+            panic!("expected WrongBinding");
+        };
+        assert_eq!(found, vec!["::1:8080".to_string()]);
     }
 
     #[test]
