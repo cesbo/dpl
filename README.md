@@ -27,6 +27,7 @@ Files are grouped by kind, not by unit:
   - `{name}--deploy.lock` - advisory `flock(2)` held during a deploy
   - `{name}--timers.json` - timer run state
   - `{name}--timers.lock` - advisory `flock(2)` held while a timer runs
+  - `serve.pid` - PID file and single-instance lock for `dpl serve`
 - `{base_dir}/log/{name}.build.log` - last build: captured podman build/restore
   output, CRI `k8s-file` format; cleared at the start of each deploy
 - `{base_dir}/log/{name}.timers.log` - all timer run output for the unit, CRI
@@ -45,6 +46,7 @@ dpl --base /opt/dpl <command> [args]
 | `dpl check <name>`   | Validate config and reference graph |
 | `dpl deploy <name> [path]` | Deploy a unit. App: `.tar.gz` (or `-`). Db: optional SQL dump to restore |
 | `dpl inspect <name>` | Print runtime state as JSON |
+| `dpl serve` | Run the long-lived local serve process |
 | `dpl db wait\|console\|backup` | Database operations |
 | `dpl secret create\|cat\|ls\|rm` | Manage encrypted secrets |
 
@@ -227,6 +229,21 @@ failure.
 field carries a `health` signal (`ok`, `warn`, `down`, `unknown`). Deploy
 `status` is one of `idle`, `building`, `check`, `ready`, `failed`. On `failed`,
 an `error` field carries the message.
+
+## Serve
+
+`dpl serve` is the long-running process for a host. It is intended to be run by
+systemd and should have exactly one instance per `{base_dir}`; it holds
+`state/serve.pid` as both a PID file and an exclusive `flock(2)` lock.
+
+Deploys do not start containers directly. They mark the unit `check`, then
+SIGHUP the running `dpl serve` process. Serve reconciles deploy state, starts
+`check`/`ready` runtime units via child `dpl start <unit>` processes, restarts
+them with backoff if they exit, and stops supervised containers on shutdown.
+
+Serve also runs the timer loop. Due app timers are executed through
+`dpl timer <unit> <timer>`, which runs the timer script inside the running
+container and writes output to `{base_dir}/log/{name}.timers.log`.
 
 ## Notes
 
