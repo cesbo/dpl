@@ -27,8 +27,6 @@ pub const NGINX_WWW_VOLUME: &str = "dpl-www";
 /// Mount base of [`NGINX_WWW_VOLUME`] inside the nginx container.
 pub const NGINX_WWW_MOUNT: &str = "/var/www";
 
-const VOLUME_WRITE_MOUNT_PREFIX: &str = "/tmp/dpl-volume-write-";
-
 pub fn podman_spawn_error(err: io::Error) -> io::Error {
     if err.kind() == io::ErrorKind::NotFound {
         io::Error::new(io::ErrorKind::NotFound, "podman not found")
@@ -108,7 +106,7 @@ pub fn copy_image_dir_to_volume(
     run_podman(&["create", "--name", &source_container, image])?;
 
     let src = format!("{source_container}:{source_dir}/.");
-    let dst = local_dest_arg(&local_dest);
+    let dst = local_dest.display().to_string();
     let copy_result = run_podman(&["cp", &src, &dst]);
     let remove_result = run_podman(&["rm", "-f", "-v", "--ignore", &source_container]);
 
@@ -121,9 +119,9 @@ pub fn copy_image_dir_to_volume(
 fn copy_host_dir_to_volume(volume: &str, image: &str, source_dir: &Path) -> io::Result<()> {
     ensure_volume(volume)?;
 
-    let mount = temporary_volume_write_mount();
-    let volume_arg = format!("{volume}:{mount}");
     let container = temporary_volume_write_container();
+    let mount = Path::new("/tmp").join(&container).display().to_string();
+    let volume_arg = format!("{volume}:{mount}");
 
     run_podman(&[
         "create",
@@ -134,7 +132,7 @@ fn copy_host_dir_to_volume(volume: &str, image: &str, source_dir: &Path) -> io::
         image,
     ])?;
 
-    let src = temp_dir_content_arg(source_dir);
+    let src = format!("{}/.", source_dir.display());
     let dst = format!("{container}:{mount}");
     let copy_result = run_podman(&["cp", "--overwrite", &src, &dst]);
     let remove_result = run_podman(&["rm", "-f", "-v", "--ignore", &container]);
@@ -144,20 +142,8 @@ fn copy_host_dir_to_volume(volume: &str, image: &str, source_dir: &Path) -> io::
     Ok(())
 }
 
-fn temporary_volume_write_mount() -> String {
-    format!("{VOLUME_WRITE_MOUNT_PREFIX}{}", cuid::cuid2())
-}
-
 fn temporary_volume_write_container() -> String {
     format!("dpl-volume-write-{}", cuid::cuid2())
-}
-
-fn temp_dir_content_arg(path: &Path) -> String {
-    format!("{}/.", path.display())
-}
-
-fn local_dest_arg(path: &Path) -> String {
-    path.display().to_string()
 }
 
 fn normalize_container_dir_path(path: &str) -> io::Result<String> {
