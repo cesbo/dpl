@@ -92,6 +92,7 @@ pub struct ExportConfig {
     #[serde(deserialize_with = "deserialize_absolute_container_path")]
     pub source: String,
     /// URL path where the exported files will be accessible
+    #[serde(deserialize_with = "deserialize_export_path")]
     pub path: String,
 }
 
@@ -100,12 +101,33 @@ where
     D: Deserializer<'de>,
 {
     let value = String::deserialize(deserializer)?;
+    reject_single_quote(&value)?;
     if value.starts_with('/') && !value.trim_end_matches('/').is_empty() {
         Ok(value)
     } else {
         Err(de::Error::custom(
             "container path must be absolute and not root",
         ))
+    }
+}
+
+fn deserialize_export_path<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    reject_single_quote(&value)?;
+    Ok(value)
+}
+
+fn reject_single_quote<E>(value: &str) -> Result<(), E>
+where
+    E: de::Error,
+{
+    if value.contains('\'') {
+        Err(E::custom("path must not contain single quotes"))
+    } else {
+        Ok(())
     }
 }
 
@@ -409,6 +431,32 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("container path must be absolute and not root"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_export_rejects_single_quote_in_source() {
+        let err = serde_yaml::from_str::<UnitConfig>(
+            "type: app\nimage: alpine\nbuilds: []\nexports:\n  - source: /app/it''s-static\n    path: /\n",
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("path must not contain single quotes"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_export_rejects_single_quote_in_path() {
+        let err = serde_yaml::from_str::<UnitConfig>(
+            "type: app\nimage: alpine\nbuilds: []\nexports:\n  - source: /app/static\n    path: /it''s-static\n",
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("path must not contain single quotes"),
             "unexpected error: {err}"
         );
     }
