@@ -73,21 +73,57 @@ pub fn ensure_volume(name: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Write a UTF-8 file into a named volume without touching the volume's host
-/// mountpoint.
-pub fn write_volume_file(volume: &str, image: &str, path: &str, content: &str) -> io::Result<()> {
+/// Write a file into a named volume.
+pub fn write_volume_file(
+    volume: &str,
+    image: &str,
+    path: &str,
+    content: impl AsRef<[u8]>,
+) -> io::Result<()> {
     let rel_path = normalize_volume_file_path(path)?;
-    ensure_volume(volume)?;
-
-    let mount = temporary_volume_write_mount();
-    let volume_arg = format!("{volume}:{mount}");
-    let container = temporary_volume_write_container();
     let temp_dir = tempfile::tempdir()?;
     let local_file = temp_dir.path().join(&rel_path);
     if let Some(parent) = local_file.parent() {
         fs::create_dir_all(parent)?;
     }
     fs::write(&local_file, content)?;
+
+    copy_host_dir_to_volume(volume, image, temp_dir.path())
+}
+
+/// Copy a directory from an image into a named volume.
+pub fn copy_image_dir_to_volume(
+    image: &str,
+    source_dir: &str,
+    volume: &str,
+    dest_dir: &str,
+) -> io::Result<()> {
+    let source_dir = normalize_container_dir_path(source_dir)?;
+    let dest_dir = normalize_volume_dir_path(dest_dir)?;
+    let source_container = temporary_volume_write_container();
+    let temp_dir = tempfile::tempdir()?;
+    let local_dest = temp_dir.path().join(&dest_dir);
+    fs::create_dir_all(&local_dest)?;
+
+    run_podman(&["create", "--name", &source_container, image])?;
+
+    let src = format!("{source_container}:{source_dir}/.");
+    let dst = local_dest_arg(&local_dest);
+    let copy_result = run_podman(&["cp", &src, &dst]);
+    let remove_result = run_podman(&["rm", "-f", "-v", "--ignore", &source_container]);
+
+    copy_result?;
+    remove_result?;
+    copy_host_dir_to_volume(volume, image, temp_dir.path())
+}
+
+/// Copy a directory from a host into a named volume.
+fn copy_host_dir_to_volume(volume: &str, image: &str, source_dir: &Path) -> io::Result<()> {
+    ensure_volume(volume)?;
+
+    let mount = temporary_volume_write_mount();
+    let volume_arg = format!("{volume}:{mount}");
+    let container = temporary_volume_write_container();
 
     run_podman(&[
         "create",
@@ -98,7 +134,7 @@ pub fn write_volume_file(volume: &str, image: &str, path: &str, content: &str) -
         image,
     ])?;
 
-    let src = temp_dir_content_arg(temp_dir.path());
+    let src = temp_dir_content_arg(source_dir);
     let dst = format!("{container}:{mount}");
     let copy_result = run_podman(&["cp", "--overwrite", &src, &dst]);
     let remove_result = run_podman(&["rm", "-f", "-v", "--ignore", &container]);
@@ -120,11 +156,39 @@ fn temp_dir_content_arg(path: &Path) -> String {
     format!("{}/.", path.display())
 }
 
+fn local_dest_arg(path: &Path) -> String {
+    path.display().to_string()
+}
+
+fn normalize_container_dir_path(path: &str) -> io::Result<String> {
+    let normalized = path.trim_end_matches('/');
+    if normalized.is_empty() || !normalized.starts_with('/') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "container directory path must be absolute and not root",
+        ));
+    }
+
+    Ok(normalized.to_string())
+}
+
 fn normalize_volume_file_path(path: &str) -> io::Result<String> {
+    let normalized = normalize_volume_dir_path(path)?;
+    if normalized.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "volume file path must not be empty",
+        ));
+    }
+
+    Ok(normalized)
+}
+
+fn normalize_volume_dir_path(path: &str) -> io::Result<String> {
     if path.is_empty() || path.starts_with('/') || path.contains('\'') {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "volume file path must be relative and must not contain single quotes",
+            "volume path must be relative and must not contain single quotes",
         ));
     }
 
@@ -133,7 +197,7 @@ fn normalize_volume_file_path(path: &str) -> io::Result<String> {
         if item.is_empty() || item == "." || item == ".." {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "volume file path must not contain empty, current or parent segments",
+                "volume path must not contain empty, current or parent segments",
             ));
         }
 
@@ -323,5 +387,32 @@ mod tests {
         assert!(normalize_volume_file_path("nginx//example.conf").is_err());
         assert!(normalize_volume_file_path("nginx/../example.conf").is_err());
         assert!(normalize_volume_file_path("bad'name.conf").is_err());
+    }
+
+    #[test]
+    fn normalizes_volume_dir_path() {
+        assert_eq!(
+            normalize_volume_dir_path("web_3/static").unwrap(),
+            "web_3/static"
+        );
+        assert!(normalize_volume_dir_path("").is_err());
+        assert!(normalize_volume_dir_path("/web_3/static").is_err());
+        assert!(normalize_volume_dir_path("web_3//static").is_err());
+        assert!(normalize_volume_dir_path("web_3/../static").is_err());
+    }
+
+    #[test]
+    fn normalizes_container_dir_path() {
+        assert_eq!(
+            normalize_container_dir_path("/app/static").unwrap(),
+            "/app/static"
+        );
+        assert_eq!(
+            normalize_container_dir_path("/app/static/").unwrap(),
+            "/app/static"
+        );
+        assert!(normalize_container_dir_path("").is_err());
+        assert!(normalize_container_dir_path("/").is_err());
+        assert!(normalize_container_dir_path("app/static").is_err());
     }
 }

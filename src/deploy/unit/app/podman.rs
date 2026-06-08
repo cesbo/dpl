@@ -14,7 +14,7 @@ use crate::{
     log::cri_log::CriLog,
     podman::{
         NGINX_WWW_VOLUME,
-        ensure_volume,
+        copy_image_dir_to_volume,
         podman_spawn_error,
         run_podman,
     },
@@ -102,26 +102,12 @@ impl<'a> PodmanContext<'a> {
             return Ok(());
         }
 
-        ensure_volume(NGINX_WWW_VOLUME)?;
         let version_dir = format!("{}_{}", self.name, self.version);
 
         for export in exports {
-            let mount = export_mount_path();
-            let volume_arg = format!("{NGINX_WWW_VOLUME}:{mount}");
             let src = export.source.trim_end_matches('/');
-            let dst = export_destination(&mount, &version_dir, &export.path);
-            let script = format!("set -eu\nmkdir -p '{dst}'\ncp -a '{src}'/. '{dst}'/",);
-
-            run_podman(&[
-                "run",
-                "--rm",
-                "--volume",
-                &volume_arg,
-                &self.image_tag,
-                "/bin/sh",
-                "-c",
-                &script,
-            ])?;
+            let dst = export_destination(&version_dir, &export.path);
+            copy_image_dir_to_volume(&self.image_tag, src, NGINX_WWW_VOLUME, &dst)?;
         }
 
         Ok(())
@@ -168,8 +154,8 @@ fn export_mount_path() -> String {
     format!("/tmp/dpl-export-{}", cuid::cuid2())
 }
 
-fn export_destination(mount: &str, version_dir: &str, path: &str) -> String {
-    let mut dst = format!("{mount}/{version_dir}");
+fn export_destination(version_dir: &str, path: &str) -> String {
+    let mut dst = version_dir.to_string();
     for item in path.trim_start_matches('/').split('/') {
         if !item.is_empty() {
             dst.push('/');
@@ -186,16 +172,16 @@ mod tests {
     #[test]
     fn export_destination_places_path_under_version_dir() {
         assert_eq!(
-            export_destination("/tmp/dpl-export-test", "web_3", "/"),
-            "/tmp/dpl-export-test/web_3"
+            export_destination("web_3", "/"),
+            "web_3"
         );
         assert_eq!(
-            export_destination("/tmp/dpl-export-test", "web_3", "/static"),
-            "/tmp/dpl-export-test/web_3/static"
+            export_destination("web_3", "/static"),
+            "web_3/static"
         );
         assert_eq!(
-            export_destination("/tmp/dpl-export-test", "web_3", "assets/css"),
-            "/tmp/dpl-export-test/web_3/assets/css"
+            export_destination("web_3", "assets/css"),
+            "web_3/assets/css"
         );
     }
 }
