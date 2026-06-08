@@ -54,16 +54,14 @@ impl PodmanRun {
             .map_err(PodmanRunError::CreateNetwork)?;
 
         let mut cmd = Command::new("podman");
+        cmd.args(["run", "--name", container, "--replace", "--rm"]);
 
-        cmd.args([
-            "run",
-            "--name",
-            container,
-            "--replace",
-            "--rm",
-            "--cgroups=split",
-            "--sdnotify=conmon",
-        ]);
+        if !podman_service_is_remote() {
+            cmd.arg("--cgroups=split");
+        }
+
+        // dpl supervises readiness itself.
+        cmd.arg("--sdnotify=ignore");
 
         // Network
         cmd.arg(format!("--network={}", crate::podman::NETWORK));
@@ -110,6 +108,12 @@ impl PodmanRun {
         self.arg(image.as_ref());
         run_foreground(self.cmd, &self.container, log_path)
     }
+}
+
+fn podman_service_is_remote() -> bool {
+    run_podman(&["info", "--format", "{{.Host.ServiceIsRemote}}"])
+        .map(|out| out == "true")
+        .unwrap_or(false)
 }
 
 /// Spawn a command as a child and keep it in the foreground for its whole life.
@@ -171,10 +175,6 @@ mod tests {
 
     use super::*;
 
-    // Drives the foreground runner with a plain short-lived command (no
-    // podman): it exits before any signal, so the stop branch never fires.
-    // Covers the capture -> reap -> success path and the CRI log integration
-    // end to end.
     #[test]
     fn captures_output_and_reaps_a_clean_exit() {
         let dir = TempDir::new().unwrap();
