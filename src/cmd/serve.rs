@@ -114,7 +114,7 @@ fn supervise(
         next_wake = if remaining.is_zero() || reloaded {
             supervisor.reconcile(ctx)
         } else if child_died {
-            supervisor.reap_exited()
+            supervisor.reap_exited(ctx)
         } else {
             next_wake
         };

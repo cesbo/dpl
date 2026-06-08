@@ -50,27 +50,10 @@ const MAX_BACKOFF_SHIFT: u32 = 16;
 /// Upper bound on waiting for a child to exit during shutdown before SIGKILL.
 const STOP_REAP_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// What the supervisor should do with a unit's container this tick, derived
-/// from its deploy status.
-#[derive(Debug, PartialEq, Eq)]
-enum Action {
-    /// `Check`/`Ready`: keep the container running, restart it if it dies.
-    Ensure,
-
-    /// `Building`/`Idle`: a deploy is mid-flight or the unit isn't live - leave
-    /// a running container alone (don't start, don't stop), just reap an exit.
-    Passive,
-
-    /// `Failed`/no state: stop and forget the container.
-    Stop,
-}
-
-fn action_for(status: DeployStatus) -> Action {
-    match status {
-        DeployStatus::Check | DeployStatus::Ready => Action::Ensure,
-        DeployStatus::Building | DeployStatus::Idle => Action::Passive,
-        DeployStatus::Failed => Action::Stop,
-    }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RestartPolicy {
+    Never,
+    Always,
 }
 
 /// One supervised container across ticks.
@@ -87,6 +70,9 @@ struct ManagedUnit {
     consecutive_failures: u32,
     /// active_version observed when adopted; a redeploy bumps it and re-adopts.
     active_version: Option<u32>,
+    /// Whether this active version has already been started/adopted while in
+    /// `Check`. Reset on redeploy; ignored once the unit is `Ready`.
+    start_attempted: bool,
 }
 
 impl ManagedUnit {
@@ -98,6 +84,7 @@ impl ManagedUnit {
             backoff_until: None,
             consecutive_failures: 0,
             active_version,
+            start_attempted: false,
         }
     }
 
@@ -114,6 +101,12 @@ impl ManagedUnit {
         self.child = None;
         self.started_at = None;
         self.backoff_until = Some(now + backoff_delay(self.consecutive_failures));
+    }
+
+    fn note_exit_without_restart(&mut self) {
+        self.child = None;
+        self.started_at = None;
+        self.backoff_until = None;
     }
 }
 
@@ -175,18 +168,25 @@ impl Supervisor {
         });
 
         for (name, status, active) in &desired {
-            match action_for(*status) {
-                Action::Stop => {
+            match status {
+                DeployStatus::Failed => {
                     if let Some(mut m) = self.managed.remove(name) {
                         stop_child(&mut m);
                     }
                 }
-                Action::Passive => {
+                DeployStatus::Building | DeployStatus::Idle => {
                     if let Some(m) = self.managed.get_mut(name) {
                         reap(m);
                     }
                 }
-                Action::Ensure => {
+                DeployStatus::Check => {
+                    let unit = self
+                        .managed
+                        .entry(name.clone())
+                        .or_insert_with(|| ManagedUnit::new(name.clone(), *active));
+                    drive_start_once(ctx, &exe, unit, *active);
+                }
+                DeployStatus::Ready => {
                     let unit = self
                         .managed
                         .entry(name.clone())
@@ -199,13 +199,13 @@ impl Supervisor {
         next_wake(&self.managed)
     }
 
-    /// SIGCHLD handler: reap exited children and arm their backoff, without
-    /// probing podman or spawning - those fork helpers whose own SIGCHLD would
-    /// spin the loop. The respawn waits for the next timed/SIGHUP reconcile.
-    pub fn reap_exited(&mut self) -> Option<Instant> {
+    /// SIGCHLD handler: Reaps children and arms backoff for `Ready` units.
+    /// Respawns are deferred to the next reconcile to avoid SIGCHLD loops.
+    pub fn reap_exited(&mut self, ctx: &MainContext) -> Option<Instant> {
         let now = Instant::now();
         for m in self.managed.values_mut() {
-            poll_child(m, now);
+            let restart_policy = restart_policy(ctx, m);
+            poll_child(m, now, restart_policy);
         }
         next_wake(&self.managed)
     }
@@ -243,20 +243,44 @@ fn next_wake(managed: &HashMap<UnitName, ManagedUnit>) -> Option<Instant> {
         .min()
 }
 
-/// Ensure a `Check`/`Ready` unit's container is running: reap a dead child and
-/// schedule a backoff restart, or spawn one once the backoff elapses. A
-/// redeploy (new active version) re-adopts from scratch.
-fn drive(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit, active: Option<u32>) {
+fn reset_for_active_version(m: &mut ManagedUnit, active: Option<u32>) {
     if m.active_version != active {
         stop_child(m);
         m.active_version = active;
         m.backoff_until = None;
         m.consecutive_failures = 0;
+        m.start_attempted = false;
     }
+}
+
+/// Start a `Check` unit's container once for the deploy health-check. If it
+/// exits while still in `Check`, do not schedule a restart; the deploy attempt
+/// will fail and move the state to `Failed`.
+fn drive_start_once(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit, active: Option<u32>) {
+    reset_for_active_version(m, active);
 
     let now = Instant::now();
     if m.child.is_some() {
-        poll_child(m, now);
+        poll_child(m, now, RestartPolicy::Never);
+    } else if podman::is_running(&m.name) {
+        // Adopted across a serve restart while the deploy health-check is still
+        // running. Count it as the one startup attempt for this version.
+        m.start_attempted = true;
+    } else if !m.start_attempted {
+        m.start_attempted = true;
+        spawn_once(ctx, exe, m);
+    }
+}
+
+/// Ensure a `Ready` unit's container is running: reap a dead child and
+/// schedule a backoff restart, or spawn one once the backoff elapses. A
+/// redeploy (new active version) re-adopts from scratch.
+fn drive(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit, active: Option<u32>) {
+    reset_for_active_version(m, active);
+
+    let now = Instant::now();
+    if m.child.is_some() {
+        poll_child(m, now, RestartPolicy::Always);
     } else if !podman::is_running(&m.name) {
         // No child and nothing running: spawn once the backoff (if any) elapses.
         // A container that IS running without a child is one a prior serve
@@ -267,24 +291,70 @@ fn drive(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit, active: Option<u32>
     }
 }
 
-/// Reap a supervised child if it has exited, arming its backoff. No-op if it is
-/// still alive or absent.
-fn poll_child(m: &mut ManagedUnit, now: Instant) {
+/// Reap a supervised child if it has exited. Depending on the restart policy,
+/// either arm its backoff or leave it stopped for the deploy health-check to
+/// fail. No-op if it is still alive or absent.
+fn poll_child(m: &mut ManagedUnit, now: Instant, restart: RestartPolicy) {
     let Some(child) = m.child.as_mut() else {
         return;
     };
     match child.try_wait() {
-        Ok(Some(_)) => {
-            log::warn(format!(
-                "supervisor: '{}' exited; restarting",
-                m.name.as_str()
-            ));
-            m.note_crash(now);
-        }
+        Ok(Some(_)) => match restart {
+            RestartPolicy::Always => {
+                log::warn(format!(
+                    "supervisor: '{}' exited; restarting",
+                    m.name.as_str()
+                ));
+                m.note_crash(now);
+            }
+            RestartPolicy::Never => {
+                log::warn(format!(
+                    "supervisor: '{}' exited during startup check",
+                    m.name.as_str()
+                ));
+                m.note_exit_without_restart();
+            }
+        },
         Ok(None) => {}
         Err(err) => {
             log::warn(format!("supervisor: wait '{}': {err}", m.name.as_str()));
-            m.note_crash(now);
+            match restart {
+                RestartPolicy::Always => m.note_crash(now),
+                RestartPolicy::Never => m.note_exit_without_restart(),
+            }
+        }
+    }
+}
+
+fn restart_policy(ctx: &MainContext, m: &ManagedUnit) -> RestartPolicy {
+    let Ok(state) = DeployState::load(ctx, &m.name) else {
+        return RestartPolicy::Never;
+    };
+
+    if state.supervised
+        && state.last_status == DeployStatus::Ready
+        && state.active_version == m.active_version
+    {
+        RestartPolicy::Always
+    } else {
+        RestartPolicy::Never
+    }
+}
+
+/// Spawn `dpl start <unit>` once for the startup check. Spawn failure is left
+/// for the deploy health-check to report; it must not arm a restart loop.
+fn spawn_once(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit) {
+    match spawn_child(exe, ctx.base(), &m.name) {
+        Ok(child) => {
+            m.child = Some(child);
+            m.started_at = Some(Instant::now());
+            m.backoff_until = None;
+        }
+        Err(err) => {
+            log::warn(format!("supervisor: start '{}': {err}", m.name.as_str()));
+            m.child = None;
+            m.started_at = None;
+            m.backoff_until = None;
         }
     }
 }
@@ -380,6 +450,26 @@ mod tests {
         (name, m)
     }
 
+    fn spawn_exiting_child() -> Child {
+        Command::new("sh").arg("-c").arg("exit 7").spawn().unwrap()
+    }
+
+    fn reap_until_child_cleared(supervisor: &mut Supervisor, ctx: &MainContext, name: &UnitName) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            supervisor.reap_exited(ctx);
+            if supervisor
+                .managed
+                .get(name)
+                .is_none_or(|m| m.child.is_none())
+            {
+                return;
+            }
+            assert!(Instant::now() < deadline, "child did not exit in time");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn next_wake_returns_soonest_pending_backoff() {
         let now = Instant::now();
@@ -439,15 +529,6 @@ mod tests {
         assert!(m.started_at.is_none());
     }
 
-    #[test]
-    fn action_follows_deploy_status() {
-        assert_eq!(action_for(DeployStatus::Check), Action::Ensure);
-        assert_eq!(action_for(DeployStatus::Ready), Action::Ensure);
-        assert_eq!(action_for(DeployStatus::Building), Action::Passive);
-        assert_eq!(action_for(DeployStatus::Idle), Action::Passive);
-        assert_eq!(action_for(DeployStatus::Failed), Action::Stop);
-    }
-
     /// Mark a unit as deployed through the serve hand-off (`set_check`), so its
     /// state file carries the `supervised` flag.
     fn deploy_supervised(ctx: &MainContext, name: &str) {
@@ -504,19 +585,64 @@ mod tests {
         state.begin_deploy("app").unwrap();
         // Building: handed off not yet, so not supervised.
         assert!(!state.supervised);
-        assert_eq!(action_for(state.last_status), Action::Passive);
 
         state.set_check();
         assert!(state.supervised);
         assert_eq!(state.last_status, DeployStatus::Check);
-        assert_eq!(action_for(state.last_status), Action::Ensure);
 
         // Ready keeps the flag set; a later redeploy (Building/Failed) too.
         state.set_ready();
         assert!(state.supervised);
-        assert_eq!(action_for(state.last_status), Action::Ensure);
         state.set_failed(crate::state::DeployStage::Build, "boom".into());
         assert!(state.supervised);
-        assert_eq!(action_for(state.last_status), Action::Stop);
+    }
+
+    #[test]
+    fn child_exit_during_check_does_not_arm_restart() {
+        let (_dir, ctx) = ctx();
+        let name = UnitName::new("app-live").unwrap();
+        let (_guard, mut state) = DeployState::acquire(&ctx, &name).unwrap();
+        state.begin_deploy("app").unwrap();
+        state.set_check();
+
+        let mut unit = ManagedUnit::new(name.clone(), state.active_version);
+        unit.child = Some(spawn_exiting_child());
+        unit.started_at = Some(Instant::now());
+
+        let mut supervisor = Supervisor {
+            managed: HashMap::from([(name.clone(), unit)]),
+            self_exe: None,
+        };
+
+        reap_until_child_cleared(&mut supervisor, &ctx, &name);
+
+        let unit = supervisor.managed.get(&name).unwrap();
+        assert!(unit.backoff_until.is_none());
+        assert_eq!(unit.consecutive_failures, 0);
+    }
+
+    #[test]
+    fn child_exit_after_ready_arms_restart() {
+        let (_dir, ctx) = ctx();
+        let name = UnitName::new("app-live").unwrap();
+        let (_guard, mut state) = DeployState::acquire(&ctx, &name).unwrap();
+        state.begin_deploy("app").unwrap();
+        state.set_check();
+        state.set_ready();
+
+        let mut unit = ManagedUnit::new(name.clone(), state.active_version);
+        unit.child = Some(spawn_exiting_child());
+        unit.started_at = Some(Instant::now());
+
+        let mut supervisor = Supervisor {
+            managed: HashMap::from([(name.clone(), unit)]),
+            self_exe: None,
+        };
+
+        reap_until_child_cleared(&mut supervisor, &ctx, &name);
+
+        let unit = supervisor.managed.get(&name).unwrap();
+        assert!(unit.backoff_until.is_some());
+        assert_eq!(unit.consecutive_failures, 1);
     }
 }

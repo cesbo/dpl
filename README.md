@@ -241,8 +241,9 @@ systemd and should have exactly one instance per `{base_dir}`; it holds
 
 Deploys do not start containers directly. They mark the unit `check`, then
 SIGHUP the running `dpl serve` process. Serve reconciles deploy state, starts
-`check`/`ready` runtime units via child `dpl start <unit>` processes, restarts
-them with backoff if they exit, and stops supervised containers on shutdown.
+`check` runtime units once via child `dpl start <unit>` processes for startup
+verification, restarts only `ready` units with backoff if they exit, and stops
+supervised containers on shutdown.
 Use `dpl undeploy <unit>` to remove a unit from service; it clears the active
 deployment state so serve and timers stop treating the unit as desired.
 
