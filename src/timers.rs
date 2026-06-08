@@ -66,7 +66,7 @@ pub enum TimerError {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum TimerOutcome {
-    /// Registered with the scheduler, awaiting its first run.
+    /// Registered with the daemon, awaiting its first run.
     Idle,
     /// A run is in progress.
     Running,
@@ -345,7 +345,10 @@ impl Drop for TimerLockGuard {
         if let Err(err) = std::fs::remove_file(&self.path)
             && err.kind() != io::ErrorKind::NotFound
         {
-            crate::log::warn(format!("remove timer lock file {}: {err}", self.path.display()));
+            crate::log::warn(format!(
+                "remove timer lock file {}: {err}",
+                self.path.display()
+            ));
         }
     }
 }

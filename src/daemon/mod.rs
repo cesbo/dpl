@@ -12,7 +12,7 @@ pub use self::{
 use crate::MainContext;
 
 pub fn notify(ctx: &MainContext) {
-    let Ok(content) = std::fs::read_to_string(ctx.scheduler_pid_path()) else {
+    let Ok(content) = std::fs::read_to_string(ctx.daemon_pid_path()) else {
         return;
     };
     let Ok(pid) = content.trim().parse::<u32>() else {

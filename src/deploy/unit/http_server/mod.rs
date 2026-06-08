@@ -45,7 +45,7 @@ impl<'a> HttpServerUnit<'a> {
 
         // Hand the container off to serve, then wait until nginx is listening.
         state.set_check();
-        crate::scheduler::notify(self.ctx);
+        crate::daemon::notify(self.ctx);
 
         let phase_name = format!("waiting for http-server '{}'", self.name);
         log::phase(&phase_name);

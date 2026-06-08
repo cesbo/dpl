@@ -42,7 +42,7 @@ impl<'a> DbServerUnit<'a> {
         })?;
 
         state.set_check();
-        crate::scheduler::notify(self.ctx);
+        crate::daemon::notify(self.ctx);
 
         log::phase(format!("waiting for db-server '{}'", self.name));
         let deadline = Instant::now() + PING_TIMEOUT;

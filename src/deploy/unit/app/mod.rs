@@ -215,7 +215,7 @@ impl<'a> AppUnit<'a> {
         };
 
         state.set_check();
-        crate::scheduler::notify(self.ctx);
+        crate::daemon::notify(self.ctx);
 
         let phase_name = format!("waiting for app '{}'", self.name);
         log::phase(&phase_name);

@@ -257,7 +257,7 @@ mod tests {
         assert!(artifacts_dir.join("build-4.sh").exists());
 
         // Enabled timers reach the container through run.sh's `timer--<name>`
-        // dispatch; the disabled one is skipped. The scheduler (not a cron file)
+        // dispatch; the disabled one is skipped. The daemon (not a cron file)
         // now decides when each fires.
         let run_sh = fs::read_to_string(artifacts_dir.join("run.sh")).unwrap();
         assert!(

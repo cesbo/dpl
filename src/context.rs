@@ -80,10 +80,10 @@ impl MainContext {
         self.base.join(STATE_DIR)
     }
 
-    /// `{base}/state/scheduler.pid` - PID of the running `dpl serve`.
+    /// `{base}/state/daemon.pid` - PID of the running `dpl serve`.
     /// The daemon holds an exclusive lock on this file.
-    pub fn scheduler_pid_path(&self) -> PathBuf {
-        self.state_dir().join("scheduler.pid")
+    pub fn daemon_pid_path(&self) -> PathBuf {
+        self.state_dir().join("daemon.pid")
     }
 
     /// `{base}/log` - per-unit build logs.
