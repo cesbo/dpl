@@ -23,7 +23,7 @@ Files are grouped by kind, not by unit:
 
 - `{base_dir}/conf/{name}.yaml` - unit config (`type:` selects the variant)
 - `{base_dir}/state/` - per-unit runtime state and locks:
-  - `{name}--deploy.json` - deploy state (active version, last status)
+  - `{name}--deploy.json` - deploy state (unit kind, active version, last status)
   - `{name}--deploy.lock` - advisory `flock(2)` held during a deploy
   - `{name}--timers.json` - timer run state
   - `{name}--timers.lock` - advisory `flock(2)` held while a timer runs

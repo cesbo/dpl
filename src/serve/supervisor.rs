@@ -453,7 +453,7 @@ mod tests {
     fn deploy_supervised(ctx: &MainContext, name: &str) {
         let name = UnitName::new(name).unwrap();
         let (_guard, mut state) = DeployState::acquire(ctx, &name).unwrap();
-        state.bump_version().unwrap();
+        state.begin_deploy("app").unwrap();
         state.set_check();
     }
 
@@ -462,7 +462,7 @@ mod tests {
     fn deploy_plain(ctx: &MainContext, name: &str) {
         let name = UnitName::new(name).unwrap();
         let (_guard, mut state) = DeployState::acquire(ctx, &name).unwrap();
-        state.bump_version().unwrap();
+        state.begin_deploy("domain").unwrap();
         state.set_ready();
     }
 
@@ -501,7 +501,7 @@ mod tests {
         let name = UnitName::new("app-live").unwrap();
 
         let (_guard, mut state) = DeployState::acquire(&ctx, &name).unwrap();
-        state.bump_version().unwrap();
+        state.begin_deploy("app").unwrap();
         // Building: handed off not yet, so not supervised.
         assert!(!state.supervised);
         assert_eq!(action_for(state.last_status), Action::Passive);

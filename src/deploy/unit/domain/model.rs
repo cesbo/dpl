@@ -77,6 +77,8 @@ pub enum RouteConfig {
 }
 
 impl DomainConfig {
+    pub const KIND: &'static str = "domain";
+
     /// Units referenced through `${unit:key}` tokens across every route's
     /// `target`/`root`, deduplicated and sorted.
     ///

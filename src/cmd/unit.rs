@@ -24,7 +24,10 @@ use crate::{
     deploy::{
         DeployError,
         UnitConfig,
-        app::AppUnit,
+        app::{
+            AppConfig,
+            AppUnit,
+        },
         db::{
             DbServerUnit,
             DbUnit,
@@ -84,8 +87,8 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
         DeployState::acquire(ctx, name).with_context(|| format!("acquire unit '{name}'"))?;
 
     let version = state
-        .bump_version()
-        .map_err(|e| DeployError::step_prepare("bump version", e))
+        .begin_deploy(unit.kind())
+        .map_err(|e| DeployError::step_prepare("begin deploy", e))
         .with_context(|| format!("deploy unit '{name}'"))?;
 
     let log_path = ctx.build_log_path(name);
@@ -319,6 +322,7 @@ pub fn start(ctx: &MainContext, name: &UnitName) -> Result<()> {
 pub fn undeploy(ctx: &MainContext, name: &UnitName) -> Result<()> {
     let (_guard, mut state) =
         DeployState::acquire(ctx, name).with_context(|| format!("acquire unit '{name}'"))?;
+    let supervised = state.supervised;
 
     let outcome = state
         .undeploy()
@@ -326,13 +330,12 @@ pub fn undeploy(ctx: &MainContext, name: &UnitName) -> Result<()> {
 
     crate::serve::notify(ctx);
 
-    let unit = UnitConfig::load(ctx, name).ok();
-    if state.supervised {
+    if outcome.kind.as_deref() == Some(AppConfig::KIND) {
+        if let Some(active_version) = outcome.active_version {
+            AppUnit::undeploy(name, active_version);
+        }
+    } else if supervised {
         crate::podman::stop_and_remove(name).with_context(|| format!("stop container '{name}'"))?;
-    }
-
-    if let (Some(active_version), Some(UnitConfig::App(_))) = (outcome.active_version, unit) {
-        crate::deploy::app::remove_version_artifacts(name, active_version);
     }
 
     if outcome.changed {

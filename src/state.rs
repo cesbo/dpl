@@ -49,8 +49,9 @@ pub enum DeployStateError {
     NoActiveVersion,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct UndeployOutcome {
+    pub kind: Option<String>,
     pub active_version: Option<u32>,
     pub changed: bool,
 }
@@ -110,6 +111,10 @@ pub struct DeployState {
     /// Timestamp of the most recent deploy attempt event.
     pub updated_at: DateTime<Utc>,
 
+    /// Type of the unit for the latest deploy attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+
     /// Currently running version
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_version: Option<u32>,
@@ -154,6 +159,7 @@ impl DeployState {
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
                 return Ok(DeployState {
                     updated_at: Utc::now(),
+                    kind: None,
                     active_version: None,
                     last_version: 0,
                     last_status: Default::default(),
@@ -235,13 +241,14 @@ impl DeployState {
         result
     }
 
-    /// Checked version addition.
-    /// Sets the latest build status to `Building` and clears previous error.
-    pub fn bump_version(&mut self) -> Result<u32, DeployStateError> {
+    /// Begin a new deploy attempt: record its unit kind, bump the version,
+    /// mark it `Building`, and clear the previous error.
+    pub fn begin_deploy(&mut self, kind: impl Into<String>) -> Result<u32, DeployStateError> {
         let next_version = self
             .last_version
             .checked_add(1)
             .ok_or(DeployStateError::VersionOverflow)?;
+        self.kind = Some(kind.into());
         self.last_version = next_version;
         self.last_status = DeployStatus::Building;
         self.updated_at = Utc::now();
@@ -284,6 +291,7 @@ impl DeployState {
     /// Remove the active deployment from service. The unit can become live again
     /// only through a later deploy, which will set `supervised` at hand-off.
     pub fn undeploy(&mut self) -> Result<UndeployOutcome, DeployStateError> {
+        let kind = self.kind.clone();
         let active_version = self.active_version;
         let changed = self.active_version.is_some()
             || self.supervised
@@ -300,6 +308,7 @@ impl DeployState {
         }
 
         Ok(UndeployOutcome {
+            kind,
             active_version,
             changed,
         })
@@ -368,6 +377,7 @@ mod tests {
     fn state_at(dir: &std::path::Path) -> DeployState {
         DeployState {
             updated_at: Utc::now(),
+            kind: None,
             active_version: None,
             last_version: 0,
             last_status: Default::default(),
@@ -395,17 +405,33 @@ mod tests {
     }
 
     #[test]
+    fn begin_deploy_persists_unit_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = state_at(dir.path());
+
+        state.begin_deploy("http-server").unwrap();
+
+        let content = std::fs::read_to_string(dir.path().join(".deploy.state")).unwrap();
+        assert!(
+            content.contains("\"kind\": \"http-server\""),
+            "state file did not persist kind:\n{content}"
+        );
+    }
+
+    #[test]
     fn undeploy_clears_active_runtime_state() {
         let dir = tempfile::tempdir().unwrap();
         let mut state = state_at(dir.path());
-        state.bump_version().unwrap();
+        state.begin_deploy("app").unwrap();
         state.set_check();
         state.set_ready();
 
         let outcome = state.undeploy().unwrap();
 
+        assert_eq!(outcome.kind.as_deref(), Some("app"));
         assert_eq!(outcome.active_version, Some(1));
         assert!(outcome.changed);
+        assert_eq!(state.kind.as_deref(), Some("app"));
         assert_eq!(state.active_version, None);
         assert_eq!(state.last_status, DeployStatus::Idle);
         assert!(!state.supervised);

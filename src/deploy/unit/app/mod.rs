@@ -108,11 +108,11 @@ impl<'a> AppUnit<'a> {
 
         if let Some(active_version) = state.take_active_version() {
             log::phase(format_args!("uninstalling v{active_version}"));
-            self.uninstall_inner(active_version);
+            Self::undeploy(self.name, active_version);
         }
 
         if let Err(err) = self.install_inner(deploy_dir, version) {
-            self.uninstall_inner(version);
+            Self::undeploy(self.name, version);
             return Err(err);
         }
 
@@ -140,7 +140,7 @@ impl<'a> AppUnit<'a> {
 
         log::phase("updating dependent domains");
         for (name, config) in domains {
-            let (_guard, mut state) = match DeployState::acquire(self.ctx, self.name) {
+            let (_guard, mut state) = match DeployState::acquire(self.ctx, &name) {
                 Ok(v) => v,
                 Err(err) => {
                     log::error(format!("skip domain '{name}': {err}"));
@@ -148,7 +148,7 @@ impl<'a> AppUnit<'a> {
                 }
             };
 
-            if let Err(err) = state.bump_version() {
+            if let Err(err) = state.begin_deploy(DomainConfig::KIND) {
                 log::error(format!("skip domain '{name}': {err}"));
                 continue;
             }
@@ -249,14 +249,14 @@ impl<'a> AppUnit<'a> {
         timers.reconcile(&configured, Utc::now());
     }
 
-    fn uninstall_inner(&self, version: u32) {
+    pub fn undeploy(name: &UnitName, version: u32) {
         // Stop the running container (serve was supervising it) before dropping
         // its image; serve sees the unit leave `Ready` and won't restart it.
-        if let Err(err) = crate::podman::stop_and_remove(self.name) {
-            log::warn(format!("stop container '{}': {err}", self.name));
+        if let Err(err) = crate::podman::stop_and_remove(name) {
+            log::warn(format!("stop container '{name}': {err}"));
         }
 
-        remove_version_artifacts(self.name, version);
+        remove_version_artifacts(name, version);
     }
 
     pub fn inspect(&self) -> Result<(), DeployError> {
@@ -318,7 +318,6 @@ impl<'a> AppUnit<'a> {
         cmd.run_foreground(image, &self.ctx.runtime_log_path(self.name))
             .map_err(|e| RunError::new("run podman foreground", e))
     }
-
 }
 
 pub(crate) fn remove_version_artifacts(name: &UnitName, version: u32) {

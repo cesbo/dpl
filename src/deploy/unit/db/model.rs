@@ -55,6 +55,8 @@ pub struct DbConfig {
 }
 
 impl DbConfig {
+    pub const KIND: &'static str = "db";
+
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), ReferenceError> {
         self.resolve_password(ctx)?;
         self.resolve_server(ctx)?
@@ -201,6 +203,8 @@ impl DbServerEngine {
 }
 
 impl DbServerConfig {
+    pub const KIND: &'static str = "db-server";
+
     /// The container image to run: the explicit `image` override when set,
     /// otherwise the engine's default image for `version` (or the engine's
     /// `default_version()` when `version` is unset too).

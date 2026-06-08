@@ -78,8 +78,8 @@ impl<'a> HttpServerUnit<'a> {
         })?;
 
         state
-            .bump_version()
-            .map_err(|e| DeployError::step_prepare("bump version", e))?;
+            .begin_deploy(HttpServerConfig::KIND)
+            .map_err(|e| DeployError::step_prepare("begin deploy", e))?;
 
         match self.deploy(&mut state) {
             Ok(()) => Ok(()),
@@ -134,5 +134,4 @@ impl<'a> HttpServerUnit<'a> {
         cmd.run_foreground(&self.config.image, &self.ctx.runtime_log_path(self.name))
             .map_err(|e| RunError::new("run podman foreground", e))
     }
-
 }

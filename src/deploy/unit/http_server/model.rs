@@ -25,6 +25,8 @@ fn default_image() -> String {
 }
 
 impl HttpServerConfig {
+    pub const KIND: &'static str = "http-server";
+
     pub fn validate_references(&self, _ctx: &MainContext) -> Result<(), ReferenceError> {
         Ok(())
     }

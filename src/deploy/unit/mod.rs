@@ -75,13 +75,13 @@ impl UnitConfig {
         }
     }
 
-    pub(crate) fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> &'static str {
         match self {
-            UnitConfig::App(_) => "app",
-            UnitConfig::Db(_) => "db",
-            UnitConfig::DbServer(_) => "db-server",
-            UnitConfig::Domain(_) => "domain",
-            UnitConfig::HttpServer(_) => "http-server",
+            UnitConfig::App(_) => AppConfig::KIND,
+            UnitConfig::Db(_) => DbConfig::KIND,
+            UnitConfig::DbServer(_) => DbServerConfig::KIND,
+            UnitConfig::Domain(_) => DomainConfig::KIND,
+            UnitConfig::HttpServer(_) => HttpServerConfig::KIND,
         }
     }
 

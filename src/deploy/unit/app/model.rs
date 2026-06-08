@@ -2,10 +2,10 @@ use std::collections::BTreeSet;
 
 use croner::Cron;
 use serde::{
-    de,
     Deserialize,
     Deserializer,
     Serialize,
+    de,
 };
 
 use crate::{
@@ -150,6 +150,8 @@ pub struct TimerConfig {
 }
 
 impl AppConfig {
+    pub const KIND: &'static str = "app";
+
     /// Units referenced through `${unit:key}` tokens across `runtime.env` and
     /// every build layer's `env`, deduplicated and sorted.
     pub fn unit_deps(&self) -> BTreeSet<UnitName> {
@@ -443,7 +445,8 @@ mod tests {
         .unwrap_err();
 
         assert!(
-            err.to_string().contains("path must not contain single quotes"),
+            err.to_string()
+                .contains("path must not contain single quotes"),
             "unexpected error: {err}"
         );
     }
@@ -456,7 +459,8 @@ mod tests {
         .unwrap_err();
 
         assert!(
-            err.to_string().contains("path must not contain single quotes"),
+            err.to_string()
+                .contains("path must not contain single quotes"),
             "unexpected error: {err}"
         );
     }
