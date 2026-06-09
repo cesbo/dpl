@@ -77,8 +77,8 @@ pub enum DeployStage {
     Prepare,
     /// Building the container image from the staged sources.
     Build,
-    /// Installing/starting systemd services, exporting files, creating or
-    /// restoring databases, writing rendered config into volumes.
+    /// Exporting files, creating or restoring databases,
+    /// writing rendered config into volumes.
     Install,
     /// Waiting for the deployed unit to become healthy (its port/ping check).
     Startup,

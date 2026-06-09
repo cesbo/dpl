@@ -80,8 +80,7 @@ impl<'a> ArtifactsContext<'a> {
             },
         )?;
 
-        // Service artifacts (run.sh, the systemd `.service`, and timers) only
-        // exist for units with a runtime.
+        // Service artifacts (run.sh) only exist for units with a runtime.
         let Some(runtime) = &self.config.runtime else {
             return Ok(());
         };

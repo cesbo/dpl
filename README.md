@@ -7,13 +7,12 @@ templates, run `podman build`, then hand the container off to the `dpl serve`
 daemon to run.
 
 Most `dpl` commands run to completion in the foreground. The exception is
-`dpl serve`: a long-running daemon (started by systemd) that runs the in-process
-timer scheduler and supervises every unit's container - starting it, restarting
-it if it exits, and stopping it on shutdown.
+`dpl serve`: a long-running daemon that runs the in-process timer scheduler
+and supervises every unit's container - starting it, restarting it if it
+exits, and stopping it on shutdown.
 
 ## Requirements
 
-- Linux with systemd
 - podman
 
 ## Layout
