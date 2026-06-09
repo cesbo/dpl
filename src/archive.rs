@@ -28,8 +28,6 @@ pub enum ArchiveError {
     Flatten(#[source] io::Error),
     #[error("read entry")]
     ReadEntry(#[source] io::Error),
-    #[error("empty archive")]
-    EmptyArchive,
 }
 
 /// Extracts a `.tar.gz` archive into `dst` and flattens a single top-level directory
@@ -87,18 +85,31 @@ fn extract_tar_gz(archive_path: &Path, dst: &Path) -> Result<(), ArchiveError> {
 /// If `dir` contains exactly one entry and it is a directory, replaces `dir`
 /// with the contents of that subdirectory. Does nothing otherwise.
 fn flatten_top_level(dir: &Path) -> Result<(), ArchiveError> {
-    let mut entries = fs::read_dir(dir).map_err(ArchiveError::CreateDir)?;
-
-    let first = match entries.next() {
-        Some(entry) => entry.map_err(|_| ArchiveError::EmptyArchive)?,
-        None => return Ok(()),
-    };
-
-    if entries.next().is_some() {
+    let entries = fs::read_dir(dir)
+        .map_err(ArchiveError::CreateDir)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(ArchiveError::CreateDir)?;
+    if entries.is_empty() {
         return Ok(());
     }
 
-    if !first.path().is_dir() {
+    let mut content_entries = Vec::new();
+    let mut ignored_entries = Vec::new();
+    for entry in entries {
+        if is_ignorable_top_level_entry(&entry.file_name()) {
+            ignored_entries.push(entry);
+        } else {
+            content_entries.push(entry);
+        }
+    }
+
+    if content_entries.len() != 1 {
+        return Ok(());
+    }
+
+    let first = content_entries.pop().expect("checked len");
+    let file_type = first.file_type().map_err(ArchiveError::CreateDir)?;
+    if !file_type.is_dir() {
         return Ok(());
     }
 
@@ -109,11 +120,32 @@ fn flatten_top_level(dir: &Path) -> Result<(), ArchiveError> {
 
     let tmp = parent.join(format!(".flatten_{}", cuid2()));
 
+    for entry in ignored_entries {
+        remove_entry(&entry.path()).map_err(ArchiveError::Flatten)?;
+    }
+
     fs::rename(&nested, &tmp).map_err(ArchiveError::Flatten)?;
     fs::remove_dir(dir).map_err(ArchiveError::Flatten)?;
     fs::rename(&tmp, dir).map_err(ArchiveError::Flatten)?;
 
     Ok(())
+}
+
+fn is_ignorable_top_level_entry(name: &std::ffi::OsStr) -> bool {
+    let Some(name) = name.to_str() else {
+        return false;
+    };
+
+    name == "__MACOSX" || name.starts_with(".")
+}
+
+fn remove_entry(path: &Path) -> io::Result<()> {
+    let file_type = fs::symlink_metadata(path)?.file_type();
+    if file_type.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    }
 }
 
 fn sanitize_path(path: &Path) -> io::Result<PathBuf> {
@@ -411,6 +443,34 @@ mod tests {
         assert_eq!(
             fs::read_to_string(target.path().join("package.json")).unwrap(),
             "{}",
+        );
+    }
+
+    #[test]
+    fn flatten_single_dir_with_top_level_archive_metadata() {
+        let (archive, _dir) = create_tar_gz(&[
+            ("__MACOSX/", None),
+            ("__MACOSX/myapp/", None),
+            ("__MACOSX/myapp/._requirements.txt", Some(b"metadata")),
+            (".DS_Store", Some(b"metadata")),
+            ("myapp/", None),
+            ("myapp/requirements.txt", Some(b"flask")),
+            ("myapp/main.py", Some(b"print('hi')")),
+        ]);
+
+        let target = TempDir::new().unwrap();
+        extract(&archive, target.path()).unwrap();
+
+        assert!(!target.path().join("myapp").exists());
+        assert!(!target.path().join("__MACOSX").exists());
+        assert!(!target.path().join(".DS_Store").exists());
+        assert_eq!(
+            fs::read_to_string(target.path().join("requirements.txt")).unwrap(),
+            "flask",
+        );
+        assert_eq!(
+            fs::read_to_string(target.path().join("main.py")).unwrap(),
+            "print('hi')",
         );
     }
 
