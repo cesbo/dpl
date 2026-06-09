@@ -27,16 +27,11 @@ pub struct HttpServerConfig {
     pub https_port: HttpPort,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Default, Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HttpPort {
+    #[default]
     Disabled,
     Port(u16),
-}
-
-impl Default for HttpPort {
-    fn default() -> Self {
-        Self::Disabled
-    }
 }
 
 fn default_image() -> String {
