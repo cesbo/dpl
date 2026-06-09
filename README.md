@@ -17,7 +17,7 @@ exits, and stopping it on shutdown.
 
 ## Layout
 
-`{base_dir}` is the base directory, default `/opt/dpl`, override with `--base`.
+`{base_dir}` is the base directory, default `/opt/dpl`, override with `DPL_BASE`.
 Files are grouped by kind, not by unit:
 
 - `{base_dir}/conf/{name}.yaml` - unit config (`type:` selects the variant)
@@ -37,7 +37,7 @@ Files are grouped by kind, not by unit:
 ## CLI
 
 ```bash
-dpl --base /opt/dpl <command> [args]
+DPL_BASE=/opt/dpl dpl <command> [args]
 ```
 
 | Command | Purpose |
@@ -276,7 +276,7 @@ container and writes output to `{base_dir}/log/{name}.timers.log`.
 cargo build
 cargo test
 cargo clippy
-cargo run -- --base /opt/dpl deploy myapp ./build.tar.gz
+DPL_BASE=/opt/dpl cargo run -- deploy myapp ./build.tar.gz
 ```
 
 Never run `cargo fmt` - the project uses custom rustfmt rules. Rust edition

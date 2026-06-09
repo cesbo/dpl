@@ -7,13 +7,14 @@ mod deploy;
 mod log;
 mod podman;
 mod reference;
-mod serve;
 mod secret;
+mod serve;
 mod spinner;
 mod state;
 mod timers;
 
 use std::{
+    env,
     path::PathBuf,
     process::ExitCode,
 };
@@ -33,9 +34,6 @@ use crate::deploy::DeployError;
 #[derive(Parser)]
 #[command(version)]
 struct Cli {
-    /// Base directory
-    #[arg(long = "base", default_value = "/opt/dpl", global = true)]
-    base: PathBuf,
     #[command(subcommand)]
     command: Command,
 }
@@ -115,7 +113,8 @@ fn main() -> ExitCode {
 fn run() -> Result<()> {
     let cli = Cli::parse();
 
-    let ctx = MainContext::load(&cli.base).context("load main context")?;
+    let base = base_dir()?;
+    let ctx = MainContext::load(&base).context("load main context")?;
 
     match cli.command {
         Command::Check { name } => cmd::unit::check(&ctx, &name),
@@ -127,5 +126,13 @@ fn run() -> Result<()> {
         Command::Timer { name, timer } => cmd::unit::timer(&ctx, &name, &timer),
         Command::Serve => cmd::serve::run(&ctx),
         Command::Secret(args) => cmd::secret::run(&ctx, args),
+    }
+}
+
+fn base_dir() -> Result<PathBuf> {
+    match env::var_os("DPL_BASE") {
+        Some(value) if value.is_empty() => anyhow::bail!("DPL_BASE must not be empty"),
+        Some(value) => Ok(PathBuf::from(value)),
+        None => Ok(PathBuf::from("/opt/dpl")),
     }
 }

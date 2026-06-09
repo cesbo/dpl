@@ -401,12 +401,11 @@ fn spawn(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit) {
     }
 }
 
-/// `dpl --base <base> start <unit>` as a child. It writes its own runtime.log
+/// `dpl start <unit>` as a child. It writes its own runtime.log
 /// via CriLog, so its std streams are dropped here (nothing drains them).
 fn spawn_child(exe: &Path, base: &Path, name: &UnitName) -> io::Result<Child> {
     Command::new(exe)
-        .arg("--base")
-        .arg(base)
+        .env("DPL_BASE", base)
         .arg("start")
         .arg(name.as_str())
         .stdin(Stdio::null())

@@ -11,7 +11,7 @@ This project is in active development; backward compatibility is NOT required. M
 - Build: `cargo build` (release is slow: `[profile.release]` uses LTO + `panic=abort`).
 - Test: `cargo test`. Single test by name substring: `cargo test validate_references_full_chain`. Tests are inline `#[cfg(test)] mod tests`; there is no `tests/` directory.
 - Lint: `cargo clippy` - keep it clean before finishing. Edition 2024.
-- Run the CLI: `cargo run -- --base <scratch-dir> <subcommand>`.
+- Run the CLI: `DPL_BASE=<scratch-dir> cargo run -- <subcommand>`.
 - Most logic is unit-tested against temp dirs and needs nothing installed. Exercising a real deploy needs `podman` on the host.
 
 Formatting: do not use `cargo fmt` in this repository. Formatting is handled by rust-analyzer.
