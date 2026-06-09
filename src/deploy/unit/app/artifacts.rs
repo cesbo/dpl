@@ -14,16 +14,12 @@ use minijinja::{
 use serde::Serialize;
 
 use super::AppConfig;
-use crate::{
-    MainContext,
-    artifacts::{
-        ArtifactError,
-        render_template,
-    },
+use crate::artifacts::{
+    ArtifactError,
+    render_template,
 };
 
 const CONTAINERFILE_TEMPLATE: &str = "containerfile";
-const BUILD_SH_TEMPLATE: &str = "build-sh";
 const RUN_SH_TEMPLATE: &str = "run-sh";
 
 static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
@@ -39,8 +35,6 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
         include_str!("templates/containerfile.jinja"),
     )
     .unwrap();
-    env.add_template(BUILD_SH_TEMPLATE, include_str!("templates/build.sh.jinja"))
-        .unwrap();
     env.add_template(RUN_SH_TEMPLATE, include_str!("templates/run.sh.jinja"))
         .unwrap();
 
@@ -48,7 +42,6 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
 });
 
 pub struct ArtifactsContext<'a> {
-    pub ctx: &'a MainContext,
     pub config: &'a AppConfig,
 }
 
@@ -61,6 +54,7 @@ impl<'a> ArtifactsContext<'a> {
         #[derive(Serialize)]
         struct BuildContext<'a> {
             files: &'a Vec<String>,
+            env_names: Vec<String>,
             script: Option<&'a str>,
         }
 
@@ -70,6 +64,7 @@ impl<'a> ArtifactsContext<'a> {
             .iter()
             .map(|b| BuildContext {
                 files: &b.files,
+                env_names: b.env.names().map(ToString::to_string).collect(),
                 script: b.script.as_deref(),
             })
             .collect::<Vec<BuildContext>>();
@@ -84,23 +79,6 @@ impl<'a> ArtifactsContext<'a> {
                 layers => &layers,
             },
         )?;
-
-        for (index, layer) in self.config.builds.iter().enumerate() {
-            let Some(script) = &layer.script else {
-                continue;
-            };
-
-            let path = artifacts_dir.join(format!("build-{}.sh", index + 1));
-            let prefix = format!("builds[{index}].env");
-            write_artifact(
-                path,
-                BUILD_SH_TEMPLATE,
-                context! {
-                    env => layer.env.resolve(self.ctx, &prefix)?,
-                    script => script,
-                },
-            )?;
-        }
 
         // Service artifacts (run.sh, the systemd `.service`, and timers) only
         // exist for units with a runtime.
@@ -220,24 +198,7 @@ mod tests {
         let deploy_dir = temp_dir.path().join(name.as_str());
         fs::create_dir_all(&deploy_dir).unwrap();
 
-        let ctx = MainContext {
-            base: temp_dir.path().to_path_buf(),
-            master_key: None,
-        };
-
-        // `database_deps` loads each referenced unit to classify it; the two db
-        // units must exist on disk to land in the `db wait` startup gate.
-        for db in ["main-db", "cache-db"] {
-            ctx.write_test_unit(
-                db,
-                "type: db\nserver: pg-main\nuser: app1\nsecret: app1-pass\n",
-            );
-        }
-
-        let artifacts = ArtifactsContext {
-            ctx: &ctx,
-            config: &config,
-        };
+        let artifacts = ArtifactsContext { config: &config };
 
         artifacts.save(&deploy_dir).unwrap();
 
@@ -250,10 +211,14 @@ mod tests {
         );
 
         assert!(artifacts_dir.join("run.sh").exists());
-        assert!(artifacts_dir.join("build-1.sh").exists());
-        assert!(artifacts_dir.join("build-2.sh").exists());
-        assert!(!artifacts_dir.join("build-3.sh").exists());
-        assert!(artifacts_dir.join("build-4.sh").exists());
+        assert!(
+            containerfile.contains("ARG SITE_ID") && containerfile.contains("export SITE_ID"),
+            "build env name must be rendered without its value:\n{containerfile}"
+        );
+        assert!(
+            !containerfile.contains("hello-world"),
+            "build env value must not be rendered into the containerfile:\n{containerfile}"
+        );
 
         // Enabled timers reach the container through run.sh's `timer--<name>`
         let run_sh = fs::read_to_string(artifacts_dir.join("run.sh")).unwrap();
@@ -301,21 +266,12 @@ mod tests {
         let deploy_dir = temp_dir.path().join(name.as_str());
         fs::create_dir_all(&deploy_dir).unwrap();
 
-        let ctx = MainContext {
-            base: temp_dir.path().to_path_buf(),
-            master_key: None,
-        };
-        let artifacts = ArtifactsContext {
-            ctx: &ctx,
-            config: &config,
-        };
+        let artifacts = ArtifactsContext { config: &config };
 
         artifacts.save(&deploy_dir).unwrap();
 
         let artifacts_dir = deploy_dir.join("artifacts");
-        // The build still runs: containerfile + build scripts are rendered.
         assert!(artifacts_dir.join("containerfile").exists());
-        assert!(artifacts_dir.join("build-1.sh").exists());
         // No runtime → no entrypoint or service.
         assert!(!artifacts_dir.join("run.sh").exists());
         assert!(!artifacts_dir.join("dpl--site.service").exists());

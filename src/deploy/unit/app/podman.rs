@@ -1,4 +1,6 @@
 use std::{
+    collections::BTreeMap,
+    ffi::OsStr,
     io,
     path::Path,
     process::{
@@ -36,36 +38,21 @@ impl<'a> PodmanContext<'a> {
         }
     }
 
-    pub fn build(&self, deploy_dir: &Path, log_path: &Path) -> io::Result<()> {
+    pub fn build(
+        &self,
+        deploy_dir: &Path,
+        log_path: &Path,
+        build_env: &BTreeMap<String, String>,
+    ) -> io::Result<()> {
         let artifacts_dir = deploy_dir.join("artifacts");
         let containerfile = artifacts_dir.join("containerfile");
 
-        let mut cmd = Command::new("podman");
-        cmd.arg("build")
-            .arg("--rm")
-            .arg("--force-rm")
-            .arg("--no-cache");
-
-        let mut secrets: Vec<_> = std::fs::read_dir(&artifacts_dir)?
-            .filter_map(|entry| {
-                let entry = entry.ok()?;
-                let path = entry.path();
-                let name = path.file_name()?.to_str()?;
-                if name.starts_with("build-") && name.ends_with(".sh") {
-                    let id = name.strip_suffix(".sh")?.to_owned();
-                    Some((id, path))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        secrets.sort();
-
-        for (id, path) in &secrets {
-            cmd.arg("--secret")
-                .arg(format!("id={id},src={}", path.display()));
+        let mut build = PodmanBuild::new();
+        for (key, value) in build_env {
+            build.build_env(key, value);
         }
 
+        let mut cmd = build.into_command();
         cmd.arg("--file")
             .arg(&containerfile)
             .arg("--tag")
@@ -150,6 +137,36 @@ impl<'a> PodmanContext<'a> {
     }
 }
 
+struct PodmanBuild {
+    cmd: Command,
+}
+
+impl PodmanBuild {
+    fn new() -> Self {
+        let mut cmd = Command::new("podman");
+        cmd.arg("build")
+            .arg("--rm")
+            .arg("--force-rm")
+            .arg("--no-cache");
+        Self { cmd }
+    }
+
+    /// Sets a build argument from the spawned process environment.
+    fn build_env(&mut self, key: &str, value: impl AsRef<str>) {
+        self.cmd.env(key, value.as_ref());
+        self.arg("--build-arg");
+        self.arg(key);
+    }
+
+    fn arg(&mut self, arg: impl AsRef<OsStr>) {
+        self.cmd.arg(arg);
+    }
+
+    fn into_command(self) -> Command {
+        self.cmd
+    }
+}
+
 fn export_mount_path() -> String {
     format!("/tmp/dpl-export-{}", cuid::cuid2())
 }
@@ -168,6 +185,31 @@ fn export_destination(version_dir: &str, path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_env_passes_build_arg_from_process_env() {
+        let mut build = PodmanBuild::new();
+        build.build_env("API_KEY", "secret-value");
+
+        let args: Vec<_> = build
+            .cmd
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            args.windows(2)
+                .any(|items| items == ["--build-arg", "API_KEY"]),
+            "{args:?}"
+        );
+
+        let value = build
+            .cmd
+            .get_envs()
+            .find(|(key, _)| *key == "API_KEY")
+            .and_then(|(_, value)| value)
+            .map(|value| value.to_string_lossy().into_owned());
+        assert_eq!(value.as_deref(), Some("secret-value"));
+    }
 
     #[test]
     fn export_destination_places_path_under_version_dir() {

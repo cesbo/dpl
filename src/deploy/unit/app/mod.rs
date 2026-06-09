@@ -3,6 +3,7 @@ mod model;
 mod podman;
 
 use std::{
+    collections::BTreeMap,
     fs,
     io::{
         self,
@@ -70,7 +71,6 @@ impl<'a> AppUnit<'a> {
         })?;
 
         let artifacts = ArtifactsContext {
-            ctx: self.ctx,
             config: &self.config,
         };
 
@@ -176,11 +176,34 @@ impl<'a> AppUnit<'a> {
         }
 
         log::phase("building app image");
+        let build_env = self.resolve_build_env()?;
         PodmanContext::new(self.name, version)
-            .build(deploy_dir, &self.ctx.build_log_path(self.name))
+            .build(deploy_dir, &self.ctx.build_log_path(self.name), &build_env)
             .map_err(|e| DeployError::step_build("build app image", e))?;
 
         Ok(())
+    }
+
+    fn resolve_build_env(&self) -> Result<BTreeMap<String, String>, DeployError> {
+        let mut build_env = BTreeMap::new();
+
+        for (index, layer) in self.config.builds.iter().enumerate() {
+            if layer.script.is_none() {
+                continue;
+            }
+
+            let prefix = format!("builds[{index}].env");
+            let layer_env = layer
+                .env
+                .resolve(self.ctx, &prefix)
+                .map_err(|e| DeployError::step_build("resolve build env", e))?;
+
+            for (name, value) in layer_env {
+                build_env.insert(name, value);
+            }
+        }
+
+        Ok(build_env)
     }
 
     fn install_inner(&self, _deploy_dir: &Path, version: u32) -> Result<(), DeployError> {

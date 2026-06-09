@@ -11,9 +11,17 @@ COPY app/{{ file }} /app/{{ file }}
 {% endif %}
 {% endfor -%}
 {% if layer.script %}
-{% set name = "build-" ~ loop.index %}
-{% set path = "/run/secrets/" ~ name %}
-RUN --mount=type=secret,id={{ name }} /bin/sh {{ path }}
+{% for env_name in layer.env_names %}
+ARG {{ env_name }}
+{% endfor -%}
+{% set heredoc = "DPL_BUILD_" ~ cuid() %}
+RUN <<'{{ heredoc }}'
+set -eu
+{% for env_name in layer.env_names -%}
+export {{ env_name }}
+{% endfor -%}
+{{ layer.script }}
+{{ heredoc }}
 {% endif %}
 {% endfor -%}
 {% if port is not none %}

@@ -47,6 +47,10 @@ impl EnvList {
     pub fn unit_refs(&self) -> impl Iterator<Item = &UnitName> {
         self.0.values().flat_map(|value| value.unit_refs())
     }
+
+    pub fn names(&self) -> impl Iterator<Item = &Name> {
+        self.0.keys()
+    }
 }
 
 #[cfg(test)]
