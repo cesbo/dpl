@@ -129,6 +129,7 @@ jobs:
 
       - name: Create release archive
         run: |
+          chmod 755 linux-x86_64/dpl macos-x86_64/dpl macos-arm64/dpl
           GZIP=-9 tar -cvzf \
               dpl-linux-x86_64-${{ needs.build-binaries.outputs.release-tag }}.tar.gz \
               -C linux-x86_64 \
@@ -195,6 +196,7 @@ jobs:
       - name: Compress resulting binary
         run: |
           mkdir upload
+          chmod 755 linux-x86_64/dpl macos-x86_64/dpl macos-arm64/dpl
           GZIP=-9 tar -cvzf \
               upload/dpl-linux-x86_64.tar.gz \
               -C linux-x86_64 \
