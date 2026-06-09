@@ -11,12 +11,12 @@ permissions:
 
 jobs:
   build-binaries:
-    name: 🛠️ Build binaries
+    name: 🛠️ Build Linux binary
     runs-on: ubuntu-latest
 
     outputs:
       release-tag: ${{ steps.create-release-tag.outputs.RELEASE_TAG }}
-  
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -35,7 +35,7 @@ jobs:
         id: create-release-tag
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          sed -i -E "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+          perl -0pi -e "s/^version = \".*\"/version = \"$VERSION\"/m" Cargo.toml
           echo "RELEASE_TAG=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build (release, musl)
@@ -48,7 +48,53 @@ jobs:
       - name: Store built artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: dpl-binaries
+          name: dpl-linux-x86_64
+          retention-days: 1
+          path: out
+          if-no-files-found: error
+
+  build-macos-binaries:
+    name: 🛠️ Build macOS binary (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            artifact-name: dpl-macos-x86_64
+          - arch: arm64
+            os: macos-15
+            target: aarch64-apple-darwin
+            artifact-name: dpl-macos-arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Apply release version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          perl -0pi -e "s/^version = \".*\"/version = \"$VERSION\"/m" Cargo.toml
+
+      - name: Build (release, macOS)
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+          mkdir -p out
+          cp target/${{ matrix.target }}/release/dpl out/dpl
+          strip out/dpl || true
+
+      - name: Store built artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.artifact-name }}
           retention-days: 1
           path: out
           if-no-files-found: error
@@ -60,28 +106,53 @@ jobs:
 
     needs:
       - build-binaries
+      - build-macos-binaries
 
     steps:
-      - name: Get binaries
+      - name: Get Linux binary
         uses: actions/download-artifact@v8
         with:
-          name: dpl-binaries
-          path: .
+          name: dpl-linux-x86_64
+          path: linux-x86_64
+
+      - name: Get macOS x86_64 binary
+        uses: actions/download-artifact@v8
+        with:
+          name: dpl-macos-x86_64
+          path: macos-x86_64
+
+      - name: Get macOS arm64 binary
+        uses: actions/download-artifact@v8
+        with:
+          name: dpl-macos-arm64
+          path: macos-arm64
 
       - name: Create release archive
         run: |
-            GZIP=-9 tar -cvzf \
-                dpl-${{ needs.build-binaries.outputs.release-tag }}.tar.gz \
-                dpl
+          GZIP=-9 tar -cvzf \
+              dpl-linux-x86_64-${{ needs.build-binaries.outputs.release-tag }}.tar.gz \
+              -C linux-x86_64 \
+              dpl
+          GZIP=-9 tar -cvzf \
+              dpl-macos-x86_64-${{ needs.build-binaries.outputs.release-tag }}.tar.gz \
+              -C macos-x86_64 \
+              dpl
+          GZIP=-9 tar -cvzf \
+              dpl-macos-arm64-${{ needs.build-binaries.outputs.release-tag }}.tar.gz \
+              -C macos-arm64 \
+              dpl
 
       - name: Store as artifact
         uses: actions/upload-artifact@v6
         with:
-            name: linux-${{ needs.build-binaries.outputs.release-tag }}
-            path: dpl-${{ needs.build-binaries.outputs.release-tag }}.tar.gz
-            retention-days: 1
-            compression-level: 9
-            if-no-files-found: error
+          name: release-${{ needs.build-binaries.outputs.release-tag }}
+          path: |
+            dpl-linux-x86_64-${{ needs.build-binaries.outputs.release-tag }}.tar.gz
+            dpl-macos-x86_64-${{ needs.build-binaries.outputs.release-tag }}.tar.gz
+            dpl-macos-arm64-${{ needs.build-binaries.outputs.release-tag }}.tar.gz
+          retention-days: 1
+          compression-level: 9
+          if-no-files-found: error
 
       - name: Store to Release
         uses: softprops/action-gh-release@v3
@@ -89,7 +160,9 @@ jobs:
           draft: true
           generate_release_notes: true
           files: |
-            dpl-${{ needs.build-binaries.outputs.release-tag }}.tar.gz
+            dpl-linux-x86_64-${{ needs.build-binaries.outputs.release-tag }}.tar.gz
+            dpl-macos-x86_64-${{ needs.build-binaries.outputs.release-tag }}.tar.gz
+            dpl-macos-arm64-${{ needs.build-binaries.outputs.release-tag }}.tar.gz
 
   upload-to-cdn:
     name: ☁️ Upload to CDN
@@ -98,27 +171,49 @@ jobs:
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
     needs:
       - build-binaries
+      - build-macos-binaries
 
     steps:
-      - name: Get binaries
+      - name: Get Linux binary
         uses: actions/download-artifact@v8
         with:
-          name: dpl-binaries
-          path: .
+          name: dpl-linux-x86_64
+          path: linux-x86_64
+
+      - name: Get macOS x86_64 binary
+        uses: actions/download-artifact@v8
+        with:
+          name: dpl-macos-x86_64
+          path: macos-x86_64
+
+      - name: Get macOS arm64 binary
+        uses: actions/download-artifact@v8
+        with:
+          name: dpl-macos-arm64
+          path: macos-arm64
 
       - name: Compress resulting binary
         run: |
           mkdir upload
           GZIP=-9 tar -cvzf \
               upload/dpl-linux-x86_64.tar.gz \
-              ./dpl
+              -C linux-x86_64 \
+              dpl
+          GZIP=-9 tar -cvzf \
+              upload/dpl-macos-x86_64.tar.gz \
+              -C macos-x86_64 \
+              dpl
+          GZIP=-9 tar -cvzf \
+              upload/dpl-macos-arm64.tar.gz \
+              -C macos-arm64 \
+              dpl
 
       - name: Upload to Bunny Storage (versioned)
         uses: ayeressian/bunnycdn-storage-deploy@v2.4.5
         with:
           storagePassword: ${{ secrets.BUNNY_STORAGE_FTP_KEY }}
           storageZoneName: cesbo
-          source: .
+          source: upload
           destination: dpl/builds/${{ needs.build-binaries.outputs.release-tag }}
           upload: "true"
 
@@ -127,7 +222,7 @@ jobs:
         with:
           storagePassword: ${{ secrets.BUNNY_STORAGE_FTP_KEY }}
           storageZoneName: cesbo
-          source: .
+          source: upload
           destination: dpl/latest
           remove: "true"
           upload: "true"
