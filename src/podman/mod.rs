@@ -54,12 +54,39 @@ pub fn run_podman(args: &[&str]) -> io::Result<String> {
     }
 }
 
+fn run_podman_with_stdin(args: &[&str], stdin: &[u8]) -> io::Result<String> {
+    let mut child = Command::new("podman")
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(podman_spawn_error)?;
+
+    if let Err(err) = child.stdin.take().expect("piped stdin").write_all(stdin) {
+        let _ = child.wait();
+        return Err(err);
+    }
+
+    let output = child.wait_with_output()?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(io::Error::other(format!(
+            "podman exited with {}",
+            output.status
+        )))
+    }
+}
+
 /// Stop and remove a unit's container. Idempotent: `--ignore` makes a missing
 /// container a no-op.
 pub fn stop_and_remove(name: &UnitName) -> io::Result<()> {
     let container = name.scoped_unit_name();
     run_podman(&["stop", "--ignore", &container])?;
     run_podman(&["rm", "-f", "-v", "--ignore", &container])?;
+
     Ok(())
 }
 
@@ -89,33 +116,9 @@ pub fn env_secret_prefix(name: &UnitName, version: u32) -> String {
 
 pub fn create_secret(prefix: &str, name: &str, value: &str) -> io::Result<()> {
     let secret_name = format!("{prefix}{name}");
+    run_podman_with_stdin(&["secret", "create", &secret_name, "-"], value.as_bytes())?;
 
-    let mut cmd = Command::new("podman");
-    cmd.args(["secret", "create", &secret_name, "-"]);
-    cmd.stdin(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-
-    let mut child = cmd.spawn().map_err(podman_spawn_error)?;
-    if let Err(err) = child
-        .stdin
-        .take()
-        .expect("piped stdin")
-        .write_all(value.as_bytes())
-    {
-        let _ = child.wait();
-        return Err(err);
-    }
-
-    let output = child.wait_with_output()?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(io::Error::other(format!(
-            "podman secret create exited with {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        )))
-    }
+    Ok(())
 }
 
 pub fn list_secrets_with_prefix(prefix: &str) -> io::Result<Vec<String>> {
