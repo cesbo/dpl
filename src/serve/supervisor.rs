@@ -151,11 +151,7 @@ impl Supervisor {
 
         // Every unit handed off to serve (the `supervised` flag), straight from
         // deploy state - the configs are never read.
-        let desired: Vec<(UnitName, DeployStatus, Option<u32>)> = DeployState::list(ctx)
-            .into_iter()
-            .filter(|(_, state)| state.supervised)
-            .map(|(name, state)| (name, state.last_status, state.active_version))
-            .collect();
+        let desired = desired_units(ctx);
         let desired_names: HashSet<&UnitName> = desired.iter().map(|(name, ..)| name).collect();
 
         // Drop containers we manage that are no longer in the supervised set.
@@ -241,6 +237,35 @@ fn next_wake(managed: &HashMap<UnitName, ManagedUnit>) -> Option<Instant> {
         .filter(|m| m.child.is_none())
         .filter_map(|m| m.backoff_until)
         .min()
+}
+
+fn desired_units(ctx: &MainContext) -> Vec<(UnitName, DeployStatus, Option<u32>)> {
+    let mut desired: Vec<(UnitName, Option<String>, DeployStatus, Option<u32>)> =
+        DeployState::list(ctx)
+            .into_iter()
+            .filter(|(_, state)| state.supervised)
+            .map(|(name, state)| (name, state.kind, state.last_status, state.active_version))
+            .collect();
+
+    desired.sort_by(|(left_name, left_kind, ..), (right_name, right_kind, ..)| {
+        start_order_rank(left_kind.as_deref())
+            .cmp(&start_order_rank(right_kind.as_deref()))
+            .then_with(|| left_name.cmp(right_name))
+    });
+
+    desired
+        .into_iter()
+        .map(|(name, _, status, active_version)| (name, status, active_version))
+        .collect()
+}
+
+fn start_order_rank(kind: Option<&str>) -> u8 {
+    match kind {
+        Some("db-server") => 0,
+        Some("app") => 1,
+        Some("http-server") => 3,
+        _ => 2,
+    }
 }
 
 fn reset_for_active_version(m: &mut ManagedUnit, active: Option<u32>) {
@@ -532,9 +557,13 @@ mod tests {
     /// Mark a unit as deployed through the serve hand-off (`set_check`), so its
     /// state file carries the `supervised` flag.
     fn deploy_supervised(ctx: &MainContext, name: &str) {
+        deploy_supervised_as(ctx, name, "app");
+    }
+
+    fn deploy_supervised_as(ctx: &MainContext, name: &str, kind: &str) {
         let name = UnitName::new(name).unwrap();
         let (_guard, mut state) = DeployState::acquire(ctx, &name).unwrap();
-        state.begin_deploy("app").unwrap();
+        state.begin_deploy(kind).unwrap();
         state.set_check();
     }
 
@@ -572,6 +601,33 @@ mod tests {
             vec![
                 UnitName::new("app-live").unwrap(),
                 UnitName::new("pg").unwrap(),
+            ]
+        );
+    }
+
+    #[test]
+    fn desired_units_start_db_servers_then_apps_then_http_servers() {
+        let (_dir, ctx) = ctx();
+
+        deploy_supervised_as(&ctx, "nginx", "http-server");
+        deploy_supervised_as(&ctx, "web", "app");
+        deploy_supervised_as(&ctx, "pg", "db-server");
+        deploy_supervised_as(&ctx, "worker", "app");
+        deploy_supervised_as(&ctx, "legacy", "custom");
+
+        let names: Vec<UnitName> = desired_units(&ctx)
+            .into_iter()
+            .map(|(name, _, _)| name)
+            .collect();
+
+        assert_eq!(
+            names,
+            vec![
+                UnitName::new("pg").unwrap(),
+                UnitName::new("web").unwrap(),
+                UnitName::new("worker").unwrap(),
+                UnitName::new("legacy").unwrap(),
+                UnitName::new("nginx").unwrap(),
             ]
         );
     }
