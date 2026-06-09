@@ -5,6 +5,7 @@ mod run;
 use std::{
     fs,
     io,
+    io::Write,
     path::Path,
     process::{
         Command,
@@ -79,6 +80,60 @@ pub fn image_exists(image: &str) -> bool {
 /// Pull the named image into local storage.
 pub fn pull_image(image: &str) -> io::Result<()> {
     run_podman(&["pull", image])?;
+    Ok(())
+}
+
+pub fn env_secret_prefix(name: &UnitName, version: u32) -> String {
+    format!("env--{}--v{version}--", name.scoped_unit_name())
+}
+
+pub fn create_secret(prefix: &str, name: &str, value: &str) -> io::Result<()> {
+    let secret_name = format!("{prefix}{name}");
+
+    let mut cmd = Command::new("podman");
+    cmd.args(["secret", "create", &secret_name, "-"]);
+    cmd.stdin(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(podman_spawn_error)?;
+    if let Err(err) = child
+        .stdin
+        .take()
+        .expect("piped stdin")
+        .write_all(value.as_bytes())
+    {
+        let _ = child.wait();
+        return Err(err);
+    }
+
+    let output = child.wait_with_output()?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "podman secret create exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )))
+    }
+}
+
+pub fn list_secrets_with_prefix(prefix: &str) -> io::Result<Vec<String>> {
+    let out = run_podman(&["secret", "ls", "--format", "{{.Name}}"])?;
+    let mut secrets: Vec<_> = out
+        .lines()
+        .map(str::trim)
+        .filter(|name| name.starts_with(prefix))
+        .map(ToOwned::to_owned)
+        .collect();
+    secrets.sort();
+    Ok(secrets)
+}
+
+pub fn remove_secrets_with_prefix(prefix: &str) -> io::Result<()> {
+    for secret in list_secrets_with_prefix(prefix)? {
+        run_podman(&["secret", "rm", &secret])?;
+    }
     Ok(())
 }
 
@@ -316,6 +371,12 @@ mod tests {
         let other = podman_spawn_error(io::Error::new(io::ErrorKind::PermissionDenied, "denied"));
         assert_eq!(other.kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(other.to_string(), "denied");
+    }
+
+    #[test]
+    fn env_secret_names_are_scoped_to_unit_version_and_env() {
+        let name = UnitName::new("web-api").unwrap();
+        assert_eq!(env_secret_prefix(&name, 7), "env--dpl--web-api--v7--");
     }
 
     #[test]

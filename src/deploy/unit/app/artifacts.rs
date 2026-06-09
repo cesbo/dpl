@@ -113,7 +113,6 @@ impl<'a> ArtifactsContext<'a> {
             path,
             RUN_SH_TEMPLATE,
             context! {
-                env => runtime.env.resolve(self.ctx, "runtime.env")?,
                 init => &runtime.init,
                 cmd => &runtime.cmd,
                 timers => self.config.timers.iter().filter(|t| !t.disabled).collect::<Vec<_>>(),

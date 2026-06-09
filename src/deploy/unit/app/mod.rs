@@ -198,8 +198,34 @@ impl<'a> AppUnit<'a> {
             return Ok(());
         }
 
+        log::phase("registering runtime environment");
+        self.register_runtime_env(version)?;
+
         log::phase("registering timers");
         self.register_timers();
+
+        Ok(())
+    }
+
+    fn register_runtime_env(&self, version: u32) -> Result<(), DeployError> {
+        let Some(runtime) = &self.config.runtime else {
+            return Ok(());
+        };
+
+        let env = runtime
+            .env
+            .resolve(self.ctx, "runtime.env")
+            .map_err(|e| DeployError::step_install("resolve runtime env", e))?;
+        let prefix = crate::podman::env_secret_prefix(self.name, version);
+
+        crate::podman::remove_secrets_with_prefix(&prefix)
+            .map_err(|e| DeployError::step_install("remove stale runtime env secrets", e))?;
+
+        for (env_name, value) in env {
+            crate::podman::create_secret(&prefix, &env_name, &value).map_err(|e| {
+                DeployError::step_install(format!("create runtime env secret '{env_name}'"), e)
+            })?;
+        }
 
         Ok(())
     }
@@ -300,6 +326,21 @@ impl<'a> AppUnit<'a> {
         let mut cmd = crate::podman::PodmanRun::new(&container)
             .map_err(|e| RunError::new(format!("prepare podman to run '{}'", self.name), e))?;
 
+        let prefix = crate::podman::env_secret_prefix(self.name, version);
+        let env_secrets = crate::podman::list_secrets_with_prefix(&prefix)
+            .map_err(|e| RunError::new("list runtime env secrets", e))?;
+        for secret_name in env_secrets {
+            let env_name = secret_name
+                .strip_prefix(&prefix)
+                .expect("secret was listed by runtime env prefix");
+
+            if env_name.is_empty() {
+                continue;
+            }
+
+            cmd.secret_env(&secret_name, env_name);
+        }
+
         let databases = self
             .config
             .database_deps(self.ctx)
@@ -323,6 +364,13 @@ impl<'a> AppUnit<'a> {
 pub(crate) fn remove_version_artifacts(name: &UnitName, version: u32) {
     let podman_ctx = PodmanContext::new(name, version);
     podman_ctx.remove_exports();
+    let prefix = crate::podman::env_secret_prefix(name, version);
+    if let Err(err) = crate::podman::remove_secrets_with_prefix(&prefix) {
+        log::warn(format!(
+            "remove runtime env secrets for '{} v{version}': {err}",
+            name
+        ));
+    }
     podman_ctx.remove();
 }
 
