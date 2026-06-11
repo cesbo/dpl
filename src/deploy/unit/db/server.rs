@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     thread::sleep,
     time::{
         Duration,
@@ -49,6 +50,20 @@ impl<'a> DbServerUnit<'a> {
             log::phase("downloading db-server image");
             pull_image(&image)
                 .map_err(|e| DeployError::step_install("download db-server image", e))?;
+        }
+
+        // Snapshot the password into this version's runtime env.
+        let version = state.last_version;
+        let env = BTreeMap::from([(
+            self.config.engine.password_env().to_string(),
+            root_password.clone(),
+        )]);
+        crate::podman::env::save(self.ctx, self.name, version, &env)
+            .map_err(|e| DeployError::step_install("save runtime env", e))?;
+
+        // Remove old runtime env
+        if let Some(old) = state.active_version {
+            let _ = crate::podman::env::remove(self.ctx, self.name, old);
         }
 
         state.set_check();
@@ -109,21 +124,45 @@ impl<'a> DbServerUnit<'a> {
 
     /// Run the db-server container in the foreground.
     pub fn start(&self) -> Result<(), RunError> {
-        let password = self
-            .ctx
-            .resolve_secret(&self.config.secret)
-            .map_err(|e| RunError::new(format!("resolve secret '{}'", &self.config.secret), e))?;
+        let version = {
+            let state = DeployState::load(self.ctx, self.name)
+                .map_err(|e| RunError::new(format!("load state for '{}'", self.name), e))?;
+            state.active_version.unwrap_or(state.last_version)
+        };
+
+        if version == 0 {
+            return Err(RunError::new(
+                format!("db-server '{}' has not been deployed", self.name),
+                std::io::Error::other("no deployed version"),
+            ));
+        }
 
         let container = self.name.scoped_unit_name();
         let mut cmd = crate::podman::PodmanRun::new(&container)
             .map_err(|e| RunError::new(format!("prepare podman to run '{}'", self.name), e))?;
 
-        let engine = self.config.engine;
-        cmd.env(engine.password_env(), password);
+        let env = crate::podman::env::load(self.ctx, self.name, version)
+            .map_err(|e| RunError::new("load runtime env", e))?;
+        for (env_name, value) in env {
+            cmd.env(&env_name, value);
+        }
 
+        let engine = self.config.engine;
         cmd.volume(format!("{container}-data"), engine.data_path());
 
         cmd.run_foreground(self.config.image(), &self.ctx.runtime_log_path(self.name))
             .map_err(|e| RunError::new("run podman foreground", e))
+    }
+
+    /// Tear down a deployed version: stop the container and drop its env file.
+    pub fn undeploy(ctx: &MainContext, name: &UnitName, version: u32) {
+        if let Err(err) = crate::podman::stop_and_remove(name) {
+            log::warn(format!("stop container '{name}': {err}"));
+        }
+        if let Err(err) = crate::podman::env::remove(ctx, name, version) {
+            log::warn(format!(
+                "remove runtime env file for '{name} v{version}': {err}"
+            ));
+        }
     }
 }
