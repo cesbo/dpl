@@ -106,19 +106,21 @@ timers:
   `init` pre-start script, and `env`
 - `volumes` - persistent storage (survives redeploys). `path` must be an
   absolute container path and cannot be `/`
-- `exports` - copies files from the built image into the shared nginx web
-  volume so domain units can serve them. `source` must be an absolute path
-  inside the image and cannot be `/`
+- `exports` - copies files from the built image into the http-server's
+  on-host `www/` directory, which nginx bind-mounts read-only at `/var/www`.
+  Domain units can serve them via `${<unit>:export}`. `source` must be an
+  absolute path inside the image and cannot be `/`
 - `timers` - periodic in-container scripts
 
 ### Static sites (no runtime)
 
 Omit `runtime` to make a build-and-export unit. It runs its `builds` inside a
-podman image and copies `exports` into the shared nginx web volume - there is
-no command, no port, no service, and no health check. Use it for static site
-generators (e.g. `npm run build`) whose output a `domain` unit then serves via
-`${<unit>:export}`. Without a runtime, `timers` are skipped and
-`${<unit>:url}`/`${<unit>:socket}` are unavailable (only `${<unit>:export}`).
+podman image and copies `exports` into the http-server's on-host `www/`
+directory - there is no command, no port, no service, and no health check. Use
+it for static site generators (e.g. `npm run build`) whose output a `domain`
+unit then serves via `${<unit>:export}`. Without a runtime, `timers` are
+skipped and `${<unit>:url}`/`${<unit>:socket}` are unavailable (only
+`${<unit>:export}`).
 
 ```yaml
 type: app
