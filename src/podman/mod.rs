@@ -1,3 +1,4 @@
+pub mod env;
 pub mod health;
 pub mod inspect;
 mod run;
@@ -5,7 +6,6 @@ mod run;
 use std::{
     fs,
     io,
-    io::Write,
     path::Path,
     process::{
         Command,
@@ -54,32 +54,6 @@ pub fn run_podman(args: &[&str]) -> io::Result<String> {
     }
 }
 
-fn run_podman_with_stdin(args: &[&str], stdin: &[u8]) -> io::Result<String> {
-    let mut child = Command::new("podman")
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(podman_spawn_error)?;
-
-    if let Err(err) = child.stdin.take().expect("piped stdin").write_all(stdin) {
-        let _ = child.wait();
-        return Err(err);
-    }
-
-    let output = child.wait_with_output()?;
-
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        Err(io::Error::other(format!(
-            "podman exited with {}",
-            output.status
-        )))
-    }
-}
-
 /// Stop and remove a unit's container. Idempotent: `--ignore` makes a missing
 /// container a no-op.
 pub fn stop_and_remove(name: &UnitName) -> io::Result<()> {
@@ -107,36 +81,6 @@ pub fn image_exists(image: &str) -> bool {
 /// Pull the named image into local storage.
 pub fn pull_image(image: &str) -> io::Result<()> {
     run_podman(&["pull", image])?;
-    Ok(())
-}
-
-pub fn env_secret_prefix(name: &UnitName, version: u32) -> String {
-    format!("env--{}--v{version}--", name.scoped_unit_name())
-}
-
-pub fn create_secret(prefix: &str, name: &str, value: &str) -> io::Result<()> {
-    let secret_name = format!("{prefix}{name}");
-    run_podman_with_stdin(&["secret", "create", &secret_name, "-"], value.as_bytes())?;
-
-    Ok(())
-}
-
-pub fn list_secrets_with_prefix(prefix: &str) -> io::Result<Vec<String>> {
-    let out = run_podman(&["secret", "ls", "--format", "{{.Name}}"])?;
-    let mut secrets: Vec<_> = out
-        .lines()
-        .map(str::trim)
-        .filter(|name| name.starts_with(prefix))
-        .map(ToOwned::to_owned)
-        .collect();
-    secrets.sort();
-    Ok(secrets)
-}
-
-pub fn remove_secrets_with_prefix(prefix: &str) -> io::Result<()> {
-    for secret in list_secrets_with_prefix(prefix)? {
-        run_podman(&["secret", "rm", &secret])?;
-    }
     Ok(())
 }
 
@@ -374,12 +318,6 @@ mod tests {
         let other = podman_spawn_error(io::Error::new(io::ErrorKind::PermissionDenied, "denied"));
         assert_eq!(other.kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(other.to_string(), "denied");
-    }
-
-    #[test]
-    fn env_secret_names_are_scoped_to_unit_version_and_env() {
-        let name = UnitName::new("web-api").unwrap();
-        assert_eq!(env_secret_prefix(&name, 7), "env--dpl--web-api--v7--");
     }
 
     #[test]

@@ -108,11 +108,11 @@ impl<'a> AppUnit<'a> {
 
         if let Some(active_version) = state.take_active_version() {
             log::phase(format_args!("uninstalling v{active_version}"));
-            Self::undeploy(self.name, active_version);
+            Self::undeploy(self.ctx, self.name, active_version);
         }
 
         if let Err(err) = self.install_inner(deploy_dir, version) {
-            Self::undeploy(self.name, version);
+            Self::undeploy(self.ctx, self.name, version);
             return Err(err);
         }
 
@@ -239,15 +239,10 @@ impl<'a> AppUnit<'a> {
             .env
             .resolve(self.ctx, "runtime.env")
             .map_err(|e| DeployError::step_install("resolve runtime env", e))?;
-        let prefix = crate::podman::env_secret_prefix(self.name, version);
 
-        crate::podman::remove_secrets_with_prefix(&prefix)
-            .map_err(|e| DeployError::step_install("remove stale runtime env secrets", e))?;
-
-        for (env_name, value) in env {
-            crate::podman::create_secret(&prefix, &env_name, &value).map_err(|e| {
-                DeployError::step_install(format!("create runtime env secret '{env_name}'"), e)
-            })?;
+        if !env.is_empty() {
+            crate::podman::env::save(self.ctx, self.name, version, &env)
+                .map_err(|e| DeployError::step_install("save runtime env", e))?;
         }
 
         Ok(())
@@ -298,14 +293,24 @@ impl<'a> AppUnit<'a> {
         timers.reconcile(&configured, Utc::now());
     }
 
-    pub fn undeploy(name: &UnitName, version: u32) {
+    pub fn undeploy(ctx: &MainContext, name: &UnitName, version: u32) {
         // Stop the running container (serve was supervising it) before dropping
         // its image; serve sees the unit leave `Ready` and won't restart it.
         if let Err(err) = crate::podman::stop_and_remove(name) {
             log::warn(format!("stop container '{name}': {err}"));
         }
 
-        remove_version_artifacts(name, version);
+        let podman_ctx = PodmanContext::new(name, version);
+
+        podman_ctx.remove_exports();
+
+        if let Err(err) = crate::podman::env::remove(ctx, name, version) {
+            log::warn(format!(
+                "remove runtime env file for '{name} v{version}': {err}"
+            ));
+        }
+
+        podman_ctx.remove();
     }
 
     pub fn inspect(&self) -> Result<(), DeployError> {
@@ -349,19 +354,10 @@ impl<'a> AppUnit<'a> {
         let mut cmd = crate::podman::PodmanRun::new(&container)
             .map_err(|e| RunError::new(format!("prepare podman to run '{}'", self.name), e))?;
 
-        let prefix = crate::podman::env_secret_prefix(self.name, version);
-        let env_secrets = crate::podman::list_secrets_with_prefix(&prefix)
-            .map_err(|e| RunError::new("list runtime env secrets", e))?;
-        for secret_name in env_secrets {
-            let env_name = secret_name
-                .strip_prefix(&prefix)
-                .expect("secret was listed by runtime env prefix");
-
-            if env_name.is_empty() {
-                continue;
-            }
-
-            cmd.secret_env(&secret_name, env_name);
+        let env = crate::podman::env::load(self.ctx, self.name, version)
+            .map_err(|e| RunError::new("load runtime env", e))?;
+        for (env_name, value) in env {
+            cmd.env(&env_name, value);
         }
 
         let databases = self
@@ -382,19 +378,6 @@ impl<'a> AppUnit<'a> {
         cmd.run_foreground(image, &self.ctx.runtime_log_path(self.name))
             .map_err(|e| RunError::new("run podman foreground", e))
     }
-}
-
-pub(crate) fn remove_version_artifacts(name: &UnitName, version: u32) {
-    let podman_ctx = PodmanContext::new(name, version);
-    podman_ctx.remove_exports();
-    let prefix = crate::podman::env_secret_prefix(name, version);
-    if let Err(err) = crate::podman::remove_secrets_with_prefix(&prefix) {
-        log::warn(format!(
-            "remove runtime env secrets for '{} v{version}': {err}",
-            name
-        ));
-    }
-    podman_ctx.remove();
 }
 
 fn save_archive<R: Read>(archive: R, dst: &Path) -> io::Result<()> {

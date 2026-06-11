@@ -318,7 +318,7 @@ impl MasterKey {
         Ok(())
     }
 
-    fn encrypt(
+    pub fn encrypt(
         &self,
         name: &str,
         metadata: &SecretMetadata,
@@ -375,7 +375,7 @@ impl MasterKey {
         self.decrypt(name.as_str(), &file)
     }
 
-    fn decrypt(&self, name: &str, file: &SecretFile) -> Result<String, SecretError> {
+    pub fn decrypt(&self, name: &str, file: &SecretFile) -> Result<String, SecretError> {
         if file.version != FILE_VERSION {
             return Err(SecretError::UnsupportedVersion {
                 name: name.to_string(),

@@ -336,7 +336,7 @@ pub fn undeploy(ctx: &MainContext, name: &UnitName) -> Result<()> {
 
     if outcome.kind.as_deref() == Some(AppConfig::KIND) {
         if let Some(active_version) = outcome.active_version {
-            AppUnit::undeploy(name, active_version);
+            AppUnit::undeploy(ctx, name, active_version);
         }
     } else if supervised {
         crate::podman::stop_and_remove(name).with_context(|| format!("stop container '{name}'"))?;

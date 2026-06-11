@@ -140,6 +140,13 @@ impl MainContext {
         self.unit_log_dir(unit).join("runtime.log")
     }
 
+    /// `{base}/state/{unit}/.env-v{version}.json` - encrypted runtime env
+    /// for a deployed version, written at deploy and read by `dpl start`.
+    pub fn runtime_env_path(&self, unit: &UnitName, version: u32) -> PathBuf {
+        self.unit_state_dir(unit)
+            .join(format!(".env-v{version}.json"))
+    }
+
     pub fn resolve_secret(&self, name: &SecretName) -> Result<String, SecretError> {
         let Some(master_key) = &self.master_key else {
             return Err(SecretError::KeyNotFound);

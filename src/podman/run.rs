@@ -88,12 +88,6 @@ impl PodmanRun {
         self.arg(format!("--env={key}"));
     }
 
-    /// Exposes a Podman secret as an environment variable in the container.
-    pub fn secret_env(&mut self, secret_name: &str, env_name: &str) {
-        self.arg("--secret");
-        self.arg(format!("{secret_name},type=env,target={env_name}"));
-    }
-
     /// Creates a bind mount.
     /// Adds arguemnt `--volume={src}:{dst}` to pass to the podman.
     /// - `src` - volume name or absolute path to the host dir

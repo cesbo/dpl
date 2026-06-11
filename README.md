@@ -27,6 +27,8 @@ per-unit directory:
   - `deploy.lock` - advisory `flock(2)` held during a deploy
   - `timers.json` - timer run state
   - `timers.lock` - advisory `flock(2)` held while a timer runs
+  - `.env-v{N}.json` - encrypted runtime env of the deployed version, written
+    at deploy and decrypted by `dpl start`
   - `log/build.log` - last build: captured podman build/restore output, CRI
     `k8s-file` format; cleared at the start of each deploy
   - `log/runtime.log` - container stdout/stderr, captured by `dpl start`, CRI
