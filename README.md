@@ -21,12 +21,12 @@ exits, and stopping it on shutdown.
 Files are grouped by kind, not by unit:
 
 - `{base_dir}/conf/{name}.yaml` - unit config (`type:` selects the variant)
-- `{base_dir}/state/` - per-unit runtime state and locks:
-  - `{name}--deploy.json` - deploy state (unit kind, active version, last status)
-  - `{name}--deploy.lock` - advisory `flock(2)` held during a deploy
-  - `{name}--timers.json` - timer run state
-  - `{name}--timers.lock` - advisory `flock(2)` held while a timer runs
-  - `serve.pid` - PID file and single-instance lock for `dpl serve`
+- `{base_dir}/state/{name}/` - per-unit runtime state and locks:
+  - `deploy.json` - deploy state (unit kind, active version, last status)
+  - `deploy.lock` - advisory `flock(2)` held during a deploy
+  - `timers.json` - timer run state
+  - `timers.lock` - advisory `flock(2)` held while a timer runs
+- `{base_dir}/state/serve.pid` - PID file and single-instance lock for `dpl serve`
 - `{base_dir}/log/{name}.build.log` - last build: captured podman build/restore
   output, CRI `k8s-file` format; cleared at the start of each deploy
 - `{base_dir}/log/{name}.timers.log` - all timer run output for the unit, CRI
@@ -237,7 +237,7 @@ dpl deploy myapp ./build.tar.gz
 dpl inspect myapp                                   # JSON status
 ```
 
-A deploy acquires `.deploy.lock`, bumps the version, renders artifacts, runs
+A deploy acquires `deploy.lock`, bumps the version, renders artifacts, runs
 `podman build`, exports configured files, marks the build for startup and
 nudges `dpl serve` to bring the container up (SIGHUP), waits for the health
 check, then marks it ready and prints the elapsed time. Non-zero exit on any

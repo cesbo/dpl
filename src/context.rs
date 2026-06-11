@@ -74,10 +74,15 @@ impl MainContext {
         self.base.join(CONF_DIR)
     }
 
-    /// `{base}/state` - deploy/timer locks and state files.
-    /// State dir will be created by DeployLockGuard or TimerLockGuard
+    /// `{base}/state` - per-unit state subdirs plus `serve.pid`.
     pub fn state_dir(&self) -> PathBuf {
         self.base.join(STATE_DIR)
+    }
+
+    /// `{base}/state/{unit}` - the unit's state and lock files.
+    /// Created on demand by DeployLockGuard or TimerLockGuard.
+    pub fn unit_state_dir(&self, unit: &UnitName) -> PathBuf {
+        self.state_dir().join(unit.as_str())
     }
 
     /// `{base}/state/serve.pid` - PID of the running `dpl serve`.
@@ -101,23 +106,19 @@ impl MainContext {
     }
 
     pub fn deploy_lock_path(&self, unit: &UnitName) -> PathBuf {
-        self.state_dir()
-            .join(format!("{}--deploy.lock", unit.as_str()))
+        self.unit_state_dir(unit).join("deploy.lock")
     }
 
     pub fn deploy_state_path(&self, unit: &UnitName) -> PathBuf {
-        self.state_dir()
-            .join(format!("{}--deploy.json", unit.as_str()))
+        self.unit_state_dir(unit).join("deploy.json")
     }
 
     pub fn timers_state_path(&self, unit: &UnitName) -> PathBuf {
-        self.state_dir()
-            .join(format!("{}--timers.json", unit.as_str()))
+        self.unit_state_dir(unit).join("timers.json")
     }
 
     pub fn timers_lock_path(&self, unit: &UnitName) -> PathBuf {
-        self.state_dir()
-            .join(format!("{}--timers.lock", unit.as_str()))
+        self.unit_state_dir(unit).join("timers.lock")
     }
 
     /// `{base}/log/{unit}.build.log` - unit's last build.

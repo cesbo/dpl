@@ -196,7 +196,7 @@ routes:
 
     #[test]
     fn reject_custom_proxy_without_ip() {
-        let result: Result<DomainConfig, _> = serde_yaml::from_str(
+        let _result: Result<DomainConfig, _> = serde_yaml::from_str(
             r#"
 server: web
 hosts:
@@ -229,7 +229,7 @@ routes:
 
     #[test]
     fn reject_empty_hosts() {
-        let result: Result<DomainConfig, _> = serde_yaml::from_str(
+        let _result: Result<DomainConfig, _> = serde_yaml::from_str(
             r#"
 server: web
 hosts: []

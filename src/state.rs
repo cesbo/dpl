@@ -182,8 +182,6 @@ impl DeployState {
 
     /// Every unit that has a deploy state file.
     pub fn list(ctx: &MainContext) -> Vec<(UnitName, DeployState)> {
-        const SUFFIX: &str = "--deploy.json";
-
         let Ok(entries) = std::fs::read_dir(ctx.state_dir()) else {
             return Vec::new();
         };
@@ -191,11 +189,18 @@ impl DeployState {
         let mut units: Vec<(UnitName, DeployState)> = entries
             .flatten()
             .filter_map(|entry| {
+                let file_type = entry.file_type().ok()?;
+                if !file_type.is_dir() {
+                    return None;
+                }
                 let file_name = entry.file_name();
-                let stem = file_name.to_str()?.strip_suffix(SUFFIX)?;
-                let name = UnitName::new(stem).ok()?;
-                let state = DeployState::load(ctx, &name).ok()?;
-                Some((name, state))
+                let file_name = file_name.to_str()?;
+                let unit_name = UnitName::new(file_name).ok()?;
+                if !ctx.deploy_state_path(&unit_name).exists() {
+                    return None;
+                }
+                let state = DeployState::load(ctx, &unit_name).ok()?;
+                Some((unit_name, state))
             })
             .collect();
 
@@ -315,7 +320,7 @@ impl DeployState {
     }
 }
 
-/// Holds an OS-level exclusive `flock` on `state/{unit}--deploy.lock`.
+/// Holds an OS-level exclusive `flock` on `state/{unit}/deploy.lock`.
 pub struct DeployLockGuard {
     #[allow(dead_code)]
     file: File,

@@ -312,7 +312,7 @@ impl TimersState {
     }
 }
 
-/// Holds an OS-level exclusive `flock` on `state/{unit}--timers.lock`.
+/// Holds an OS-level exclusive `flock` on `state/{unit}/timers.lock`.
 pub struct TimerLockGuard {
     #[allow(dead_code)]
     file: File,
