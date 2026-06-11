@@ -46,6 +46,9 @@ const SLEEP_SLICE: Duration = Duration::from_millis(250);
 pub fn run(ctx: &MainContext) -> Result<()> {
     let _lock = ServeLock::acquire(ctx)?;
 
+    // Make sure the master key is ready.
+    super::secret::load_or_create_key(ctx).context("ensure master key")?;
+
     let shutdown = Arc::new(AtomicBool::new(false));
     for signal in [SIGTERM, SIGINT] {
         signal_hook::flag::register(signal, Arc::clone(&shutdown))
