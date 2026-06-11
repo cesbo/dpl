@@ -65,6 +65,13 @@ pub struct SecretFile {
     pub ciphertext: String,
 }
 
+impl SecretFile {
+    /// Serialize to the pretty-printed on-disk JSON form.
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum SecretError {
     #[error("secret '{name}' not found")]
@@ -272,13 +279,13 @@ impl MasterKey {
         let metadata = SecretMetadata {
             created_at: Utc::now(),
         };
-        let secret_file = self.encrypt(name.as_str(), &metadata, text)?;
-        let json = serde_json::to_string_pretty(&secret_file).map_err(|source| {
-            SecretError::Serialize {
+        let json = self
+            .encrypt(name.as_str(), &metadata, text)?
+            .to_json()
+            .map_err(|source| SecretError::Serialize {
                 name: name.to_string(),
                 source,
-            }
-        })?;
+            })?;
 
         if let Some(parent) = path.parent() {
             create_dir_all(parent).map_err(|source| SecretError::WriteSecret {

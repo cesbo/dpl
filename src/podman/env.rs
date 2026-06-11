@@ -57,8 +57,10 @@ pub fn save(
     let metadata = SecretMetadata {
         created_at: Utc::now(),
     };
-    let file = master_key.encrypt(&env_label(unit, version), &metadata, &plaintext)?;
-    let json = serde_json::to_string_pretty(&file).map_err(RuntimeEnvError::Serialize)?;
+    let json = master_key
+        .encrypt(&env_label(unit, version), &metadata, &plaintext)?
+        .to_json()
+        .map_err(RuntimeEnvError::Serialize)?;
 
     let path = ctx.runtime_env_path(unit, version);
     if let Some(parent) = path.parent() {
