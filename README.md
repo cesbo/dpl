@@ -29,6 +29,11 @@ per-unit directory:
   - `timers.lock` - advisory `flock(2)` held while a timer runs
   - `.env-v{N}.json` - encrypted runtime env of the deployed version, written
     at deploy and decrypted by `dpl start`
+  - `conf/` (http-server only) - nginx `conf.d` source, bind-mounted read-only:
+    `00-dpl.conf` plus each dependent domain's `<domain>.conf`
+  - `www/` (http-server only) - static-export root, bind-mounted read-only at
+    `/var/www`; holds each served app's `<app>_<version>/` tree, copied in at
+    domain deploy
   - `log/build.log` - last build: captured podman build/restore output, CRI
     `k8s-file` format; cleared at the start of each deploy
   - `log/runtime.log` - container stdout/stderr, captured by `dpl start`, CRI

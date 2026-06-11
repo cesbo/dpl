@@ -10,7 +10,10 @@ use serde::{
 
 pub use self::{
     name::Name,
-    value::Value,
+    value::{
+        Ns,
+        Value,
+    },
 };
 use crate::{
     MainContext,

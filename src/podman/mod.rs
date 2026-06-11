@@ -21,11 +21,8 @@ use crate::config::UnitName;
 /// The shared podman network every dpl container joins.
 pub const NETWORK: &str = "dpl";
 
-/// Podman volume for app static exports; mounts to [`NGINX_WWW_MOUNT`] in the
-/// nginx container. Holds `<name>_<version>/…` directories at its root.
-pub const NGINX_WWW_VOLUME: &str = "dpl-www";
-
-/// Mount base of [`NGINX_WWW_VOLUME`] inside the nginx container.
+/// Mount point inside the nginx container of an http-server's per-instance www
+/// host dir; holds each served app's `<name>_<version>/...` export tree.
 pub const NGINX_WWW_MOUNT: &str = "/var/www";
 
 pub fn podman_spawn_error(err: io::Error) -> io::Error {
@@ -64,15 +61,6 @@ pub fn stop_and_remove(name: &UnitName) -> io::Result<()> {
     Ok(())
 }
 
-/// Create the named volume if it does not already exist.
-pub fn ensure_volume(name: &str) -> io::Result<()> {
-    if run_podman(&["volume", "exists", name]).is_err() {
-        run_podman(&["volume", "create", name])?;
-    }
-
-    Ok(())
-}
-
 /// Return whether the named image exists locally.
 pub fn image_exists(image: &str) -> bool {
     run_podman(&["image", "exists", image]).is_ok()
@@ -84,61 +72,22 @@ pub fn pull_image(image: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Copy a directory from an image into a named volume.
-pub fn copy_image_dir_to_volume(
-    image: &str,
-    source_dir: &str,
-    volume: &str,
-    dest_dir: &str,
-) -> io::Result<()> {
+/// Extract `source_dir` from `image` into host `dest_dir` (created if missing).
+/// Spawns a throwaway container and `podman cp`s the directory contents out.
+pub fn copy_image_dir_to_host(image: &str, source_dir: &str, dest_dir: &Path) -> io::Result<()> {
     let source_dir = normalize_container_dir_path(source_dir)?;
-    let dest_dir = normalize_volume_dir_path(dest_dir)?;
-    let source_container = temporary_volume_write_container();
-    let temp_dir = tempfile::tempdir()?;
-    let local_dest = temp_dir.path().join(&dest_dir);
-    fs::create_dir_all(&local_dest)?;
+    fs::create_dir_all(dest_dir)?;
 
-    run_podman(&["create", "--name", &source_container, image])?;
+    let container = format!("dpl-export-{}", cuid::cuid2());
+    run_podman(&["create", "--name", &container, image])?;
 
-    let src = format!("{source_container}:{source_dir}/.");
-    let dst = local_dest.display().to_string();
-    let copy_result = run_podman(&["cp", &src, &dst]);
-    let remove_result = run_podman(&["rm", "-f", "-v", "--ignore", &source_container]);
-
-    copy_result?;
-    remove_result?;
-    copy_host_dir_to_volume(volume, image, temp_dir.path())
-}
-
-/// Copy a directory from a host into a named volume.
-fn copy_host_dir_to_volume(volume: &str, image: &str, source_dir: &Path) -> io::Result<()> {
-    ensure_volume(volume)?;
-
-    let container = temporary_volume_write_container();
-    let mount = Path::new("/tmp").join(&container).display().to_string();
-    let volume_arg = format!("{volume}:{mount}");
-
-    run_podman(&[
-        "create",
-        "--name",
-        &container,
-        "--volume",
-        &volume_arg,
-        image,
-    ])?;
-
-    let src = format!("{}/.", source_dir.display());
-    let dst = format!("{container}:{mount}");
+    let src = format!("{container}:{source_dir}/.");
+    let dst = dest_dir.display().to_string();
     let copy_result = run_podman(&["cp", "--overwrite", &src, &dst]);
-    let remove_result = run_podman(&["rm", "-f", "-v", "--ignore", &container]);
+    let _ = run_podman(&["rm", "-f", "-v", "--ignore", &container]);
 
     copy_result?;
-    remove_result?;
     Ok(())
-}
-
-fn temporary_volume_write_container() -> String {
-    format!("dpl-volume-write-{}", cuid::cuid2())
 }
 
 fn normalize_container_dir_path(path: &str) -> io::Result<String> {
@@ -151,32 +100,6 @@ fn normalize_container_dir_path(path: &str) -> io::Result<String> {
     }
 
     Ok(normalized.to_string())
-}
-
-fn normalize_volume_dir_path(path: &str) -> io::Result<String> {
-    if path.is_empty() || path.starts_with('/') || path.contains('\'') {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "volume path must be relative and must not contain single quotes",
-        ));
-    }
-
-    let mut normalized = String::new();
-    for item in path.split('/') {
-        if item.is_empty() || item == "." || item == ".." {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "volume path must not contain empty, current or parent segments",
-            ));
-        }
-
-        if !normalized.is_empty() {
-            normalized.push('/');
-        }
-        normalized.push_str(item);
-    }
-
-    Ok(normalized)
 }
 
 /// Subset of `podman container inspect` we surface in reports.
@@ -344,18 +267,6 @@ mod tests {
 
         // A short/garbled row (fewer columns than expected) yields `None`.
         assert!(parse_stats("0.50%\t12.3MB / 4.0GB").is_none());
-    }
-
-    #[test]
-    fn normalizes_volume_dir_path() {
-        assert_eq!(
-            normalize_volume_dir_path("web_3/static").unwrap(),
-            "web_3/static"
-        );
-        assert!(normalize_volume_dir_path("").is_err());
-        assert!(normalize_volume_dir_path("/web_3/static").is_err());
-        assert!(normalize_volume_dir_path("web_3//static").is_err());
-        assert!(normalize_volume_dir_path("web_3/../static").is_err());
     }
 
     #[test]

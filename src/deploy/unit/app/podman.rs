@@ -9,33 +9,24 @@ use std::{
     },
 };
 
-use super::model::ExportConfig;
 use crate::{
     config::UnitName,
     log,
     log::cri_log::CriLog,
     podman::{
-        NGINX_WWW_VOLUME,
-        copy_image_dir_to_volume,
         podman_spawn_error,
         run_podman,
     },
 };
 
-pub struct PodmanContext<'a> {
-    name: &'a UnitName,
-    version: u32,
+pub struct PodmanContext {
     image_tag: String,
 }
 
-impl<'a> PodmanContext<'a> {
-    pub fn new(name: &'a UnitName, version: u32) -> Self {
+impl PodmanContext {
+    pub fn new(name: &UnitName, version: u32) -> Self {
         let image_tag = format!("localhost/{name}:{version}");
-        Self {
-            name,
-            version,
-            image_tag,
-        }
+        Self { image_tag }
     }
 
     pub fn build(
@@ -82,58 +73,12 @@ impl<'a> PodmanContext<'a> {
         Ok(())
     }
 
-    /// Export files from the podman image into the static volume under
-    /// `<name>_<version>/<path>/` at the volume root.
-    pub fn export(&self, exports: &[ExportConfig]) -> io::Result<()> {
-        if exports.is_empty() {
-            return Ok(());
-        }
-
-        let version_dir = format!("{}_{}", self.name, self.version);
-
-        for export in exports {
-            let src = export.source.trim_end_matches('/');
-            let dst = export_destination(&version_dir, &export.path);
-            copy_image_dir_to_volume(&self.image_tag, src, NGINX_WWW_VOLUME, &dst)?;
-        }
-
-        Ok(())
-    }
-
     pub fn remove(&self) {
         let _ = run_podman(&["rmi", &self.image_tag]);
 
         // Remove dangling images from local storage
         let _ = run_podman(&["image", "prune", "-f"]);
         let _ = run_podman(&["image", "prune", "-f", "--external"]);
-    }
-
-    /// Remove this version's exported files from the static volume.
-    pub fn remove_exports(&self) {
-        if run_podman(&["volume", "exists", NGINX_WWW_VOLUME]).is_err() {
-            return;
-        }
-
-        let mount = export_mount_path();
-        let volume_arg = format!("{NGINX_WWW_VOLUME}:{mount}");
-        let dir = format!("{mount}/{}_{}", self.name, self.version);
-        let script = format!("rm -rf -- '{dir}'");
-
-        if let Err(err) = run_podman(&[
-            "run",
-            "--rm",
-            "--volume",
-            &volume_arg,
-            &self.image_tag,
-            "/bin/sh",
-            "-c",
-            &script,
-        ]) {
-            log::warn(format!(
-                "remove exports {}_{} failed: {err}",
-                self.name, self.version
-            ));
-        }
     }
 }
 
@@ -167,11 +112,9 @@ impl PodmanBuild {
     }
 }
 
-fn export_mount_path() -> String {
-    format!("/tmp/dpl-export-{}", cuid::cuid2())
-}
-
-fn export_destination(version_dir: &str, path: &str) -> String {
+/// Place an export's `path` (a URL prefix) under `version_dir` to form the
+/// www-relative destination, e.g. `("web_3", "/static") -> "web_3/static"`.
+pub(super) fn export_destination(version_dir: &str, path: &str) -> String {
     let mut dst = version_dir.to_string();
     for item in path.trim_start_matches('/').split('/') {
         if !item.is_empty() {

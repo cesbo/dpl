@@ -11,6 +11,7 @@ use serde::Deserialize;
 pub use self::{
     env::{
         EnvList,
+        Ns,
         Value,
     },
     error::ConfigError,

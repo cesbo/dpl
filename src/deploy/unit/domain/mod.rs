@@ -11,6 +11,7 @@ use std::{
 
 use self::artifacts::ArtifactsContext;
 pub use self::model::DomainConfig;
+use super::app;
 use crate::{
     MainContext,
     config::UnitName,
@@ -67,6 +68,13 @@ impl<'a> DomainUnit<'a> {
 
         let conf_dir = self.ctx.http_conf_dir(&self.config.server);
         self.write_config(&conf_dir, resolved.as_ref())?;
+
+        // Copy each app this domain serves files from into the server's www dir,
+        // so nginx finds them at the `/var/www/<app>_<version>` root we rendered.
+        let www_dir = self.ctx.http_www_dir(&self.config.server);
+        for serve_app in self.config.exported_apps() {
+            app::export_to_www(self.ctx, &serve_app, &www_dir)?;
+        }
 
         HttpServerUnit::new(self.ctx, &self.config.server, server_config).reload_or_deploy()
     }

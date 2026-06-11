@@ -12,6 +12,7 @@ use super::{
 use crate::{
     MainContext,
     config::{
+        Ns,
         UnitName,
         Value,
     },
@@ -79,6 +80,24 @@ pub enum RouteConfig {
 impl DomainConfig {
     pub const KIND: &'static str = "domain";
 
+    /// Apps referenced via `${app:export}` in any `serve_files` route - the apps
+    /// whose static files must be copied into this domain's http-server www dir.
+    pub fn exported_apps(&self) -> BTreeSet<UnitName> {
+        let mut apps = BTreeSet::new();
+        for route in &self.routes {
+            if let RouteConfig::ServeFiles { root, .. } = route {
+                for (ns, key) in root.references() {
+                    if key == "export"
+                        && let Ns::Unit(app) = ns
+                    {
+                        apps.insert(app.clone());
+                    }
+                }
+            }
+        }
+        apps
+    }
+
     /// Units referenced through `${unit:key}` tokens across every route's
     /// `target`/`root`, deduplicated and sorted.
     ///
@@ -142,6 +161,19 @@ mod tests {
         let names: Vec<&str> = deps.iter().map(UnitName::as_str).collect();
         // Sorted; the literal root contributes nothing.
         assert_eq!(names, vec!["assets", "backend", "worker"]);
+    }
+
+    #[test]
+    fn domain_exported_apps_only_serve_files_export_refs() {
+        let config: DomainConfig = serde_yaml::from_str(
+            "server: web\nhosts:\n  - example.com\nroutes:\n  - location: /api\n    kind: reverse_proxy\n    target: \"${backend:url}\"\n  - location: /static\n    kind: serve_files\n    root: \"${assets:export}\"\n  - location: /lit\n    kind: serve_files\n    root: \"/var/www/site\"\n  - location: /blog\n    kind: serve_files\n    root: \"${blog:export}\"\n",
+        )
+        .unwrap();
+        let exported = config.exported_apps();
+        let apps: Vec<&str> = exported.iter().map(UnitName::as_str).collect();
+        // Only serve_files roots referencing `:export`: backend (:url, reverse_proxy)
+        // and the literal root contribute nothing.
+        assert_eq!(apps, vec!["assets", "blog"]);
     }
 
     #[test]

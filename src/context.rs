@@ -16,10 +16,6 @@ use crate::{
     },
 };
 
-const CONF_DIR: &str = "conf";
-const STATE_DIR: &str = "state";
-const BACKUP_DIR: &str = "backup";
-
 #[derive(Debug, Error)]
 pub enum ContextError {
     #[error("resolve base directory '{}'", path.display())]
@@ -70,12 +66,12 @@ impl MainContext {
 
     /// `{base}/conf` - unit config files, one `{unit}.yaml` per unit.
     pub fn conf_dir(&self) -> PathBuf {
-        self.base.join(CONF_DIR)
+        self.base.join("conf")
     }
 
     /// `{base}/state` - per-unit state subdirs plus `serve.pid`.
     pub fn state_dir(&self) -> PathBuf {
-        self.base.join(STATE_DIR)
+        self.base.join("state")
     }
 
     /// `{base}/state/{unit}` - the unit's state, lock, and log files.
@@ -98,7 +94,7 @@ impl MainContext {
 
     /// `{base}/backup` - database dumps written before a destructive drop.
     pub fn backup_dir(&self) -> PathBuf {
-        self.base.join(BACKUP_DIR)
+        self.base.join("backup")
     }
 
     pub fn config_path(&self, unit: &UnitName) -> PathBuf {
@@ -145,6 +141,13 @@ impl MainContext {
     /// dependent domain's `<domain>.conf`.
     pub fn http_conf_dir(&self, unit: &UnitName) -> PathBuf {
         self.unit_state_dir(unit).join("conf")
+    }
+
+    /// `{base}/state/{unit}/www` - static-export root for an http-server,
+    /// bind-mounted read-only into nginx at `/var/www`. Holds each served app's
+    /// `<app>_<version>/...` tree, copied in at domain deploy.
+    pub fn http_www_dir(&self, unit: &UnitName) -> PathBuf {
+        self.unit_state_dir(unit).join("www")
     }
 
     /// `{base}/state/{unit}/.env-v{version}.json` - encrypted runtime env

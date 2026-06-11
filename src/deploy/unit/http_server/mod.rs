@@ -1,9 +1,6 @@
 mod model;
 
-use std::{
-    fs,
-    path::PathBuf,
-};
+use std::fs;
 
 pub use self::model::{
     HttpPort,
@@ -19,8 +16,6 @@ use crate::{
     log,
     podman::{
         NGINX_WWW_MOUNT,
-        NGINX_WWW_VOLUME,
-        ensure_volume,
         health,
         image_exists,
         pull_image,
@@ -100,10 +95,8 @@ impl<'a> HttpServerUnit<'a> {
         }
     }
 
-    /// Hand the container off to `dpl serve` and wait until the
-    /// engine accepts connections.
-    /// Set up the volumes nginx needs: write `00-dpl.conf` into the unit's conf
-    /// volume and ensure the shared www volume exists.
+    /// Prepare the on-host directories nginx bind-mounts: write `00-dpl.conf`
+    /// into the unit's conf dir and create the (initially empty) www dir.
     fn install_inner(&self) -> Result<(), DeployError> {
         let conf_dir = self.ctx.http_conf_dir(self.name);
 
@@ -119,10 +112,9 @@ impl<'a> HttpServerUnit<'a> {
         fs::write(conf_dir.join(GLOBAL_CONFIG_FILE), GLOBAL_CONFIG)
             .map_err(|e| DeployError::step_install("write global config for http-server", e))?;
 
-        log::phase("preparing www volume");
-        ensure_volume(NGINX_WWW_VOLUME).map_err(|e| {
-            DeployError::step_install(format!("get volume '{NGINX_WWW_VOLUME}'"), e)
-        })?;
+        // Create the www bind source so the mount has a directory to attach to.
+        fs::create_dir_all(self.ctx.http_www_dir(self.name))
+            .map_err(|e| DeployError::step_install("create http-server www dir", e))?;
 
         Ok(())
     }
@@ -142,9 +134,14 @@ impl<'a> HttpServerUnit<'a> {
             cmd.publish(https_port, 443);
         }
 
-        cmd.volume(NGINX_WWW_VOLUME, NGINX_WWW_MOUNT);
-        let conf_dir = self.ctx.http_conf_dir(self.name);
-        cmd.volume_ro(conf_dir.to_string_lossy(), "/etc/nginx/conf.d");
+        cmd.volume_ro(
+            self.ctx.http_www_dir(self.name).to_string_lossy(),
+            NGINX_WWW_MOUNT,
+        );
+        cmd.volume_ro(
+            self.ctx.http_conf_dir(self.name).to_string_lossy(),
+            "/etc/nginx/conf.d",
+        );
 
         cmd.run_foreground(&self.config.image, &self.ctx.runtime_log_path(self.name))
             .map_err(|e| RunError::new("run podman foreground", e))

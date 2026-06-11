@@ -20,7 +20,10 @@ use tempfile::TempDir;
 pub use self::model::AppConfig;
 use self::{
     artifacts::ArtifactsContext,
-    podman::PodmanContext,
+    podman::{
+        PodmanContext,
+        export_destination,
+    },
 };
 use crate::{
     MainContext,
@@ -38,6 +41,7 @@ use crate::{
         },
     },
     log,
+    podman::copy_image_dir_to_host,
     state::DeployState,
     timers::TimersState,
 };
@@ -207,16 +211,8 @@ impl<'a> AppUnit<'a> {
     }
 
     fn install_inner(&self, _deploy_dir: &Path, version: u32) -> Result<(), DeployError> {
-        if !self.config.exports.is_empty() {
-            log::phase("exporting files");
-            PodmanContext::new(self.name, version)
-                .export(&self.config.exports)
-                .map_err(|e| DeployError::step_install("export files", e))?;
-        }
-
-        // A static build-and-export unit has no runtime: nothing else to install.
-        // The build + export above is the whole deploy. Starting the container is
-        // `dpl serve` starts the container (see `start_via_serve`).
+        // A static export-only unit has no runtime.
+        // Files are copied into a server's www dir later, at domain deploy.
         if self.config.runtime.is_none() {
             return Ok(());
         }
@@ -302,8 +298,6 @@ impl<'a> AppUnit<'a> {
 
         let podman_ctx = PodmanContext::new(name, version);
 
-        podman_ctx.remove_exports();
-
         if let Err(err) = crate::podman::env::remove(ctx, name, version) {
             log::warn(format!(
                 "remove runtime env file for '{name} v{version}': {err}"
@@ -387,6 +381,61 @@ fn save_archive<R: Read>(archive: R, dst: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Copy `app`'s static exports (its active version) into `www_dir`
+/// Wupe any prior `<app>_*` there.
+pub fn export_to_www(ctx: &MainContext, app: &UnitName, www_dir: &Path) -> Result<(), DeployError> {
+    let UnitConfig::App(config) = UnitConfig::load(ctx, app)
+        .map_err(|e| DeployError::step_prepare(format!("load app '{app}'"), e))?
+    else {
+        return Ok(());
+    };
+
+    if config.exports.is_empty() {
+        return Ok(());
+    }
+
+    let version = DeployState::get_active_version(ctx, app)
+        .map_err(|e| DeployError::step_prepare(format!("active version for app '{app}'"), e))?;
+    let image = format!("localhost/{app}:{version}");
+    let version_dir = format!("{app}_{version}");
+
+    wipe_app_dirs(www_dir, app);
+
+    for export in &config.exports {
+        let src = export.source.trim_end_matches('/');
+        let dest = www_dir.join(export_destination(&version_dir, &export.path));
+        copy_image_dir_to_host(&image, src, &dest)
+            .map_err(|e| DeployError::step_install(format!("export app '{app}' to www"), e))?;
+    }
+
+    Ok(())
+}
+
+/// Remove every `<app>_*` export directly under `www_dir`.
+fn wipe_app_dirs(www_dir: &Path, app: &UnitName) {
+    let Ok(entries) = fs::read_dir(www_dir) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if name.to_str().is_some_and(|n| is_app_export_dir(n, app))
+            && let Err(err) = fs::remove_dir_all(entry.path())
+        {
+            log::warn(format!(
+                "remove stale export '{}': {err}",
+                entry.path().display()
+            ));
+        }
+    }
+}
+
+fn is_app_export_dir(name: &str, app: &UnitName) -> bool {
+    name.strip_prefix(app.as_str())
+        .and_then(|rest| rest.strip_prefix('_'))
+        .is_some_and(|version| !version.is_empty() && version.bytes().all(|b| b.is_ascii_digit()))
+}
+
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
@@ -438,5 +487,34 @@ mod tests {
         let domains = app.dependent_domains();
         let names: Vec<&str> = domains.iter().map(|(name, _)| name.as_str()).collect();
         assert_eq!(names, vec!["site"]);
+    }
+
+    #[test]
+    fn is_app_export_dir_matches_versioned_dirs_only() {
+        let app = UnitName::new("blog").unwrap();
+        assert!(is_app_export_dir("blog_3", &app));
+        assert!(is_app_export_dir("blog_12", &app));
+        assert!(!is_app_export_dir("blog", &app)); // no version suffix
+        assert!(!is_app_export_dir("blog_", &app)); // empty version
+        assert!(!is_app_export_dir("blog_v2", &app)); // non-numeric version
+        assert!(!is_app_export_dir("blogger_1", &app)); // different app, shared prefix
+    }
+
+    #[test]
+    fn wipe_app_dirs_removes_only_matching_app() {
+        let dir = TempDir::new().unwrap();
+        let www = dir.path();
+        let app = UnitName::new("blog").unwrap();
+        fs::create_dir_all(www.join("blog_1/static")).unwrap();
+        fs::create_dir_all(www.join("blog_2")).unwrap();
+        fs::create_dir_all(www.join("blogger_1")).unwrap();
+        fs::create_dir_all(www.join("shop_3")).unwrap();
+
+        wipe_app_dirs(www, &app);
+
+        assert!(!www.join("blog_1").exists());
+        assert!(!www.join("blog_2").exists());
+        assert!(www.join("blogger_1").exists()); // shared-prefix app untouched
+        assert!(www.join("shop_3").exists()); // other app untouched
     }
 }
