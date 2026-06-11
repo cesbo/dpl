@@ -212,7 +212,6 @@ fn drop(ctx: &MainContext, name: &UnitName) -> Result<()> {
         .with_context(|| format!("drop database '{name}'"))?;
 
     let _ = fs::remove_dir_all(ctx.unit_state_dir(name));
-    let _ = crate::log::cri_log::remove_all(ctx.build_log_path(name));
 
     eprintln!("{} dropped database '{name}'", success_mark());
 

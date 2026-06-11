@@ -18,7 +18,6 @@ use crate::{
 
 const CONF_DIR: &str = "conf";
 const STATE_DIR: &str = "state";
-const LOG_DIR: &str = "log";
 const BACKUP_DIR: &str = "backup";
 
 #[derive(Debug, Error)]
@@ -79,21 +78,22 @@ impl MainContext {
         self.base.join(STATE_DIR)
     }
 
-    /// `{base}/state/{unit}` - the unit's state and lock files.
+    /// `{base}/state/{unit}` - the unit's state, lock, and log files.
     /// Created on demand by DeployLockGuard or TimerLockGuard.
     pub fn unit_state_dir(&self, unit: &UnitName) -> PathBuf {
         self.state_dir().join(unit.as_str())
+    }
+
+    /// `{base}/state/{unit}/log` - the unit's log files.
+    /// Created on demand by CriLog::open.
+    pub fn unit_log_dir(&self, unit: &UnitName) -> PathBuf {
+        self.unit_state_dir(unit).join("log")
     }
 
     /// `{base}/state/serve.pid` - PID of the running `dpl serve`.
     /// The serve process holds an exclusive lock on this file.
     pub fn serve_pid_path(&self) -> PathBuf {
         self.state_dir().join("serve.pid")
-    }
-
-    /// `{base}/log` - per-unit build logs.
-    pub fn log_dir(&self) -> PathBuf {
-        self.base.join(LOG_DIR)
     }
 
     /// `{base}/backup` - database dumps written before a destructive drop.
@@ -121,24 +121,23 @@ impl MainContext {
         self.unit_state_dir(unit).join("timers.lock")
     }
 
-    /// `{base}/log/{unit}.build.log` - unit's last build.
+    /// `{base}/state/{unit}/log/build.log` - unit's last build.
     /// Captured podman output in CRI format.
     /// Build for app unit, restore for db unit.
     pub fn build_log_path(&self, unit: &UnitName) -> PathBuf {
-        self.log_dir().join(format!("{}.build.log", unit.as_str()))
+        self.unit_log_dir(unit).join("build.log")
     }
 
-    /// `{base}/log/{unit}.timers.log` - unit's timers.
+    /// `{base}/state/{unit}/log/timers.log` - unit's timers.
     /// Captured podman output in CRI format
     pub fn timers_log_path(&self, unit: &UnitName) -> PathBuf {
-        self.log_dir().join(format!("{}.timers.log", unit.as_str()))
+        self.unit_log_dir(unit).join("timers.log")
     }
 
-    /// `{base}/log/{unit}.runtime.log` - unit's runtime container.
+    /// `{base}/state/{unit}/log/runtime.log` - unit's runtime container.
     /// stdout/stderr captured by `dpl start` in CRI format.
     pub fn runtime_log_path(&self, unit: &UnitName) -> PathBuf {
-        self.log_dir()
-            .join(format!("{}.runtime.log", unit.as_str()))
+        self.unit_log_dir(unit).join("runtime.log")
     }
 
     pub fn resolve_secret(&self, name: &SecretName) -> Result<String, SecretError> {

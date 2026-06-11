@@ -18,19 +18,22 @@ exits, and stopping it on shutdown.
 ## Layout
 
 `{base_dir}` is the base directory, default `/opt/dpl`, override with `DPL_BASE`.
-Files are grouped by kind, not by unit:
+Configs and secrets are grouped by kind; runtime state and logs live in a
+per-unit directory:
 
 - `{base_dir}/conf/{name}.yaml` - unit config (`type:` selects the variant)
-- `{base_dir}/state/{name}/` - per-unit runtime state and locks:
+- `{base_dir}/state/{name}/` - per-unit runtime state, locks, and logs:
   - `deploy.json` - deploy state (unit kind, active version, last status)
   - `deploy.lock` - advisory `flock(2)` held during a deploy
   - `timers.json` - timer run state
   - `timers.lock` - advisory `flock(2)` held while a timer runs
+  - `log/build.log` - last build: captured podman build/restore output, CRI
+    `k8s-file` format; cleared at the start of each deploy
+  - `log/runtime.log` - container stdout/stderr, captured by `dpl start`, CRI
+    `k8s-file` format; rotated at 20mb
+  - `log/timers.log` - all timer run output for the unit, CRI `k8s-file`
+    format with the timer name as a label column; rotated at 20mb
 - `{base_dir}/state/serve.pid` - PID file and single-instance lock for `dpl serve`
-- `{base_dir}/log/{name}.build.log` - last build: captured podman build/restore
-  output, CRI `k8s-file` format; cleared at the start of each deploy
-- `{base_dir}/log/{name}.timers.log` - all timer run output for the unit, CRI
-  `k8s-file` format with the timer name as a label column; rotated at 20mb
 - `{base_dir}/secrets/` - encrypted secrets (`master.key` plus `{name}.json`)
 - `{base_dir}/backup/` - database dumps written before a destructive drop
 
@@ -264,7 +267,7 @@ deployment state so serve and timers stop treating the unit as desired.
 
 Serve also runs the timer loop. Due app timers are executed through
 `dpl timer <unit> <timer>`, which runs the timer script inside the running
-container and writes output to `{base_dir}/log/{name}.timers.log`.
+container and writes output to `{base_dir}/state/{name}/log/timers.log`.
 
 ## Notes
 
