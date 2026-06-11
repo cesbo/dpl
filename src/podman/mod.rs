@@ -84,24 +84,6 @@ pub fn pull_image(image: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Write a file into a named volume.
-pub fn write_volume_file(
-    volume: &str,
-    image: &str,
-    path: &str,
-    content: impl AsRef<[u8]>,
-) -> io::Result<()> {
-    let rel_path = normalize_volume_file_path(path)?;
-    let temp_dir = tempfile::tempdir()?;
-    let local_file = temp_dir.path().join(&rel_path);
-    if let Some(parent) = local_file.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&local_file, content)?;
-
-    copy_host_dir_to_volume(volume, image, temp_dir.path())
-}
-
 /// Copy a directory from an image into a named volume.
 pub fn copy_image_dir_to_volume(
     image: &str,
@@ -169,18 +151,6 @@ fn normalize_container_dir_path(path: &str) -> io::Result<String> {
     }
 
     Ok(normalized.to_string())
-}
-
-fn normalize_volume_file_path(path: &str) -> io::Result<String> {
-    let normalized = normalize_volume_dir_path(path)?;
-    if normalized.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "volume file path must not be empty",
-        ));
-    }
-
-    Ok(normalized)
 }
 
 fn normalize_volume_dir_path(path: &str) -> io::Result<String> {
@@ -374,18 +344,6 @@ mod tests {
 
         // A short/garbled row (fewer columns than expected) yields `None`.
         assert!(parse_stats("0.50%\t12.3MB / 4.0GB").is_none());
-    }
-
-    #[test]
-    fn normalizes_volume_file_path() {
-        assert_eq!(
-            normalize_volume_file_path("nginx/example.conf").unwrap(),
-            "nginx/example.conf"
-        );
-        assert!(normalize_volume_file_path("/example.conf").is_err());
-        assert!(normalize_volume_file_path("nginx//example.conf").is_err());
-        assert!(normalize_volume_file_path("nginx/../example.conf").is_err());
-        assert!(normalize_volume_file_path("bad'name.conf").is_err());
     }
 
     #[test]

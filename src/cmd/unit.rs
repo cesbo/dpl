@@ -33,7 +33,10 @@ use crate::{
             DbServerUnit,
             DbUnit,
         },
-        domain::DomainUnit,
+        domain::{
+            DomainConfig,
+            DomainUnit,
+        },
         http_server::HttpServerUnit,
     },
     log::{
@@ -344,6 +347,7 @@ pub fn undeploy(ctx: &MainContext, name: &UnitName) -> Result<()> {
         Some(DbServerConfig::KIND) if outcome.active_version.is_some() => {
             DbServerUnit::undeploy(ctx, name, outcome.active_version.unwrap());
         }
+        Some(DomainConfig::KIND) => DomainUnit::undeploy(ctx, name),
         _ => {
             if supervised {
                 crate::podman::stop_and_remove(name)

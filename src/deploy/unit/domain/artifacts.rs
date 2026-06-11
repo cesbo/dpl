@@ -19,7 +19,6 @@ use crate::{
         ArtifactError,
         render_template,
     },
-    config::UnitName,
     reference::ReferenceError,
 };
 
@@ -42,16 +41,11 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
 
 pub struct ArtifactsContext<'a> {
     pub ctx: &'a MainContext,
-    pub name: &'a UnitName,
     pub config: &'a DomainConfig,
     pub proxy: Option<&'a ResolvedProxy>,
 }
 
 impl<'a> ArtifactsContext<'a> {
-    pub fn filename(&self) -> String {
-        format!("{}.conf", self.name)
-    }
-
     pub fn render(&self) -> Result<String, ArtifactError> {
         let mut routes = Vec::new();
         for route in &self.config.routes {

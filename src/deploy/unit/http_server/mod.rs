@@ -1,5 +1,10 @@
 mod model;
 
+use std::{
+    fs,
+    path::PathBuf,
+};
+
 pub use self::model::{
     HttpPort,
     HttpServerConfig,
@@ -19,7 +24,6 @@ use crate::{
         health,
         image_exists,
         pull_image,
-        write_volume_file,
     },
     state::DeployState,
 };
@@ -40,12 +44,6 @@ impl<'a> HttpServerUnit<'a> {
         Self { ctx, name, config }
     }
 
-    /// Per-instance conf volume name (`dpl--<name>-conf`). Holds the global
-    /// `00-dpl.conf` plus every dependent domain's `<domain>.conf`.
-    pub fn conf_volume(&self) -> String {
-        format!("{}-conf", self.name.scoped_unit_name())
-    }
-
     pub fn deploy(self, state: &mut DeployState) -> Result<(), DeployError> {
         self.install_inner()?;
 
@@ -63,6 +61,15 @@ impl<'a> HttpServerUnit<'a> {
         Ok(())
     }
 
+    /// Ask the running nginx to reload its config (`nginx -s reload`).
+    pub fn reload(name: &UnitName) -> Result<(), DeployError> {
+        let container = name.scoped_unit_name();
+        crate::podman::run_podman(&["exec", &container, "nginx", "-s", "reload"])
+            .map_err(|e| DeployError::step_install(format!("reload http-server '{name}'"), e))?;
+
+        Ok(())
+    }
+
     /// Make this http-server reflect on-disk config:
     ///   - if its container is running, ask nginx to reload (fast path);
     ///   - otherwise run a full deploy under the unit's own DeployState lock,
@@ -70,12 +77,7 @@ impl<'a> HttpServerUnit<'a> {
     pub fn reload_or_deploy(self) -> Result<(), DeployError> {
         if crate::podman::is_running(self.name) {
             log::phase(format!("reloading http-server '{}'", self.name));
-            let container = self.name.scoped_unit_name();
-            crate::podman::run_podman(&["exec", &container, "nginx", "-s", "reload"]).map_err(
-                |e| DeployError::step_install(format!("reload http-server '{}'", self.name), e),
-            )?;
-
-            return Ok(());
+            return Self::reload(self.name);
         }
 
         let (_guard, mut state) = DeployState::acquire(self.ctx, self.name).map_err(|e| {
@@ -103,7 +105,7 @@ impl<'a> HttpServerUnit<'a> {
     /// Set up the volumes nginx needs: write `00-dpl.conf` into the unit's conf
     /// volume and ensure the shared www volume exists.
     fn install_inner(&self) -> Result<(), DeployError> {
-        let conf_volume = self.conf_volume();
+        let conf_dir = self.ctx.http_conf_dir(self.name);
 
         if !image_exists(&self.config.image) {
             log::phase("downloading http-server image");
@@ -112,13 +114,10 @@ impl<'a> HttpServerUnit<'a> {
         }
 
         log::phase("writing http-server config");
-        write_volume_file(
-            &conf_volume,
-            &self.config.image,
-            GLOBAL_CONFIG_FILE,
-            GLOBAL_CONFIG,
-        )
-        .map_err(|e| DeployError::step_install("write global config for http-server", e))?;
+        fs::create_dir_all(&conf_dir)
+            .map_err(|e| DeployError::step_install("create http-server conf dir", e))?;
+        fs::write(conf_dir.join(GLOBAL_CONFIG_FILE), GLOBAL_CONFIG)
+            .map_err(|e| DeployError::step_install("write global config for http-server", e))?;
 
         log::phase("preparing www volume");
         ensure_volume(NGINX_WWW_VOLUME).map_err(|e| {
@@ -144,7 +143,8 @@ impl<'a> HttpServerUnit<'a> {
         }
 
         cmd.volume(NGINX_WWW_VOLUME, NGINX_WWW_MOUNT);
-        cmd.volume(self.conf_volume(), "/etc/nginx/conf.d");
+        let conf_dir = self.ctx.http_conf_dir(self.name);
+        cmd.volume_ro(conf_dir.to_string_lossy(), "/etc/nginx/conf.d");
 
         cmd.run_foreground(&self.config.image, &self.ctx.runtime_log_path(self.name))
             .map_err(|e| RunError::new("run podman foreground", e))

@@ -140,6 +140,13 @@ impl MainContext {
         self.unit_log_dir(unit).join("runtime.log")
     }
 
+    /// `{base}/state/{unit}/conf` - nginx conf.d source for an http-server,
+    /// bind-mounted read-only into the container. Holds `00-dpl.conf` plus each
+    /// dependent domain's `<domain>.conf`.
+    pub fn http_conf_dir(&self, unit: &UnitName) -> PathBuf {
+        self.unit_state_dir(unit).join("conf")
+    }
+
     /// `{base}/state/{unit}/.env-v{version}.json` - encrypted runtime env
     /// for a deployed version, written at deploy and read by `dpl start`.
     pub fn runtime_env_path(&self, unit: &UnitName, version: u32) -> PathBuf {

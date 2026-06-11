@@ -98,6 +98,11 @@ impl PodmanRun {
         self.arg(format!("--volume={src}:{dst}"));
     }
 
+    /// Read-only bind mount: `--volume={src}:{dst}:ro`.
+    pub fn volume_ro(&mut self, src: impl AsRef<str>, dst: impl AsRef<str>) {
+        self.arg(format!("--volume={}:{}:ro", src.as_ref(), dst.as_ref()));
+    }
+
     /// Publish a container’s port, or range of ports, to the host.
     pub fn publish(&mut self, host_port: u16, container_port: u16) {
         self.arg(format!("--publish={host_port}:{container_port}"))
