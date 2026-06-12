@@ -365,7 +365,7 @@ impl<'a> AppUnit<'a> {
         }
 
         for volume in &self.config.volumes {
-            cmd.volume(&volume.source, &volume.path);
+            cmd.volume(&volume.source, &volume.path, &[]);
         }
 
         let image = format!("localhost/{}:{}", self.name, version);

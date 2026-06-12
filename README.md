@@ -168,7 +168,8 @@ https_port: false
 ## Database units
 
 - **`db-server`** - containerized DBMS (PostgreSQL, MariaDB, or MySQL). One
-  engine instance, one root password
+  engine instance, one root password. Physical data lives in a Podman named
+  volume with the scoped unit name.
 - **`db`** - a single database + login user inside an existing `db-server`
 
 ```yaml

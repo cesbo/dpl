@@ -134,13 +134,15 @@ impl<'a> HttpServerUnit<'a> {
             cmd.publish(https_port, 443);
         }
 
-        cmd.volume_ro(
+        cmd.volume(
             self.ctx.http_www_dir(self.name).to_string_lossy(),
             NGINX_WWW_MOUNT,
+            &["ro"],
         );
-        cmd.volume_ro(
+        cmd.volume(
             self.ctx.http_conf_dir(self.name).to_string_lossy(),
             "/etc/nginx/conf.d",
+            &["ro"],
         );
 
         cmd.run_foreground(&self.config.image, &self.ctx.runtime_log_path(self.name))

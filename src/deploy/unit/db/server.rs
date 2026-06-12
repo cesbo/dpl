@@ -148,7 +148,7 @@ impl<'a> DbServerUnit<'a> {
         }
 
         let engine = self.config.engine;
-        cmd.volume(format!("{container}-data"), engine.data_path());
+        cmd.volume(&container, engine.data_path(), &[]);
 
         cmd.run_foreground(self.config.image(), &self.ctx.runtime_log_path(self.name))
             .map_err(|e| RunError::new("run podman foreground", e))

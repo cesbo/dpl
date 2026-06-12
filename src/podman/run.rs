@@ -89,18 +89,19 @@ impl PodmanRun {
     }
 
     /// Creates a bind mount.
-    /// Adds arguemnt `--volume={src}:{dst}` to pass to the podman.
+    /// Adds argument `--volume={src}:{dst}[:params]` to pass to podman.
     /// - `src` - volume name or absolute path to the host dir
     /// - `dst` - absolute path to the container dir
-    pub fn volume(&mut self, src: impl AsRef<str>, dst: impl AsRef<str>) {
+    /// - `params` - optional mount parameters, for example `["ro"]` or `["U", "Z"]`
+    pub fn volume(&mut self, src: impl AsRef<str>, dst: impl AsRef<str>, params: &[&str]) {
         let src = src.as_ref();
         let dst = dst.as_ref();
-        self.arg(format!("--volume={src}:{dst}"));
-    }
-
-    /// Read-only bind mount: `--volume={src}:{dst}:ro`.
-    pub fn volume_ro(&mut self, src: impl AsRef<str>, dst: impl AsRef<str>) {
-        self.arg(format!("--volume={}:{}:ro", src.as_ref(), dst.as_ref()));
+        let mut arg = format!("--volume={src}:{dst}");
+        if !params.is_empty() {
+            arg.push(':');
+            arg.push_str(&params.join(","));
+        }
+        self.arg(arg);
     }
 
     /// Publish a container’s port, or range of ports, to the host.
