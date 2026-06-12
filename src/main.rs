@@ -132,7 +132,11 @@ fn run() -> Result<()> {
 fn base_dir() -> Result<PathBuf> {
     match env::var_os("DPL_BASE") {
         Some(value) if value.is_empty() => anyhow::bail!("DPL_BASE must not be empty"),
-        Some(value) => Ok(PathBuf::from(value)),
+        Some(value) => {
+            let base = PathBuf::from(value);
+            std::path::absolute(&base)
+                .with_context(|| format!("resolve DPL_BASE '{}'", base.display()))
+        }
         None => Ok(PathBuf::from("/opt/dpl")),
     }
 }
