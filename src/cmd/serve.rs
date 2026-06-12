@@ -49,6 +49,12 @@ pub fn run(ctx: &MainContext) -> Result<()> {
     // Make sure the master key is ready.
     super::secret::load_or_create_key(ctx).context("ensure master key")?;
 
+    eprintln!(
+        "dpl serve {} base={}",
+        env!("CARGO_PKG_VERSION"),
+        ctx.base().display()
+    );
+
     let shutdown = Arc::new(AtomicBool::new(false));
     for signal in [SIGTERM, SIGINT] {
         signal_hook::flag::register(signal, Arc::clone(&shutdown))
