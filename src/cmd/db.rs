@@ -18,10 +18,7 @@ use anyhow::{
 };
 use chrono::Utc;
 use clap::Subcommand;
-use dialoguer::{
-    Confirm,
-    Input,
-};
+use dialoguer::Confirm;
 use flate2::{
     Compression,
     write::GzEncoder,
@@ -82,6 +79,9 @@ enum Cmd {
     Drop {
         /// Database unit name
         name: UnitName,
+        /// Drop without interactive prompts
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -90,7 +90,7 @@ pub fn run(ctx: &MainContext, args: Args) -> Result<()> {
         Cmd::Wait { name, timeout } => wait(ctx, &name, timeout),
         Cmd::Console { name, root } => console(ctx, &name, root),
         Cmd::Backup { name, path, gzip } => backup(ctx, &name, &path, gzip),
-        Cmd::Drop { name } => drop(ctx, &name),
+        Cmd::Drop { name, yes } => drop(ctx, &name, yes),
     }
 }
 
@@ -166,28 +166,30 @@ fn backup(ctx: &MainContext, name: &UnitName, path: &str, gzip: bool) -> Result<
     Ok(())
 }
 
-fn drop(ctx: &MainContext, name: &UnitName) -> Result<()> {
+fn drop(ctx: &MainContext, name: &UnitName, yes: bool) -> Result<()> {
     let db_config = load_db(ctx, name)?;
     let server_config = load_db_server(ctx, &db_config.server)?;
 
     let (_guard, _state) =
         DeployState::acquire(ctx, name).with_context(|| format!("acquire unit '{name}'"))?;
 
-    loop {
-        let confirm: String = Input::with_theme(&crate::cmd::prompt_theme())
-            .with_prompt(format!("Type '{name}' to confirm dropping the database"))
-            .allow_empty(true)
-            .interact_text()?;
+    if !yes {
+        let confirm = Confirm::with_theme(&crate::cmd::prompt_theme())
+            .with_prompt(format!("Drop database '{name}'?"))
+            .default(false)
+            .interact()?;
 
-        if confirm == name.as_str() {
-            break;
+        if !confirm {
+            eprintln!("Cancelled");
+            return Ok(());
         }
     }
 
-    let make_backup = Confirm::with_theme(&crate::cmd::prompt_theme())
-        .with_prompt("Create a backup before dropping?")
-        .default(true)
-        .interact()?;
+    let make_backup = yes
+        || Confirm::with_theme(&crate::cmd::prompt_theme())
+            .with_prompt("Create a backup before dropping?")
+            .default(true)
+            .interact()?;
 
     if make_backup {
         let stamp = Utc::now().format("%Y%m%d-%H%M%S");
