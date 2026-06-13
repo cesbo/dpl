@@ -75,6 +75,16 @@ pub enum RouteConfig {
         #[serde(default)]
         spa: bool,
     },
+    Redirect {
+        /// URL location prefix (e.g. "/old")
+        location: RouteLocation,
+        /// Destination URL. nginx variables need a doubled `$` ($$ renders to a
+        /// single $), e.g. "https://example.com$$request_uri".
+        target: Value,
+        /// Emit 301 (permanent) instead of the default 302 (temporary).
+        #[serde(default)]
+        permanent: bool,
+    },
 }
 
 impl DomainConfig {
@@ -109,6 +119,7 @@ impl DomainConfig {
                 RouteConfig::ReverseProxy { target, .. } => target,
                 RouteConfig::Uwsgi { target, .. } => target,
                 RouteConfig::ServeFiles { root, .. } => root,
+                RouteConfig::Redirect { target, .. } => target,
             };
             deps.extend(value.unit_refs().cloned());
         }
@@ -125,6 +136,7 @@ impl DomainConfig {
                 RouteConfig::ReverseProxy { target, .. } => (target, "target"),
                 RouteConfig::Uwsgi { target, .. } => (target, "target"),
                 RouteConfig::ServeFiles { root, .. } => (root, "root"),
+                RouteConfig::Redirect { target, .. } => (target, "target"),
             };
             value
                 .render(ctx)
@@ -174,6 +186,34 @@ mod tests {
         // Only serve_files roots referencing `:export`: backend (:url, reverse_proxy)
         // and the literal root contribute nothing.
         assert_eq!(apps, vec!["assets", "blog"]);
+    }
+
+    #[test]
+    fn parse_redirect_route_permanent_default_and_explicit() {
+        let config: DomainConfig = serde_yaml::from_str(
+            "server: web\nhosts:\n  - example.com\nroutes:\n  - location: /old\n    kind: redirect\n    target: \"https://example.com$$request_uri\"\n  - location: /moved\n    kind: redirect\n    target: \"https://example.com/new\"\n    permanent: true\n",
+        )
+        .unwrap();
+
+        match &config.routes[0] {
+            RouteConfig::Redirect { permanent, .. } => assert!(!permanent, "defaults to 302"),
+            _ => panic!("expected redirect"),
+        }
+        match &config.routes[1] {
+            RouteConfig::Redirect { permanent, .. } => assert!(permanent, "explicit 301"),
+            _ => panic!("expected redirect"),
+        }
+    }
+
+    #[test]
+    fn redirect_target_contributes_to_unit_deps() {
+        let config: DomainConfig = serde_yaml::from_str(
+            "server: web\nhosts:\n  - example.com\nroutes:\n  - location: /go\n    kind: redirect\n    target: \"${backend:url}\"\n",
+        )
+        .unwrap();
+        let deps = config.unit_deps();
+        let names: Vec<&str> = deps.iter().map(UnitName::as_str).collect();
+        assert_eq!(names, vec!["backend"]);
     }
 
     #[test]
@@ -300,7 +340,7 @@ hosts:
   - example.com
 routes:
   - location: /api
-    kind: redirect
+    kind: unknown
     target: "https://example.com"
 "#,
         );

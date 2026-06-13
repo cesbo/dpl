@@ -81,6 +81,11 @@ enum RenderRoute<'a> {
         root: String,
         spa: bool,
     },
+    Redirect {
+        location: &'a str,
+        target: String,
+        permanent: bool,
+    },
 }
 
 impl<'a> RenderRoute<'a> {
@@ -109,6 +114,18 @@ impl<'a> RenderRoute<'a> {
                     location: location.as_str(),
                     root: root.render(ctx)?,
                     spa: *spa,
+                };
+                Ok(render_route)
+            }
+            RouteConfig::Redirect {
+                location,
+                target,
+                permanent,
+            } => {
+                let render_route = RenderRoute::Redirect {
+                    location: location.as_str(),
+                    target: target.render(ctx)?,
+                    permanent: *permanent,
                 };
                 Ok(render_route)
             }
