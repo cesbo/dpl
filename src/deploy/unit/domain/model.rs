@@ -85,6 +85,15 @@ pub enum RouteConfig {
         #[serde(default)]
         permanent: bool,
     },
+    Return {
+        /// URL location prefix (e.g. "/health")
+        location: RouteLocation,
+        /// HTTP status code (e.g. 204, 404, 410).
+        status: u16,
+        /// Optional response body. nginx variables need a doubled `$`.
+        #[serde(default)]
+        body: Option<Value>,
+    },
 }
 
 impl DomainConfig {
@@ -120,6 +129,12 @@ impl DomainConfig {
                 RouteConfig::Uwsgi { target, .. } => target,
                 RouteConfig::ServeFiles { root, .. } => root,
                 RouteConfig::Redirect { target, .. } => target,
+                RouteConfig::Return { body, .. } => {
+                    if let Some(body) = body {
+                        deps.extend(body.unit_refs().cloned());
+                    }
+                    continue;
+                }
             };
             deps.extend(value.unit_refs().cloned());
         }
@@ -137,6 +152,8 @@ impl DomainConfig {
                 RouteConfig::Uwsgi { target, .. } => (target, "target"),
                 RouteConfig::ServeFiles { root, .. } => (root, "root"),
                 RouteConfig::Redirect { target, .. } => (target, "target"),
+                RouteConfig::Return { body: Some(body), .. } => (body, "body"),
+                RouteConfig::Return { body: None, .. } => continue,
             };
             value
                 .render(ctx)
@@ -209,6 +226,40 @@ mod tests {
     fn redirect_target_contributes_to_unit_deps() {
         let config: DomainConfig = serde_yaml::from_str(
             "server: web\nhosts:\n  - example.com\nroutes:\n  - location: /go\n    kind: redirect\n    target: \"${backend:url}\"\n",
+        )
+        .unwrap();
+        let deps = config.unit_deps();
+        let names: Vec<&str> = deps.iter().map(UnitName::as_str).collect();
+        assert_eq!(names, vec!["backend"]);
+    }
+
+    #[test]
+    fn parse_return_route_with_and_without_body() {
+        let config: DomainConfig = serde_yaml::from_str(
+            "server: web\nhosts:\n  - example.com\nroutes:\n  - location: /health\n    kind: return\n    status: 200\n    body: ok\n  - location: /gone\n    kind: return\n    status: 410\n",
+        )
+        .unwrap();
+
+        match &config.routes[0] {
+            RouteConfig::Return { status, body, .. } => {
+                assert_eq!(*status, 200);
+                assert_eq!(body.as_ref().unwrap().as_template(), "ok");
+            }
+            _ => panic!("expected return"),
+        }
+        match &config.routes[1] {
+            RouteConfig::Return { status, body, .. } => {
+                assert_eq!(*status, 410);
+                assert!(body.is_none(), "body defaults to none");
+            }
+            _ => panic!("expected return"),
+        }
+    }
+
+    #[test]
+    fn return_body_contributes_to_unit_deps() {
+        let config: DomainConfig = serde_yaml::from_str(
+            "server: web\nhosts:\n  - example.com\nroutes:\n  - location: /v\n    kind: return\n    status: 200\n    body: \"${backend:url}\"\n",
         )
         .unwrap();
         let deps = config.unit_deps();

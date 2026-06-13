@@ -37,6 +37,8 @@ server {
 {% endif %}
 {% elif route.kind == "redirect" %}
         return {{ 301 if route.permanent else 302 }} {{ route.target }};
+{% elif route.kind == "return" %}
+        return {{ route.status }}{% if route.body is not none %} "{{ route.body }}"{% endif %};
 {% endif %}
     }
 {% endfor %}

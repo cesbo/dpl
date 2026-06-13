@@ -86,6 +86,11 @@ enum RenderRoute<'a> {
         target: String,
         permanent: bool,
     },
+    Return {
+        location: &'a str,
+        status: u16,
+        body: Option<String>,
+    },
 }
 
 impl<'a> RenderRoute<'a> {
@@ -126,6 +131,19 @@ impl<'a> RenderRoute<'a> {
                     location: location.as_str(),
                     target: target.render(ctx)?,
                     permanent: *permanent,
+                };
+                Ok(render_route)
+            }
+            RouteConfig::Return {
+                location,
+                status,
+                body,
+            } => {
+                let body = body.as_ref().map(|b| b.render(ctx)).transpose()?;
+                let render_route = RenderRoute::Return {
+                    location: location.as_str(),
+                    status: *status,
+                    body,
                 };
                 Ok(render_route)
             }
