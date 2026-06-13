@@ -76,6 +76,7 @@ enum RenderRoute<'a> {
     ReverseProxy {
         location: &'a str,
         target: String,
+        websocket: bool,
     },
     Uwsgi {
         location: &'a str,
@@ -105,10 +106,15 @@ enum RenderRoute<'a> {
 impl<'a> RenderRoute<'a> {
     fn new(ctx: &MainContext, route: &'a RouteConfig) -> Result<RenderRoute<'a>, ReferenceError> {
         match &route {
-            RouteConfig::ReverseProxy { location, target } => {
+            RouteConfig::ReverseProxy {
+                location,
+                target,
+                websocket,
+            } => {
                 let render_route = RenderRoute::ReverseProxy {
                     location: location.as_str(),
                     target: target.render(ctx)?,
+                    websocket: *websocket,
                 };
                 Ok(render_route)
             }

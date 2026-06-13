@@ -59,6 +59,9 @@ pub enum RouteConfig {
         location: RouteLocation,
         /// Upstream URL (e.g. "http://127.0.0.1:8000")
         target: Value,
+        /// Forward the WebSocket upgrade handshake to the upstream.
+        #[serde(default)]
+        websocket: bool,
     },
     Uwsgi {
         /// URL location prefix (e.g. "/app")
@@ -274,6 +277,23 @@ mod tests {
         )
         .unwrap();
         assert!(config.unit_deps().is_empty());
+    }
+
+    #[test]
+    fn parse_reverse_proxy_websocket_default_and_explicit() {
+        let config: DomainConfig = serde_yaml::from_str(
+            "server: web\nhosts:\n  - example.com\nroutes:\n  - location: /plain\n    kind: reverse_proxy\n    target: \"http://127.0.0.1:8000\"\n  - location: /ws\n    kind: reverse_proxy\n    target: \"http://127.0.0.1:9000\"\n    websocket: true\n",
+        )
+        .unwrap();
+
+        match &config.routes[0] {
+            RouteConfig::ReverseProxy { websocket, .. } => assert!(!websocket, "defaults to false"),
+            _ => panic!("expected reverse_proxy"),
+        }
+        match &config.routes[1] {
+            RouteConfig::ReverseProxy { websocket, .. } => assert!(websocket, "explicit true"),
+            _ => panic!("expected reverse_proxy"),
+        }
     }
 
     #[test]
