@@ -24,6 +24,11 @@ use crate::{
 
 const NGINX_CONFIG_TEMPLATE: &str = "nginx-config";
 
+/// Escape a string for embedding inside an nginx double-quoted string literal.
+fn escape_nginx_quoted(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
     let mut env = Environment::new();
     env.set_keep_trailing_newline(true);
@@ -139,7 +144,7 @@ impl<'a> RenderRoute<'a> {
                 status,
                 body,
             } => {
-                let body = body.as_ref().map(|b| b.render(ctx)).transpose()?;
+                let body = body.as_deref().map(escape_nginx_quoted);
                 let render_route = RenderRoute::Return {
                     location: location.as_str(),
                     status: *status,
@@ -148,5 +153,19 @@ impl<'a> RenderRoute<'a> {
                 Ok(render_route)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn escape_nginx_quoted_handles_quotes_and_backslashes() {
+        assert_eq!(escape_nginx_quoted("ok"), "ok");
+        assert_eq!(escape_nginx_quoted(r#"say "hi""#), r#"say \"hi\""#);
+        assert_eq!(escape_nginx_quoted(r"a\b"), r"a\\b");
+        // Newlines pass through untouched - nginx quoted strings span lines.
+        assert_eq!(escape_nginx_quoted("a\nb"), "a\nb");
     }
 }
