@@ -66,6 +66,12 @@ pub enum RouteConfig {
         /// uwsgi upstream (e.g. "unix:/run/app.sock" or "127.0.0.1:3031")
         target: Value,
     },
+    Fastcgi {
+        /// URL location prefix (e.g. "/app")
+        location: RouteLocation,
+        /// FastCGI upstream (e.g. "unix:/run/php-fpm.sock" or "127.0.0.1:9000")
+        target: Value,
+    },
     ServeFiles {
         /// URL location prefix (e.g. "/billing/static")
         location: RouteLocation,
@@ -127,6 +133,7 @@ impl DomainConfig {
             let value = match route {
                 RouteConfig::ReverseProxy { target, .. } => target,
                 RouteConfig::Uwsgi { target, .. } => target,
+                RouteConfig::Fastcgi { target, .. } => target,
                 RouteConfig::ServeFiles { root, .. } => root,
                 RouteConfig::Redirect { .. } => continue,
                 RouteConfig::Return { .. } => continue,
@@ -145,6 +152,7 @@ impl DomainConfig {
             let (value, leaf) = match &route {
                 RouteConfig::ReverseProxy { target, .. } => (target, "target"),
                 RouteConfig::Uwsgi { target, .. } => (target, "target"),
+                RouteConfig::Fastcgi { target, .. } => (target, "target"),
                 RouteConfig::ServeFiles { root, .. } => (root, "root"),
                 RouteConfig::Redirect { .. } => continue,
                 RouteConfig::Return { .. } => continue,
@@ -177,13 +185,13 @@ mod tests {
     #[test]
     fn domain_unit_deps_from_routes() {
         let config: DomainConfig = serde_yaml::from_str(
-            "server: web\nhosts:\n  - example.com\nroutes:\n  - location: /api\n    kind: reverse_proxy\n    target: \"${backend:url}\"\n  - location: /app\n    kind: uwsgi\n    target: \"${worker:socket}\"\n  - location: /static\n    kind: serve_files\n    root: \"${assets:export}\"\n  - location: /lit\n    kind: serve_files\n    root: \"/var/www/site\"\n",
+            "server: web\nhosts:\n  - example.com\nroutes:\n  - location: /api\n    kind: reverse_proxy\n    target: \"${backend:url}\"\n  - location: /app\n    kind: uwsgi\n    target: \"${worker:socket}\"\n  - location: /php\n    kind: fastcgi\n    target: \"${phpfpm:socket}\"\n  - location: /static\n    kind: serve_files\n    root: \"${assets:export}\"\n  - location: /lit\n    kind: serve_files\n    root: \"/var/www/site\"\n",
         )
         .unwrap();
         let deps = config.unit_deps();
         let names: Vec<&str> = deps.iter().map(UnitName::as_str).collect();
         // Sorted; the literal root contributes nothing.
-        assert_eq!(names, vec!["assets", "backend", "worker"]);
+        assert_eq!(names, vec!["assets", "backend", "phpfpm", "worker"]);
     }
 
     #[test]
@@ -266,6 +274,22 @@ mod tests {
         )
         .unwrap();
         assert!(config.unit_deps().is_empty());
+    }
+
+    #[test]
+    fn parse_fastcgi_route() {
+        let config: DomainConfig = serde_yaml::from_str(
+            "server: web\nhosts:\n  - example.com\nroutes:\n  - location: /php\n    kind: fastcgi\n    target: \"unix:/run/php-fpm.sock\"\n",
+        )
+        .unwrap();
+
+        match &config.routes[0] {
+            RouteConfig::Fastcgi { location, target } => {
+                assert_eq!(location.as_str(), "/php");
+                assert_eq!(target.as_template(), "unix:/run/php-fpm.sock");
+            }
+            _ => panic!("expected fastcgi"),
+        }
     }
 
     #[test]

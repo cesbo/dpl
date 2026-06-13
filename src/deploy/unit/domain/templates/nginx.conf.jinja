@@ -28,6 +28,9 @@ server {
 {% elif route.kind == "uwsgi" %}
         include uwsgi_params;
         uwsgi_pass {{ route.target }};
+{% elif route.kind == "fastcgi" %}
+        include fastcgi_params;
+        fastcgi_pass {{ route.target }};
 {% elif route.kind == "serve_files" %}
         root {{ route.root }};
 {% if route.spa %}
