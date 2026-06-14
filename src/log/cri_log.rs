@@ -85,8 +85,8 @@ impl CriLog {
     /// Two threads are needed so a full pipe on one stream can't deadlock the other.
     pub fn capture(&self, stdout: impl Read + Send, stderr: impl Read + Send) -> io::Result<()> {
         thread::scope(|s| {
-            let out = s.spawn(|| self.pump("stdout", stdout));
-            let err = s.spawn(|| self.pump("stderr", stderr));
+            let out = s.spawn(|| self.capture_stdout(stdout));
+            let err = s.spawn(|| self.capture_stderr(stderr));
             let out = out
                 .join()
                 .unwrap_or_else(|_| Err(io::Error::other("stdout pump panicked")));
@@ -97,7 +97,34 @@ impl CriLog {
         })
     }
 
-    fn pump(&self, stream: &str, reader: impl Read) -> io::Result<()> {
+    pub fn capture_stdout(&self, stdout: impl Read) -> io::Result<()> {
+        self.capture_stdout_with(stdout, |v| v)
+    }
+
+    pub fn capture_stdout_with<F>(&self, stdout: impl Read, map: F) -> io::Result<()>
+    where
+        F: for<'a> FnMut(&'a [u8]) -> &'a [u8],
+    {
+        self.pump_with("stdout", stdout, map)
+    }
+
+    pub fn capture_stderr(&self, stderr: impl Read) -> io::Result<()> {
+        self.capture_stderr_with(stderr, |v| v)
+    }
+
+    pub fn capture_stderr_with<F>(&self, stderr: impl Read, map: F) -> io::Result<()>
+    where
+        F: for<'a> FnMut(&'a [u8]) -> &'a [u8],
+    {
+        self.pump_with("stderr", stderr, map)
+    }
+
+    /// Drain one stream pipe to EOF
+    /// Transforming each message before writing it as a CRI record.
+    fn pump_with<F>(&self, stream: &str, reader: impl Read, mut map: F) -> io::Result<()>
+    where
+        F: for<'a> FnMut(&'a [u8]) -> &'a [u8],
+    {
         let mut reader = BufReader::new(reader);
         let mut buf = Vec::new();
 
@@ -120,7 +147,7 @@ impl CriLog {
             }
 
             let ts = Utc::now().to_rfc3339_opts(SecondsFormat::Nanos, true);
-            let msg = String::from_utf8_lossy(&buf);
+            let msg = String::from_utf8_lossy(map(&buf));
             let record = match &self.label {
                 Some(label) => format!("{ts} {stream} {tag} {label} {msg}\n"),
                 None => format!("{ts} {stream} {tag} {msg}\n"),

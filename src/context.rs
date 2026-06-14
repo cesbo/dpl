@@ -136,6 +136,12 @@ impl MainContext {
         self.unit_log_dir(unit).join("runtime.log")
     }
 
+    /// `{base}/state/{unit}/log/access.log` - http-server access log.
+    /// Captured from nginx stdout as JSONL without a CRI prefix.
+    pub fn access_log_path(&self, unit: &UnitName) -> PathBuf {
+        self.unit_log_dir(unit).join("access.log")
+    }
+
     /// `{base}/state/{unit}/conf` - nginx conf.d source for an http-server,
     /// bind-mounted read-only into the container. Holds `00-dpl.conf` plus each
     /// dependent domain's `<domain>.conf`.

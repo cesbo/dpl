@@ -1,4 +1,5 @@
 pub mod cri_log;
+pub mod jsonl_log;
 
 use std::{
     cell::RefCell,

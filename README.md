@@ -37,7 +37,11 @@ per-unit directory:
   - `log/build.log` - last build: captured podman build/restore output, CRI
     `k8s-file` format; cleared at the start of each deploy
   - `log/runtime.log` - container stdout/stderr, captured by `dpl start`, CRI
-    `k8s-file` format; rotated at 20mb
+    `k8s-file` format; rotated at 20mb. For `http-server`, only stderr is
+    written here.
+  - `log/access.log` (http-server only) - nginx access log captured from stdout
+    as JSONL without a CRI prefix; non-object stdout lines are dropped; rotated
+    at 20mb
   - `log/timers.log` - all timer run output for the unit, CRI `k8s-file`
     format with the timer name as a label column; rotated at 20mb
 - `{base_dir}/state/serve.pid` - PID file and single-instance lock for `dpl serve`

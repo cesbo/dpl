@@ -1,4 +1,5 @@
 mod model;
+mod run;
 
 use std::fs;
 
@@ -145,7 +146,14 @@ impl<'a> HttpServerUnit<'a> {
             &["ro"],
         );
 
-        cmd.run_foreground(&self.config.image, &self.ctx.runtime_log_path(self.name))
-            .map_err(|e| RunError::new("run podman foreground", e))
+        cmd.arg(&self.config.image);
+
+        run::run_foreground(
+            cmd.into_command(),
+            &container,
+            &self.ctx.runtime_log_path(self.name),
+            &self.ctx.access_log_path(self.name),
+        )
+        .map_err(|e| RunError::new("run podman foreground", e))
     }
 }

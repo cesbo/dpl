@@ -76,7 +76,7 @@ impl PodmanRun {
     }
 
     /// Adds an argument to pass to the program.
-    fn arg(&mut self, arg: impl AsRef<OsStr>) {
+    pub fn arg(&mut self, arg: impl AsRef<OsStr>) {
         self.cmd.arg(arg);
     }
 
@@ -113,6 +113,10 @@ impl PodmanRun {
     pub fn run_foreground(mut self, image: impl AsRef<str>, log_path: &Path) -> io::Result<()> {
         self.arg(image.as_ref());
         run_foreground(self.cmd, &self.container, log_path)
+    }
+
+    pub fn into_command(self) -> Command {
+        self.cmd
     }
 }
 
