@@ -44,6 +44,8 @@ pub fn run_foreground(
     container: &str,
     runtime_log_path: &Path,
     access_log_path: &Path,
+    access_log_max_size: u64,
+    access_log_max_files: u32,
 ) -> io::Result<()> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
@@ -59,7 +61,13 @@ pub fn run_foreground(
 
     let status = thread::scope(|scope| -> io::Result<ExitStatus> {
         scope.spawn(|| {
-            let result = JsonlLog::open(access_log_path).and_then(|mut log| log.capture(stdout));
+            let result =
+                JsonlLog::open_with_limits(
+                    access_log_path,
+                    access_log_max_size,
+                    access_log_max_files,
+                )
+                .and_then(|mut log| log.capture(stdout));
             if let Err(err) = result {
                 log::warn(format!(
                     "write access log {}: {err}",
@@ -152,7 +160,15 @@ mod tests {
              echo 'plain err' 1>&2",
         ]);
 
-        run_foreground(cmd, "test-container", &runtime_log, &access_log).unwrap();
+        run_foreground(
+            cmd,
+            "test-container",
+            &runtime_log,
+            &access_log,
+            200 * 1024 * 1024,
+            1,
+        )
+        .unwrap();
 
         assert_eq!(
             std::fs::read_to_string(&access_log).unwrap(),
@@ -166,6 +182,27 @@ mod tests {
         assert!(runtime.contains("stderr F plain err"), "{runtime}");
         assert!(!runtime.contains("2026/06/14 10:11:12"), "{runtime}");
         assert!(!runtime.contains("stdout"), "{runtime}");
+    }
+
+    #[test]
+    fn access_log_uses_configured_rotation_limits() {
+        let dir = TempDir::new().unwrap();
+        let runtime_log = dir.path().join("runtime.log");
+        let access_log = dir.path().join("access.log");
+
+        let mut cmd = Command::new("sh");
+        cmd.args([
+            "-c",
+            "printf '{\"n\":0}\\n{\"n\":1}\\n{\"n\":2}\\n{\"n\":3}\\n{\"n\":4}\\n'",
+        ]);
+
+        run_foreground(cmd, "test-container", &runtime_log, &access_log, 20, 2).unwrap();
+
+        assert!(access_log.exists(), "current access log missing");
+        assert!(
+            dir.path().join("access.log.1").exists(),
+            "rotated access log missing"
+        );
     }
 
     #[test]

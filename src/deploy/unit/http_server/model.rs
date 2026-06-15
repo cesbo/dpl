@@ -13,6 +13,8 @@ use crate::{
 
 const DEFAULT_IMAGE: &str = "docker.io/library/nginx:stable";
 const DEFAULT_HTTP_PORT: u16 = 80;
+const DEFAULT_ACCESS_LOG_MAX_SIZE_MB: u64 = 200;
+const DEFAULT_ACCESS_LOG_MAX_FILES: u32 = 1;
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -25,6 +27,19 @@ pub struct HttpServerConfig {
 
     #[serde(default)]
     pub https_port: HttpPort,
+
+    #[serde(default)]
+    pub access_log: HttpAccessLogConfig,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct HttpAccessLogConfig {
+    #[serde(default = "default_access_log_max_size_mb")]
+    pub max_size_mb: u64,
+
+    #[serde(default = "default_access_log_max_files")]
+    pub max_files: u32,
 }
 
 #[derive(Default, Clone, Copy, Debug, Eq, PartialEq)]
@@ -40,6 +55,14 @@ fn default_image() -> String {
 
 fn default_http_port() -> u16 {
     DEFAULT_HTTP_PORT
+}
+
+fn default_access_log_max_size_mb() -> u64 {
+    DEFAULT_ACCESS_LOG_MAX_SIZE_MB
+}
+
+fn default_access_log_max_files() -> u32 {
+    DEFAULT_ACCESS_LOG_MAX_FILES
 }
 
 impl<'de> Deserialize<'de> for HttpPort {
@@ -85,6 +108,21 @@ impl HttpServerConfig {
     }
 }
 
+impl Default for HttpAccessLogConfig {
+    fn default() -> Self {
+        Self {
+            max_size_mb: DEFAULT_ACCESS_LOG_MAX_SIZE_MB,
+            max_files: DEFAULT_ACCESS_LOG_MAX_FILES,
+        }
+    }
+}
+
+impl HttpAccessLogConfig {
+    pub fn max_size_bytes(&self) -> u64 {
+        self.max_size_mb * 1024 * 1024
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,6 +133,12 @@ mod tests {
         assert_eq!(config.image, DEFAULT_IMAGE);
         assert_eq!(config.http_port, DEFAULT_HTTP_PORT);
         assert_eq!(config.https_port, HttpPort::Disabled);
+        assert_eq!(
+            config.access_log.max_size_mb,
+            DEFAULT_ACCESS_LOG_MAX_SIZE_MB
+        );
+        assert_eq!(config.access_log.max_files, DEFAULT_ACCESS_LOG_MAX_FILES);
+        assert_eq!(config.access_log.max_size_bytes(), 200 * 1024 * 1024);
     }
 
     #[test]
@@ -104,12 +148,18 @@ mod tests {
 image: docker.io/library/nginx:1.27
 http_port: 8080
 https_port: 8443
+access_log:
+  max_size_mb: 512
+  max_files: 3
 "#,
         )
         .unwrap();
         assert_eq!(config.image, "docker.io/library/nginx:1.27");
         assert_eq!(config.http_port, 8080);
         assert_eq!(config.https_port, HttpPort::Port(8443));
+        assert_eq!(config.access_log.max_size_mb, 512);
+        assert_eq!(config.access_log.max_files, 3);
+        assert_eq!(config.access_log.max_size_bytes(), 512 * 1024 * 1024);
     }
 
     #[test]
@@ -132,6 +182,23 @@ https_port: 8443
                 .contains("https_port must be a port number or false"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn parse_partial_access_log_config_uses_defaults() {
+        let config: HttpServerConfig = serde_yaml::from_str(
+            r#"
+access_log:
+  max_files: 3
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.access_log.max_size_mb,
+            DEFAULT_ACCESS_LOG_MAX_SIZE_MB
+        );
+        assert_eq!(config.access_log.max_files, 3);
     }
 
     #[test]

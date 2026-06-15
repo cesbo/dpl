@@ -16,9 +16,6 @@ use std::{
     },
 };
 
-const MAX_SIZE: u64 = 20 * 1024 * 1024;
-const MAX_FILES: u32 = 1;
-
 /// Captures newline-delimited JSON records without any runtime log prefix.
 ///
 /// Only lines that look like JSON objects are written: after trimming the line
@@ -32,11 +29,7 @@ pub struct JsonlLog {
 }
 
 impl JsonlLog {
-    pub fn open(path: &Path) -> io::Result<Self> {
-        Self::open_with_limits(path, MAX_SIZE, MAX_FILES)
-    }
-
-    fn open_with_limits(path: &Path, max_size: u64, max_files: u32) -> io::Result<Self> {
+    pub fn open_with_limits(path: &Path, max_size: u64, max_files: u32) -> io::Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -129,7 +122,7 @@ mod tests {
     fn writes_only_json_object_lines() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("access.log");
-        let mut log = JsonlLog::open(&path).unwrap();
+        let mut log = JsonlLog::open_with_limits(&path, 200 * 1024 * 1024, 1).unwrap();
 
         log.capture(
             &b"{\"status\":200}\nnot json\n[1]\n{\"status\":404}\r\n{\"partial\":true}"[..],

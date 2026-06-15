@@ -153,6 +153,8 @@ impl<'a> HttpServerUnit<'a> {
             &container,
             &self.ctx.runtime_log_path(self.name),
             &self.ctx.access_log_path(self.name),
+            self.config.access_log.max_size_bytes(),
+            self.config.access_log.max_files,
         )
         .map_err(|e| RunError::new("run podman foreground", e))
     }

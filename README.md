@@ -41,7 +41,7 @@ per-unit directory:
     written here.
   - `log/access.log` (http-server only) - nginx access log captured from stdout
     as JSONL without a CRI prefix; non-object stdout lines are dropped; rotated
-    at 20mb
+    at 200mb by default
   - `log/timers.log` - all timer run output for the unit, CRI `k8s-file`
     format with the timer name as a label column; rotated at 20mb
 - `{base_dir}/state/serve.pid` - PID file and single-instance lock for `dpl serve`
@@ -162,12 +162,19 @@ type: http-server
 image: docker.io/library/nginx:stable
 http_port: 8080
 https_port: false
+access_log:
+  max_size_mb: 200
+  max_files: 1
 ```
 
 - `http_port` - host HTTP port to publish to nginx's container port 80
   (default: `80`)
 - `https_port` - host HTTPS port to publish to nginx's container port 443;
   omit it or set `false` to disable HTTPS publishing
+- `access_log.max_size_mb` - access log rotation threshold in MiB
+  (default: `200`)
+- `access_log.max_files` - number of archived access log files to keep
+  (`access.log.1`, `access.log.2`, ...; default: `1`)
 
 ## Database units
 

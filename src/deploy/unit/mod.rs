@@ -194,6 +194,9 @@ type: http-server
 image: docker.io/library/nginx:1.27
 http_port: 8080
 https_port: 8443
+access_log:
+  max_size_mb: 512
+  max_files: 3
 "#,
         )
         .unwrap();
@@ -204,6 +207,8 @@ https_port: 8443
         assert_eq!(http.image, "docker.io/library/nginx:1.27");
         assert_eq!(http.http_port, 8080);
         assert_eq!(http.https_port, HttpPort::Port(8443));
+        assert_eq!(http.access_log.max_size_mb, 512);
+        assert_eq!(http.access_log.max_files, 3);
     }
 
     #[test]
@@ -216,6 +221,8 @@ https_port: 8443
         assert_eq!(http.image, "docker.io/library/nginx:stable");
         assert_eq!(http.http_port, 80);
         assert_eq!(http.https_port, HttpPort::Disabled);
+        assert_eq!(http.access_log.max_size_mb, 200);
+        assert_eq!(http.access_log.max_files, 1);
     }
 
     #[test]
