@@ -31,7 +31,7 @@ install -m 755 "$tmp/dpl" "$DST/dpl"
 
 echo "Creating base directory..."
 
-mkdir -p "$BASE/conf" "$BASE/state" "$BASE/log" "$BASE/secrets" "$BASE/backup"
+mkdir -p "$BASE/conf" "$BASE/state" "$BASE/secrets" "$BASE/backup"
 
 echo "Registering system service..."
 
