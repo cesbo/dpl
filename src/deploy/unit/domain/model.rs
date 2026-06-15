@@ -360,6 +360,29 @@ routes:
     }
 
     #[test]
+    fn parse_fastcgi_route_with_regex_location() {
+        let config: DomainConfig = serde_yaml::from_str(
+            r#"
+server: web
+hosts:
+  - example.com
+routes:
+  - location: '~ \.php$'
+    kind: fastcgi
+    target: "unix:/run/php-fpm.sock"
+"#,
+        )
+        .unwrap();
+
+        match &config.routes[0] {
+            RouteConfig::Fastcgi { location, .. } => {
+                assert_eq!(location.as_str(), r"~ \.php$");
+            }
+            _ => panic!("expected fastcgi"),
+        }
+    }
+
+    #[test]
     fn parse_domain_config_with_custom_proxy() {
         let config: DomainConfig = serde_yaml::from_str(
             r#"

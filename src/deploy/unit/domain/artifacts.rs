@@ -122,7 +122,7 @@ impl<'a> RenderRoute<'a> {
                     location: location.as_str(),
                     target: target.render(ctx)?,
                     websocket: *websocket,
-                    custom_config: &custom_config,
+                    custom_config,
                 };
                 Ok(render_route)
             }
@@ -134,7 +134,7 @@ impl<'a> RenderRoute<'a> {
                 let render_route = RenderRoute::Uwsgi {
                     location: location.as_str(),
                     target: target.render(ctx)?,
-                    custom_config: &custom_config,
+                    custom_config,
                 };
                 Ok(render_route)
             }
@@ -146,7 +146,7 @@ impl<'a> RenderRoute<'a> {
                 let render_route = RenderRoute::Fastcgi {
                     location: location.as_str(),
                     target: target.render(ctx)?,
-                    custom_config: &custom_config,
+                    custom_config,
                 };
                 Ok(render_route)
             }
@@ -160,7 +160,7 @@ impl<'a> RenderRoute<'a> {
                     location: location.as_str(),
                     root: root.render(ctx)?,
                     spa: *spa,
-                    custom_config: &custom_config,
+                    custom_config,
                 };
                 Ok(render_route)
             }
@@ -172,9 +172,9 @@ impl<'a> RenderRoute<'a> {
             } => {
                 let render_route = RenderRoute::Redirect {
                     location: location.as_str(),
-                    target: &target,
+                    target,
                     permanent: *permanent,
-                    custom_config: &custom_config,
+                    custom_config,
                 };
                 Ok(render_route)
             }
@@ -189,7 +189,7 @@ impl<'a> RenderRoute<'a> {
                     location: location.as_str(),
                     status: *status,
                     body,
-                    custom_config: &custom_config,
+                    custom_config,
                 };
                 Ok(render_route)
             }

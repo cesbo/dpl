@@ -31,9 +31,19 @@ impl RouteLocation {
     }
 
     pub fn is_valid(value: &str) -> bool {
-        !value.is_empty()
-            && value.starts_with('/')
-            && !value.chars().any(char::is_whitespace)
+        if value.is_empty() {
+            return false;
+        }
+
+        if value.starts_with('/') {
+            return !value.chars().any(char::is_whitespace);
+        }
+
+        if let Some(regex) = value.strip_prefix("~ ") {
+            return !regex.is_empty() && !regex.chars().any(|c| matches!(c, '\n' | '\r'));
+        }
+
+        false
     }
 }
 
@@ -68,6 +78,7 @@ mod tests {
         assert!(RouteLocation::new("/").is_ok());
         assert!(RouteLocation::new("/api").is_ok());
         assert!(RouteLocation::new("/billing/static").is_ok());
+        assert!(RouteLocation::new(r"~ \.php$").is_ok());
     }
 
     #[test]
@@ -75,6 +86,8 @@ mod tests {
         assert!(RouteLocation::new("").is_err());
         assert!(RouteLocation::new("api").is_err());
         assert!(RouteLocation::new("/a b").is_err());
+        assert!(RouteLocation::new("~ ").is_err());
+        assert!(RouteLocation::new("~\n/foo").is_err());
     }
 
     #[test]
