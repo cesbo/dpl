@@ -62,18 +62,27 @@ pub enum RouteConfig {
         /// Forward the WebSocket upgrade handshake to the upstream.
         #[serde(default)]
         websocket: bool,
+        /// Raw nginx directives appended inside this `location` block.
+        #[serde(default)]
+        custom_config: String,
     },
     Uwsgi {
         /// URL location prefix (e.g. "/app")
         location: RouteLocation,
         /// uwsgi upstream (e.g. "unix:/run/app.sock" or "127.0.0.1:3031")
         target: Value,
+        /// Raw nginx directives appended inside this `location` block.
+        #[serde(default)]
+        custom_config: String,
     },
     Fastcgi {
         /// URL location prefix (e.g. "/app")
         location: RouteLocation,
         /// FastCGI upstream (e.g. "unix:/run/php-fpm.sock" or "127.0.0.1:9000")
         target: Value,
+        /// Raw nginx directives appended inside this `location` block.
+        #[serde(default)]
+        custom_config: String,
     },
     ServeFiles {
         /// URL location prefix (e.g. "/billing/static")
@@ -83,6 +92,9 @@ pub enum RouteConfig {
         /// Single Page Application
         #[serde(default)]
         spa: bool,
+        /// Raw nginx directives appended inside this `location` block.
+        #[serde(default)]
+        custom_config: String,
     },
     Redirect {
         /// URL location prefix (e.g. "/old")
@@ -93,6 +105,9 @@ pub enum RouteConfig {
         /// Emit 301 (permanent) instead of the default 302 (temporary).
         #[serde(default)]
         permanent: bool,
+        /// Raw nginx directives appended inside this `location` block.
+        #[serde(default)]
+        custom_config: String,
     },
     Return {
         /// URL location prefix (e.g. "/health")
@@ -102,6 +117,9 @@ pub enum RouteConfig {
         /// Optional response body.
         #[serde(default)]
         body: Option<String>,
+        /// Raw nginx directives appended inside this `location` block.
+        #[serde(default)]
+        custom_config: String,
     },
 }
 
@@ -297,6 +315,33 @@ mod tests {
     }
 
     #[test]
+    fn parse_route_custom_config() {
+        let config: DomainConfig = serde_yaml::from_str(
+            r#"
+server: web
+hosts:
+  - example.com
+routes:
+  - location: /api
+    kind: reverse_proxy
+    target: "http://127.0.0.1:8000"
+    custom_config: |
+      proxy_read_timeout 60s;
+      client_max_body_size 20m;
+"#,
+        )
+        .unwrap();
+
+        match &config.routes[0] {
+            RouteConfig::ReverseProxy { custom_config, .. } => assert_eq!(
+                custom_config,
+                "proxy_read_timeout 60s;\nclient_max_body_size 20m;\n",
+            ),
+            _ => panic!("expected reverse_proxy"),
+        }
+    }
+
+    #[test]
     fn parse_fastcgi_route() {
         let config: DomainConfig = serde_yaml::from_str(
             "server: web\nhosts:\n  - example.com\nroutes:\n  - location: /php\n    kind: fastcgi\n    target: \"unix:/run/php-fpm.sock\"\n",
@@ -304,7 +349,9 @@ mod tests {
         .unwrap();
 
         match &config.routes[0] {
-            RouteConfig::Fastcgi { location, target } => {
+            RouteConfig::Fastcgi {
+                location, target, ..
+            } => {
                 assert_eq!(location.as_str(), "/php");
                 assert_eq!(target.as_template(), "unix:/run/php-fpm.sock");
             }

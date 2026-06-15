@@ -166,6 +166,39 @@ mod tests {
     }
 
     #[test]
+    fn write_config_includes_route_custom_config_inside_location() {
+        let base = TempDir::new().unwrap();
+        let ctx = test_ctx(&base);
+        let name = UnitName::new("site").unwrap();
+        let config = domain(
+            r#"
+server: web
+hosts:
+  - example.com
+routes:
+  - location: /api
+    kind: reverse_proxy
+    target: "http://127.0.0.1:8000"
+    custom_config: |
+      proxy_read_timeout 60s;
+      client_max_body_size 20m;
+"#,
+        );
+        let unit = DomainUnit::new(&ctx, &name, config);
+
+        let conf_dir = base.path().join("conf.d");
+        unit.write_config(&conf_dir, None).unwrap();
+
+        let content = fs::read_to_string(conf_dir.join("site.conf")).unwrap();
+        assert!(
+            content.contains(
+                "        proxy_pass http://127.0.0.1:8000;\n\nproxy_read_timeout 60s;\nclient_max_body_size 20m;\n\n    }",
+            ),
+            "{content}",
+        );
+    }
+
+    #[test]
     fn undeploy_removes_the_domain_conf() {
         let base = TempDir::new().unwrap();
         let ctx = test_ctx(&base);

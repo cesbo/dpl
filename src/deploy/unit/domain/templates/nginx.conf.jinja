@@ -48,6 +48,10 @@ server {
 {% elif route.kind == "return" %}
         return {{ route.status }}{% if route.body is not none %} "{{ route.body }}"{% endif %};
 {% endif %}
+{% if route.custom_config %}
+
+{{ route.custom_config }}
+{% endif %}
     }
 {% endfor %}
 }

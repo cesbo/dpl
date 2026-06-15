@@ -77,29 +77,35 @@ enum RenderRoute<'a> {
         location: &'a str,
         target: String,
         websocket: bool,
+        custom_config: &'a str,
     },
     Uwsgi {
         location: &'a str,
         target: String,
+        custom_config: &'a str,
     },
     Fastcgi {
         location: &'a str,
         target: String,
+        custom_config: &'a str,
     },
     ServeFiles {
         location: &'a str,
         root: String,
         spa: bool,
+        custom_config: &'a str,
     },
     Redirect {
         location: &'a str,
         target: &'a str,
         permanent: bool,
+        custom_config: &'a str,
     },
     Return {
         location: &'a str,
         status: u16,
         body: Option<String>,
+        custom_config: &'a str,
     },
 }
 
@@ -110,25 +116,37 @@ impl<'a> RenderRoute<'a> {
                 location,
                 target,
                 websocket,
+                custom_config,
             } => {
                 let render_route = RenderRoute::ReverseProxy {
                     location: location.as_str(),
                     target: target.render(ctx)?,
                     websocket: *websocket,
+                    custom_config: &custom_config,
                 };
                 Ok(render_route)
             }
-            RouteConfig::Uwsgi { location, target } => {
+            RouteConfig::Uwsgi {
+                location,
+                target,
+                custom_config,
+            } => {
                 let render_route = RenderRoute::Uwsgi {
                     location: location.as_str(),
                     target: target.render(ctx)?,
+                    custom_config: &custom_config,
                 };
                 Ok(render_route)
             }
-            RouteConfig::Fastcgi { location, target } => {
+            RouteConfig::Fastcgi {
+                location,
+                target,
+                custom_config,
+            } => {
                 let render_route = RenderRoute::Fastcgi {
                     location: location.as_str(),
                     target: target.render(ctx)?,
+                    custom_config: &custom_config,
                 };
                 Ok(render_route)
             }
@@ -136,11 +154,13 @@ impl<'a> RenderRoute<'a> {
                 location,
                 root,
                 spa,
+                custom_config,
             } => {
                 let render_route = RenderRoute::ServeFiles {
                     location: location.as_str(),
                     root: root.render(ctx)?,
                     spa: *spa,
+                    custom_config: &custom_config,
                 };
                 Ok(render_route)
             }
@@ -148,11 +168,13 @@ impl<'a> RenderRoute<'a> {
                 location,
                 target,
                 permanent,
+                custom_config,
             } => {
                 let render_route = RenderRoute::Redirect {
                     location: location.as_str(),
-                    target: target.as_str(),
+                    target: &target,
                     permanent: *permanent,
+                    custom_config: &custom_config,
                 };
                 Ok(render_route)
             }
@@ -160,12 +182,14 @@ impl<'a> RenderRoute<'a> {
                 location,
                 status,
                 body,
+                custom_config,
             } => {
                 let body = body.as_deref().map(escape_nginx_quoted);
                 let render_route = RenderRoute::Return {
                     location: location.as_str(),
                     status: *status,
                     body,
+                    custom_config: &custom_config,
                 };
                 Ok(render_route)
             }

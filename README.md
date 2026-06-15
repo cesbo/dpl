@@ -17,12 +17,12 @@ exits, and stopping it on shutdown.
 
 ## Layout
 
-`{base_dir}` is the base directory, default `/opt/dpl`, override with `DPL_BASE`.
+`<base>` is the base directory, default `/opt/dpl`, override with `DPL_BASE`.
 Configs and secrets are grouped by kind; runtime state and logs live in a
 per-unit directory:
 
-- `{base_dir}/conf/{name}.yaml` - unit config (`type:` selects the variant)
-- `{base_dir}/state/{name}/` - per-unit runtime state, locks, and logs:
+- `<base>/conf/{name}.yaml` - unit config (`type:` selects the variant)
+- `<base>/state/{name}/` - per-unit runtime state, locks, and logs:
   - `deploy.json` - deploy state (unit kind, active version, last status)
   - `deploy.lock` - advisory `flock(2)` held during a deploy
   - `timers.json` - timer run state
@@ -44,9 +44,9 @@ per-unit directory:
     at 200mb by default
   - `log/timers.log` - all timer run output for the unit, CRI `k8s-file`
     format with the timer name as a label column; rotated at 20mb
-- `{base_dir}/state/serve.pid` - PID file and single-instance lock for `dpl serve`
-- `{base_dir}/secrets/` - encrypted secrets (`master.key` plus `{name}.json`)
-- `{base_dir}/backup/` - database dumps written before a destructive drop
+- `<base>/state/serve.pid` - PID file and single-instance lock for `dpl serve`
+- `<base>/secrets/` - encrypted secrets (`master.key` plus `{name}.json`)
+- `<base>/backup/` - database dumps written before a destructive drop
 
 ## CLI
 
@@ -229,7 +229,7 @@ and `.sql.gz` both work.
 
 ## Secrets
 
-Secrets are encrypted files under `{base_dir}/secrets/`, decrypted and
+Secrets are encrypted files under `<base>/secrets/`, decrypted and
 inlined into generated artifacts (`run.sh`, `build-N.sh`, db `Environment=`)
 at deploy time.
 
@@ -243,7 +243,7 @@ dpl secret rm foo
 ```
 
 Reference a secret from any `env` map with `${secret:<name>}`. The first
-`dpl secret create` creates `{base_dir}/secrets/master.key` automatically.
+`dpl secret create` creates `<base>/secrets/master.key` automatically.
 
 ### Threat model
 
@@ -275,7 +275,7 @@ an `error` field carries the message.
 ## Serve
 
 `dpl serve` is the long-running process for a host. It is intended to be run by
-systemd and should have exactly one instance per `{base_dir}`; it holds
+systemd and should have exactly one instance per `<base>`; it holds
 `state/serve.pid` as both a PID file and an exclusive `flock(2)` lock.
 
 Deploys do not start containers directly. They mark the unit `check`, then
@@ -288,7 +288,7 @@ deployment state so serve and timers stop treating the unit as desired.
 
 Serve also runs the timer loop. Due app timers are executed through
 `dpl timer <unit> <timer>`, which runs the timer script inside the running
-container and writes output to `{base_dir}/state/{name}/log/timers.log`.
+container and writes output to `<base>/state/{name}/log/timers.log`.
 
 ## Notes
 
