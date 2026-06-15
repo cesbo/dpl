@@ -53,26 +53,37 @@ pub fn run_podman(args: &[&str]) -> io::Result<String> {
 
 /// Ensure the shared `dpl` network exists.
 pub fn ensure_network(name: &str) -> io::Result<()> {
-    if run_podman(&["network", "exists", name]).is_err() {
+    if network_exists(name) {
         run_podman(&["network", "create", name])?;
     }
 
     Ok(())
 }
 
-/// Stop and remove a unit's container. Idempotent: `--ignore` makes a missing
-/// container a no-op.
+/// Stop and remove a unit's container.
 pub fn stop_and_remove(name: &UnitName) -> io::Result<()> {
     let container = name.scoped_unit_name();
-    run_podman(&["stop", "--ignore", &container])?;
-    run_podman(&["rm", "-f", "-v", "--ignore", &container])?;
+    if container_exists(&container) {
+        run_podman(&["stop", &container])?;
+        run_podman(&["rm", "--force", "--volumes", &container])?;
+    }
 
     Ok(())
 }
 
-/// Return whether the named image exists locally.
-pub fn image_exists(image: &str) -> bool {
-    run_podman(&["image", "exists", image]).is_ok()
+/// Check whether the netowkr exists.
+pub fn network_exists(name: &str) -> bool {
+    run_podman(&["network", "exists", name]).is_ok()
+}
+
+/// Check whether the container exists.
+pub fn container_exists(name: &str) -> bool {
+    run_podman(&["container", "exists", name]).is_ok()
+}
+
+/// Check whether the image exists.
+pub fn image_exists(name: &str) -> bool {
+    run_podman(&["image", "exists", name]).is_ok()
 }
 
 /// Pull the named image into local storage.
@@ -93,7 +104,7 @@ pub fn copy_image_dir_to_host(image: &str, source_dir: &str, dest_dir: &Path) ->
     let src = format!("{container}:{source_dir}/.");
     let dst = dest_dir.display().to_string();
     let copy_result = run_podman(&["cp", "--overwrite", &src, &dst]);
-    let _ = run_podman(&["rm", "-f", "-v", "--ignore", &container]);
+    let _ = run_podman(&["rm", &container]);
 
     copy_result?;
     Ok(())

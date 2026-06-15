@@ -31,8 +31,11 @@ use super::{
     run_podman,
 };
 use crate::{
-    log,
-    log::cri_log::CriLog,
+    log::{
+        self,
+        cri_log::CriLog,
+    },
+    podman::container_exists,
 };
 
 /// How often the foreground runner polls the child for exit and the shutdown flag.
@@ -165,7 +168,7 @@ fn run_foreground(mut cmd: Command, container: &str, log_path: &Path) -> io::Res
                 stopping = true;
                 // podman sends the stop signal, waits, then SIGKILLs; the run
                 // child exits once the container is down.
-                let _ = run_podman(&["stop", "--ignore", container]);
+                let _ = run_podman(&["stop", container]);
             }
 
             thread::sleep(POLL);

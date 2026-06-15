@@ -61,13 +61,12 @@ pub fn run_foreground(
 
     let status = thread::scope(|scope| -> io::Result<ExitStatus> {
         scope.spawn(|| {
-            let result =
-                JsonlLog::open_with_limits(
-                    access_log_path,
-                    access_log_max_size,
-                    access_log_max_files,
-                )
-                .and_then(|mut log| log.capture(stdout));
+            let result = JsonlLog::open_with_limits(
+                access_log_path,
+                access_log_max_size,
+                access_log_max_files,
+            )
+            .and_then(|mut log| log.capture(stdout));
             if let Err(err) = result {
                 log::warn(format!(
                     "write access log {}: {err}",
@@ -97,7 +96,7 @@ pub fn run_foreground(
                 stopping = true;
                 // podman sends the stop signal, waits, then SIGKILLs; the run
                 // child exits once the container is down.
-                let _ = run_podman(&["stop", "--ignore", container]);
+                let _ = run_podman(&["stop", container]);
             }
 
             thread::sleep(POLL);
