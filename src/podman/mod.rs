@@ -51,6 +51,15 @@ pub fn run_podman(args: &[&str]) -> io::Result<String> {
     }
 }
 
+/// Ensure the shared `dpl` network exists.
+pub fn ensure_network(name: &str) -> io::Result<()> {
+    if run_podman(&["network", "exists", name]).is_err() {
+        run_podman(&["network", "create", name])?;
+    }
+
+    Ok(())
+}
+
 /// Stop and remove a unit's container. Idempotent: `--ignore` makes a missing
 /// container a no-op.
 pub fn stop_and_remove(name: &UnitName) -> io::Result<()> {

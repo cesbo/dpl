@@ -26,6 +26,7 @@ use thiserror::Error;
 
 use super::{
     NETWORK,
+    ensure_network,
     podman_spawn_error,
     run_podman,
 };
@@ -50,8 +51,7 @@ pub struct PodmanRun {
 
 impl PodmanRun {
     pub fn new(container: &str) -> Result<Self, PodmanRunError> {
-        run_podman(&["network", "create", "--ignore", NETWORK])
-            .map_err(PodmanRunError::CreateNetwork)?;
+        ensure_network(NETWORK).map_err(PodmanRunError::CreateNetwork)?;
 
         let mut cmd = Command::new("podman");
         cmd.args(["run", "--name", container, "--replace", "--rm"]);
@@ -64,7 +64,7 @@ impl PodmanRun {
         cmd.arg("--sdnotify=ignore");
 
         // Network
-        cmd.arg(format!("--network={}", crate::podman::NETWORK));
+        cmd.arg(format!("--network={NETWORK}"));
 
         // dpl runs this process in the foreground and writes the log itself.
         cmd.arg("--log-driver=none");
