@@ -130,15 +130,15 @@ jobs:
       - name: Create release archive
         run: |
           chmod 755 linux-x86_64/dpl macos-x86_64/dpl macos-arm64/dpl
-          GZIP=-9 tar -cvzf \
+          tar -cvzf \
               dpl-linux-x86_64-${{ needs.build-binaries.outputs.release-tag }}.tar.gz \
               -C linux-x86_64 \
               dpl
-          GZIP=-9 tar -cvzf \
+          tar -cvzf \
               dpl-macos-x86_64-${{ needs.build-binaries.outputs.release-tag }}.tar.gz \
               -C macos-x86_64 \
               dpl
-          GZIP=-9 tar -cvzf \
+          tar -cvzf \
               dpl-macos-arm64-${{ needs.build-binaries.outputs.release-tag }}.tar.gz \
               -C macos-arm64 \
               dpl
@@ -173,6 +173,16 @@ jobs:
     needs:
       - build-binaries
       - build-macos-binaries
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.FASTLY_S3_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.FASTLY_S3_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: eu-central
+      AWS_REGION: eu-central
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+      FASTLY_S3_BUCKET: cesbo
+      FASTLY_S3_ENDPOINT: https://eu-central.object.fastlystorage.app
 
     steps:
       - name: Get Linux binary
@@ -197,34 +207,38 @@ jobs:
         run: |
           mkdir upload
           chmod 755 linux-x86_64/dpl macos-x86_64/dpl macos-arm64/dpl
-          GZIP=-9 tar -cvzf \
+          tar -cvzf \
               upload/dpl-linux-x86_64.tar.gz \
               -C linux-x86_64 \
               dpl
-          GZIP=-9 tar -cvzf \
+          tar -cvzf \
               upload/dpl-macos-x86_64.tar.gz \
               -C macos-x86_64 \
               dpl
-          GZIP=-9 tar -cvzf \
+          tar -cvzf \
               upload/dpl-macos-arm64.tar.gz \
               -C macos-arm64 \
               dpl
 
-      - name: Upload to Bunny Storage (versioned)
-        uses: ayeressian/bunnycdn-storage-deploy@v2.4.5
-        with:
-          storagePassword: ${{ secrets.BUNNY_STORAGE_FTP_KEY }}
-          storageZoneName: cesbo
-          source: upload
-          destination: dpl/builds/${{ needs.build-binaries.outputs.release-tag }}
-          upload: "true"
+      - name: Configure S3 client
+        run: |
+          aws --version
+          aws configure set default.s3.addressing_style path
+          aws configure set default.s3.signature_version s3v4
 
-      - name: Upload to Bunny Storage (latest)
-        uses: ayeressian/bunnycdn-storage-deploy@v2.4.5
-        with:
-          storagePassword: ${{ secrets.BUNNY_STORAGE_FTP_KEY }}
-          storageZoneName: cesbo
-          source: upload
-          destination: dpl/latest
-          remove: "true"
-          upload: "true"
+      - name: Upload to Fastly Object Storage (versioned)
+        run: |
+          aws s3 sync upload "s3://${FASTLY_S3_BUCKET}/dpl/builds/${{ needs.build-binaries.outputs.release-tag }}/" \
+              --endpoint-url "${FASTLY_S3_ENDPOINT}" \
+              --region "${AWS_DEFAULT_REGION}" \
+              --no-progress \
+              --only-show-errors
+
+      - name: Upload to Fastly Object Storage (latest)
+        run: |
+          aws s3 sync upload "s3://${FASTLY_S3_BUCKET}/dpl/latest/" \
+              --endpoint-url "${FASTLY_S3_ENDPOINT}" \
+              --region "${AWS_DEFAULT_REGION}" \
+              --delete \
+              --no-progress \
+              --only-show-errors
