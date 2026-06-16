@@ -30,12 +30,9 @@ use super::{
     podman_spawn_error,
     run_podman,
 };
-use crate::{
-    log::{
-        self,
-        cri_log::CriLog,
-    },
-    podman::container_exists,
+use crate::log::{
+    self,
+    cri_log::CriLog,
 };
 
 /// How often the foreground runner polls the child for exit and the shutdown flag.

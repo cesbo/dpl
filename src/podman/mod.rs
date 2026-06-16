@@ -53,7 +53,7 @@ pub fn run_podman(args: &[&str]) -> io::Result<String> {
 
 /// Ensure the shared `dpl` network exists.
 pub fn ensure_network(name: &str) -> io::Result<()> {
-    if network_exists(name) {
+    if !network_exists(name) {
         run_podman(&["network", "create", name])?;
     }
 
@@ -71,7 +71,7 @@ pub fn stop_and_remove(name: &UnitName) -> io::Result<()> {
     Ok(())
 }
 
-/// Check whether the netowkr exists.
+/// Check whether the network exists.
 pub fn network_exists(name: &str) -> bool {
     run_podman(&["network", "exists", name]).is_ok()
 }
