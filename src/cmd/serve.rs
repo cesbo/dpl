@@ -125,15 +125,13 @@ fn supervise(ctx: &MainContext, shutdown: &AtomicBool, reload: &AtomicBool, died
     supervisor.shutdown();
 }
 
-/// Stream `podman events` and flip `died` on every container death so a death
-/// triggers a prompt reconcile. The poll loop is the source-of-truth backstop:
-/// this only narrows the latency. Restarts the stream if podman drops it; exits
-/// on shutdown.
+/// Stream `podman events` and flip `died` on each container death to trigger a
+/// prompt reconcile; the 10s poll stays the source-of-truth backstop, this only
+/// narrows latency. Restarts the stream if podman drops it; exits on shutdown.
 ///
-/// The `lines()` read blocks, so a watchdog thread kills the child - that closes
-/// the pipe and unblocks the read. The watchdog wakes both on shutdown and when
-/// the read loop ends (a per-iteration `done` flag), so a dropped stream lets
-/// the scope return promptly and the outer loop re-spawns `podman events`.
+/// The `lines()` read blocks, so a watchdog thread kills the child to unblock
+/// it. The watchdog wakes on shutdown or when the read loop ends (`done` flag),
+/// so a dropped stream lets the scope return and the outer loop re-spawns.
 fn events_watcher(shutdown: &AtomicBool, died: &AtomicBool) {
     while !shutdown.load(Ordering::Relaxed) {
         match Command::new("podman")
@@ -144,16 +142,15 @@ fn events_watcher(shutdown: &AtomicBool, died: &AtomicBool) {
             .spawn()
         {
             Ok(mut child) => {
-                // Take stdout out so the watchdog can own the child handle for
-                // kill+wait while the read loop reads the pipe independently.
+                // Take stdout so the watchdog can own the child for kill+wait
+                // while the read loop reads the pipe independently.
                 let stdout = child.stdout.take();
-                // Set when the read loop ends so the watchdog stops waiting and
-                // reaps the child even though shutdown is not (yet) set.
+                // Set when the read loop ends so the watchdog reaps the child
+                // even without shutdown.
                 let done = AtomicBool::new(false);
                 thread::scope(|s| {
-                    // Single owner of kill+wait: the read loop never touches the
-                    // child handle, so the child is reaped exactly once and no
-                    // raw kill-by-pid can hit a reused PID.
+                    // Sole owner of kill+wait: reaped exactly once, so no
+                    // kill-by-pid can hit a reused PID.
                     s.spawn(|| {
                         while !shutdown.load(Ordering::Relaxed) && !done.load(Ordering::Relaxed) {
                             thread::sleep(SLEEP_SLICE);

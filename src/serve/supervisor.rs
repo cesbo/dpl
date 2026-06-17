@@ -42,16 +42,18 @@ const RESTART_BACKOFF_CAP: Duration = Duration::from_secs(60);
 /// transient crash, not part of a loop: the backoff resets to the base.
 const STABLE_RUN: Duration = Duration::from_secs(30);
 
-/// How long after spawning `dpl start` a container may stay invisible to podman
-/// before a not-running reading counts as a death.
-/// `dpl start` runs in the foreground (db wait, image pull/launch) so the
-/// container can take many seconds to appear; treat that window as
-/// "still starting", not a crash.
+/// Grace after spawning `dpl start` before a not-running reading counts as a
+/// death: `dpl start` does foreground work (db wait, image pull/launch), so the
+/// container can take many seconds to appear.
 const STARTUP_GRACE: Duration = Duration::from_secs(120);
 
 /// Cap the doubling exponent so the `1 << n` shift can't overflow; the result is
 /// clamped to [`RESTART_BACKOFF_CAP`] long before this bites.
 const MAX_BACKOFF_SHIFT: u32 = 16;
+
+/// While the start-order gate holds a rank back, re-poll this soon so the gate
+/// advances as lower ranks come up, instead of waiting a full poll interval.
+const RANK_GATE_RECHECK: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RestartPolicy {
@@ -133,13 +135,12 @@ fn backoff_delay(failures: u32) -> Duration {
         .min(RESTART_BACKOFF_CAP)
 }
 
-/// Launches and supervises long-running unit containers for `dpl serve`.
-/// It spawns `dpl start <unit>` (detached) and watches the container via
-/// `podman`, restarting it when it dies. Reconciled once per serve
-/// tick, on SIGHUP, and when the podman events watcher signals a death.
+/// Launches and supervises long-running unit containers for `dpl serve`: spawns
+/// `dpl start <unit>` detached, watches via `podman`, restarts on death.
+/// Reconciled per serve tick, on SIGHUP, and on a podman events death signal.
 ///
-/// The managed set comes entirely from deploy state files. Shutdown leaves the
-/// containers running so serve can be restarted without downtime.
+/// The managed set comes only from deploy state files. Shutdown leaves
+/// containers running so serve can restart without downtime.
 pub struct Supervisor {
     managed: HashMap<UnitName, ManagedUnit>,
     /// Cached `dpl` binary path; `None` disables spawning (non-fatal).
@@ -176,14 +177,31 @@ impl Supervisor {
         // Stop tracking units no longer supervised.
         self.managed.retain(|name, _| desired_names.contains(name));
 
-        for (name, status, active) in &desired {
+        // Probe liveness once per unit, reused for the start-order gate and each
+        // drive, so podman is queried exactly once per unit per pass.
+        let running: HashMap<&UnitName, bool> = desired
+            .iter()
+            .map(|(name, ..)| (name, podman::is_running(name)))
+            .collect();
+
+        // Start order is a barrier: a rank spawns only once every lower rank is
+        // running. The detached `dpl start`s return at once, so without this
+        // nginx would load before its upstream app has a DNS name (host not
+        // found in upstream). "Running" here is container-up, not app-ready, so
+        // a freshly gated proxy can still 502 briefly until the app listens.
+        let gate = spawn_gate_rank(&desired, &running);
+        let mut gated = false;
+
+        for (name, status, active, rank) in &desired {
+            let is_up = running.get(name).copied().unwrap_or(false);
+            let can_spawn = *rank <= gate;
             match status {
                 DeployStatus::Failed => {
                     self.managed.remove(name);
                 }
                 DeployStatus::Building | DeployStatus::Idle => {
                     if let Some(m) = self.managed.get_mut(name) {
-                        observe(m);
+                        observe(m, is_up);
                     }
                 }
                 DeployStatus::Check => {
@@ -191,19 +209,27 @@ impl Supervisor {
                         .managed
                         .entry(name.clone())
                         .or_insert_with(|| ManagedUnit::new(name.clone(), *active));
-                    drive_start_once(ctx, &exe, unit, *active);
+                    drive_start_once(ctx, &exe, unit, *active, is_up, can_spawn);
+                    gated |= !can_spawn && !is_up;
                 }
                 DeployStatus::Ready => {
                     let unit = self
                         .managed
                         .entry(name.clone())
                         .or_insert_with(|| ManagedUnit::new(name.clone(), *active));
-                    drive(ctx, &exe, unit, *active);
+                    drive(ctx, &exe, unit, *active, is_up, can_spawn);
+                    gated |= !can_spawn && !is_up;
                 }
             }
         }
 
-        next_wake(&self.managed)
+        let wake = next_wake(&self.managed);
+        if gated {
+            let soon = Instant::now() + RANK_GATE_RECHECK;
+            Some(wake.map_or(soon, |at| at.min(soon)))
+        } else {
+            wake
+        }
     }
 
     /// Stop watching every supervised unit.
@@ -222,24 +248,22 @@ fn next_wake(managed: &HashMap<UnitName, ManagedUnit>) -> Option<Instant> {
         .min()
 }
 
-fn desired_units(ctx: &MainContext) -> Vec<(UnitName, DeployStatus, Option<u32>)> {
-    let mut desired: Vec<(UnitName, Option<String>, DeployStatus, Option<u32>)> =
-        DeployState::list(ctx)
-            .into_iter()
-            .filter(|(_, state)| state.supervised)
-            .map(|(name, state)| (name, state.kind, state.last_status, state.active_version))
-            .collect();
+/// Supervised units in start order, each tagged with its [`start_order_rank`].
+fn desired_units(ctx: &MainContext) -> Vec<(UnitName, DeployStatus, Option<u32>, u8)> {
+    let mut desired: Vec<(UnitName, DeployStatus, Option<u32>, u8)> = DeployState::list(ctx)
+        .into_iter()
+        .filter(|(_, state)| state.supervised)
+        .map(|(name, state)| {
+            let rank = start_order_rank(state.kind.as_deref());
+            (name, state.last_status, state.active_version, rank)
+        })
+        .collect();
 
-    desired.sort_by(|(left_name, left_kind, ..), (right_name, right_kind, ..)| {
-        start_order_rank(left_kind.as_deref())
-            .cmp(&start_order_rank(right_kind.as_deref()))
-            .then_with(|| left_name.cmp(right_name))
+    desired.sort_by(|(left_name, _, _, left_rank), (right_name, _, _, right_rank)| {
+        left_rank.cmp(right_rank).then_with(|| left_name.cmp(right_name))
     });
 
     desired
-        .into_iter()
-        .map(|(name, _, status, active_version)| (name, status, active_version))
-        .collect()
 }
 
 fn start_order_rank(kind: Option<&str>) -> u8 {
@@ -249,6 +273,23 @@ fn start_order_rank(kind: Option<&str>) -> u8 {
         Some("http-server") => 3,
         _ => 2,
     }
+}
+
+/// Gate rank for this pass: the lowest rank with a Check/Ready unit not yet
+/// running (callers spawn when `rank <= gate`, so that rank and every lower one
+/// may spawn). Transient/terminal units (Building/Idle/Failed) never gate, so a
+/// stuck redeploy can't wedge the order. All up -> [`u8::MAX`] (nothing held back).
+fn spawn_gate_rank(
+    desired: &[(UnitName, DeployStatus, Option<u32>, u8)],
+    running: &HashMap<&UnitName, bool>,
+) -> u8 {
+    desired
+        .iter()
+        .filter(|(_, status, _, _)| matches!(status, DeployStatus::Check | DeployStatus::Ready))
+        .filter(|(name, _, _, _)| !running.get(name).copied().unwrap_or(false))
+        .map(|(_, _, _, rank)| *rank)
+        .min()
+        .unwrap_or(u8::MAX)
 }
 
 fn reset_for_active_version(m: &mut ManagedUnit, active: Option<u32>) {
@@ -266,10 +307,17 @@ fn reset_for_active_version(m: &mut ManagedUnit, active: Option<u32>) {
 /// Start a `Check` unit's container once for the deploy health-check. If it
 /// exits while still in `Check`, do not schedule a restart.
 /// The deploy attempt will fail and move the state to `Failed`.
-fn drive_start_once(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit, active: Option<u32>) {
+fn drive_start_once(
+    ctx: &MainContext,
+    exe: &Path,
+    m: &mut ManagedUnit,
+    active: Option<u32>,
+    is_up: bool,
+    can_spawn: bool,
+) {
     reset_for_active_version(m, active);
 
-    if podman::is_running(&m.name) {
+    if is_up {
         m.running = true;
         m.observed_up = true;
         if m.started_at.is_none() {
@@ -278,7 +326,7 @@ fn drive_start_once(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit, active: 
         m.start_attempted = true;
     } else if m.running && m.is_death(Instant::now()) {
         observe_death(m, RestartPolicy::Never);
-    } else if !m.running && !m.start_attempted {
+    } else if can_spawn && !m.running && !m.start_attempted {
         m.start_attempted = true;
         spawn_once(ctx, exe, m);
     }
@@ -286,11 +334,18 @@ fn drive_start_once(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit, active: 
 
 /// Ensure a `Ready` unit's container is running: on a death arm a backoff
 /// restart, or spawn once the backoff elapses.
-fn drive(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit, active: Option<u32>) {
+fn drive(
+    ctx: &MainContext,
+    exe: &Path,
+    m: &mut ManagedUnit,
+    active: Option<u32>,
+    is_up: bool,
+    can_spawn: bool,
+) {
     reset_for_active_version(m, active);
 
     let now = Instant::now();
-    if podman::is_running(&m.name) {
+    if is_up {
         m.running = true;
         m.observed_up = true;
         if m.started_at.is_none() {
@@ -299,7 +354,7 @@ fn drive(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit, active: Option<u32>
         m.backoff_until = None;
     } else if m.running && m.is_death(now) {
         observe_death(m, RestartPolicy::Always);
-    } else if !m.running && m.backoff_until.is_none_or(|until| now >= until) {
+    } else if can_spawn && !m.running && m.backoff_until.is_none_or(|until| now >= until) {
         spawn(ctx, exe, m);
     }
 }
@@ -326,8 +381,8 @@ fn observe_death(m: &mut ManagedUnit, restart: RestartPolicy) {
 
 /// Reconcile tracking for a unit no longer running (`Building`/`Idle`): forget a
 /// run that has ended so a later `Ready` transition starts clean.
-fn observe(m: &mut ManagedUnit) {
-    if m.running && !podman::is_running(&m.name) {
+fn observe(m: &mut ManagedUnit, is_up: bool) {
+    if m.running && !is_up {
         m.running = false;
         m.started_at = None;
         m.observed_up = false;
@@ -620,7 +675,7 @@ mod tests {
 
         let names: Vec<UnitName> = desired_units(&ctx)
             .into_iter()
-            .map(|(name, _, _)| name)
+            .map(|(name, ..)| name)
             .collect();
 
         assert_eq!(
@@ -633,6 +688,60 @@ mod tests {
                 UnitName::new("nginx").unwrap(),
             ]
         );
+    }
+
+    fn desired(name: &str, status: DeployStatus, rank: u8) -> (UnitName, DeployStatus, Option<u32>, u8) {
+        (UnitName::new(name).unwrap(), status, Some(1), rank)
+    }
+
+    #[test]
+    fn gate_holds_back_higher_ranks_until_lower_are_up() {
+        let pg = UnitName::new("pg").unwrap();
+        let web = UnitName::new("web").unwrap();
+        let nginx = UnitName::new("nginx").unwrap();
+        let units = vec![
+            desired("pg", DeployStatus::Ready, 0),
+            desired("web", DeployStatus::Ready, 1),
+            desired("nginx", DeployStatus::Ready, 3),
+        ];
+
+        // Nothing up yet: only rank 0 (db-server) may spawn.
+        let running = HashMap::from([(&pg, false), (&web, false), (&nginx, false)]);
+        assert_eq!(spawn_gate_rank(&units, &running), 0);
+
+        // db-server up, app still down: the gate sits at the app rank, so the
+        // http-server (rank 3) stays held back.
+        let running = HashMap::from([(&pg, true), (&web, false), (&nginx, false)]);
+        assert_eq!(spawn_gate_rank(&units, &running), 1);
+
+        // Everything up: gate wide open.
+        let running = HashMap::from([(&pg, true), (&web, true), (&nginx, true)]);
+        assert_eq!(spawn_gate_rank(&units, &running), u8::MAX);
+    }
+
+    #[test]
+    fn gate_ignores_transient_and_terminal_units() {
+        // A db-server stuck Building must not wedge the whole start order: only
+        // Check/Ready units gate, so with no steady-state unit down the gate is
+        // wide open.
+        let pg = UnitName::new("pg").unwrap();
+        let units = vec![desired("pg", DeployStatus::Building, 0)];
+        let running = HashMap::from([(&pg, false)]);
+        assert_eq!(spawn_gate_rank(&units, &running), u8::MAX);
+    }
+
+    #[test]
+    fn gated_ready_unit_is_not_spawned_but_still_observed() {
+        // can_spawn=false and not up: drive must take no spawn path (would launch
+        // a real `dpl start`); the unit simply stays not-running.
+        let exe = Path::new("/nonexistent/dpl");
+        let (_dir, ctx) = ctx();
+        let mut m = ManagedUnit::new(UnitName::new("nginx").unwrap(), Some(1));
+
+        drive(&ctx, exe, &mut m, Some(1), false, false);
+
+        assert!(!m.running);
+        assert!(m.started_at.is_none());
     }
 
     #[test]
