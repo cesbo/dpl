@@ -1,4 +1,5 @@
 pub mod db;
+pub mod down;
 pub mod secret;
 pub mod serve;
 pub mod unit;

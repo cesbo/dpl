@@ -8,8 +8,11 @@ daemon to run.
 
 Most `dpl` commands run to completion in the foreground. The exception is
 `dpl serve`: a long-running daemon that runs the in-process timer scheduler
-and supervises every unit's container - starting it, restarting it if it
-exits, and stopping it on shutdown.
+and supervises every unit's container - starting it and restarting it if it
+exits. Liveness is read from `podman` (a `podman events` watcher plus a poll
+backstop), not from child processes, so `dpl serve` can be restarted or
+upgraded without stopping the containers it supervises. Global teardown is the
+explicit `dpl down`.
 
 ## Requirements
 
@@ -61,6 +64,7 @@ DPL_BASE=/opt/dpl dpl <command> [args]
 | `dpl undeploy <name>` | Remove a unit's active deployment from service |
 | `dpl inspect <name>` | Print runtime state as JSON |
 | `dpl serve` | Run the long-lived local serve process |
+| `dpl down` | Stop serve and tear down all supervised containers (keeps deploy state) |
 | `dpl db wait\|console\|backup` | Database operations |
 | `dpl secret create\|cat\|ls\|rm` | Manage encrypted secrets |
 

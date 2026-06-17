@@ -6,11 +6,17 @@ use std::{
     },
     io::{
         self,
+        BufRead,
+        BufReader,
         Seek,
         SeekFrom,
         Write,
     },
     path::PathBuf,
+    process::{
+        Command,
+        Stdio,
+    },
     sync::{
         Arc,
         atomic::{
@@ -32,7 +38,6 @@ use anyhow::{
 };
 use fs4::fs_std::FileExt;
 use signal_hook::consts::{
-    SIGCHLD,
     SIGHUP,
     SIGINT,
     SIGTERM,
@@ -66,16 +71,17 @@ pub fn run(ctx: &MainContext) -> Result<()> {
     signal_hook::flag::register(SIGHUP, Arc::clone(&reload))
         .with_context(|| format!("register {} signal", SIGHUP))?;
 
-    // SIGCHLD: a supervised child died - restart it promptly, not at next poll.
-    let child_exit = Arc::new(AtomicBool::new(false));
-    signal_hook::flag::register(SIGCHLD, Arc::clone(&child_exit))
-        .with_context(|| format!("register {} signal", SIGCHLD))?;
+    // A supervised container died - reconcile promptly, not at next poll. Set by
+    // the podman events watcher; the 10s poll + is_running is the backstop for
+    // any death the event stream missed.
+    let died = Arc::new(AtomicBool::new(false));
 
-    // Timers run on their own thread so a slow timer script can't stall
-    // container supervision.
+    // Timers and the podman events watcher run on their own threads so neither a
+    // slow timer script nor a blocking event read can stall supervision.
     thread::scope(|scope| {
         scope.spawn(|| timer_loop(ctx, &shutdown));
-        supervise(ctx, &shutdown, &reload, &child_exit);
+        scope.spawn(|| events_watcher(&shutdown, &died));
+        supervise(ctx, &shutdown, &reload, &died);
     });
 
     Ok(())
@@ -83,12 +89,7 @@ pub fn run(ctx: &MainContext) -> Result<()> {
 
 /// Supervise containers: sleep until the next respawn or a signal, then
 /// reconcile. The wake cause decides how much work to do (see below).
-fn supervise(
-    ctx: &MainContext,
-    shutdown: &AtomicBool,
-    reload: &AtomicBool,
-    child_exit: &AtomicBool,
-) {
+fn supervise(ctx: &MainContext, shutdown: &AtomicBool, reload: &AtomicBool, died: &AtomicBool) {
     let mut supervisor = crate::serve::Supervisor::new();
     let mut next_wake = supervisor.reconcile(ctx);
 
@@ -100,7 +101,7 @@ fn supervise(
 
         while !shutdown.load(Ordering::Relaxed)
             && !reload.load(Ordering::Relaxed)
-            && !child_exit.load(Ordering::Relaxed)
+            && !died.load(Ordering::Relaxed)
             && !remaining.is_zero()
         {
             let slice = remaining.min(SLEEP_SLICE);
@@ -112,24 +113,80 @@ fn supervise(
             break;
         }
 
-        // Clear before the work: a signal during reconcile re-arms the flag and
-        // is serviced next pass, never lost.
-        let reloaded = reload.swap(false, Ordering::Relaxed);
-        let child_died = child_exit.swap(false, Ordering::Relaxed);
+        // Clear before the work: a signal/event during reconcile re-arms the
+        // flag and is serviced next pass, never lost. Liveness comes from
+        // podman, so every wake takes the same full reconcile path.
+        reload.swap(false, Ordering::Relaxed);
+        died.swap(false, Ordering::Relaxed);
 
-        // A bare SIGCHLD only reaps our children. A full reconcile forks podman,
-        // whose own SIGCHLD would re-trigger it into a spin - so only SIGHUP and
-        // the timeout take the full path.
-        next_wake = if remaining.is_zero() || reloaded {
-            supervisor.reconcile(ctx)
-        } else if child_died {
-            supervisor.reap_exited(ctx)
-        } else {
-            next_wake
-        };
+        next_wake = supervisor.reconcile(ctx);
     }
 
     supervisor.shutdown();
+}
+
+/// Stream `podman events` and flip `died` on every container death so a death
+/// triggers a prompt reconcile. The poll loop is the source-of-truth backstop:
+/// this only narrows the latency. Restarts the stream if podman drops it; exits
+/// on shutdown.
+///
+/// The `lines()` read blocks, so a watchdog thread kills the child - that closes
+/// the pipe and unblocks the read. The watchdog wakes both on shutdown and when
+/// the read loop ends (a per-iteration `done` flag), so a dropped stream lets
+/// the scope return promptly and the outer loop re-spawns `podman events`.
+fn events_watcher(shutdown: &AtomicBool, died: &AtomicBool) {
+    while !shutdown.load(Ordering::Relaxed) {
+        match Command::new("podman")
+            .args(["events", "--filter", "event=die", "--format", "{{.Status}}"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(mut child) => {
+                // Take stdout out so the watchdog can own the child handle for
+                // kill+wait while the read loop reads the pipe independently.
+                let stdout = child.stdout.take();
+                // Set when the read loop ends so the watchdog stops waiting and
+                // reaps the child even though shutdown is not (yet) set.
+                let done = AtomicBool::new(false);
+                thread::scope(|s| {
+                    // Single owner of kill+wait: the read loop never touches the
+                    // child handle, so the child is reaped exactly once and no
+                    // raw kill-by-pid can hit a reused PID.
+                    s.spawn(|| {
+                        while !shutdown.load(Ordering::Relaxed) && !done.load(Ordering::Relaxed) {
+                            thread::sleep(SLEEP_SLICE);
+                        }
+                        let _ = child.kill();
+                        let _ = child.wait();
+                    });
+
+                    if let Some(out) = stdout {
+                        for line in BufReader::new(out).lines() {
+                            if line.is_err() || shutdown.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            died.store(true, Ordering::Relaxed);
+                        }
+                    }
+                    // Read ended (EOF, error, or shutdown): release the watchdog.
+                    done.store(true, Ordering::Relaxed);
+                });
+            }
+            Err(err) => {
+                crate::log::warn(format!("serve: podman events watcher: {err}"));
+            }
+        }
+
+        // Avoid a hot respawn loop if podman events keeps failing.
+        let mut remaining = POLL_INTERVAL;
+        while !shutdown.load(Ordering::Relaxed) && !remaining.is_zero() {
+            let slice = remaining.min(SLEEP_SLICE);
+            thread::sleep(slice);
+            remaining = remaining.saturating_sub(slice);
+        }
+    }
 }
 
 /// Fire due timers every [`POLL_INTERVAL`] until shutdown.

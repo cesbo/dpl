@@ -89,6 +89,9 @@ enum Command {
     /// Run the in-process serve loop
     Serve,
 
+    /// Stop serve and tear down all supervised containers (keeps deploy state)
+    Down,
+
     /// Manage encrypted runtime secrets
     Secret(cmd::secret::Args),
 }
@@ -125,6 +128,7 @@ fn run() -> Result<()> {
         Command::Undeploy { name } => cmd::unit::undeploy(&ctx, &name),
         Command::Timer { name, timer } => cmd::unit::timer(&ctx, &name, &timer),
         Command::Serve => cmd::serve::run(&ctx),
+        Command::Down => cmd::down::run(&ctx),
         Command::Secret(args) => cmd::secret::run(&ctx, args),
     }
 }
