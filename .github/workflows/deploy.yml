@@ -174,15 +174,9 @@ jobs:
       - build-binaries
       - build-macos-binaries
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.FASTLY_S3_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.FASTLY_S3_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: eu-central
-      AWS_REGION: eu-central
-      AWS_EC2_METADATA_DISABLED: "true"
-      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
-      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
-      FASTLY_S3_BUCKET: cesbo
-      FASTLY_S3_ENDPOINT: https://eu-central.object.fastlystorage.app
+      FASTLY_REGION: eu-central
+      FASTLY_PROFILE: cesbo-eu-central
+      FASTLY_ENDPOINT: https://eu-central.object.fastlystorage.app
 
     steps:
       - name: Get Linux binary
@@ -220,25 +214,35 @@ jobs:
               -C macos-arm64 \
               dpl
 
-      - name: Configure S3 client
-        run: |
-          aws --version
-          aws configure set default.s3.addressing_style path
-          aws configure set default.s3.signature_version s3v4
+      - name: Setup Fastly S3 credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.0
+        with:
+          aws-access-key-id: ${{ secrets.FASTLY_S3_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.FASTLY_S3_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.FASTLY_REGION }}
+          aws-profile: ${{ env.FASTLY_PROFILE }}
 
       - name: Upload to Fastly Object Storage (versioned)
+        env:
+          AWS_EC2_METADATA_DISABLED: true
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
         run: |
-          aws s3 sync upload "s3://${FASTLY_S3_BUCKET}/dpl/builds/${{ needs.build-binaries.outputs.release-tag }}/" \
-              --endpoint-url "${FASTLY_S3_ENDPOINT}" \
-              --region "${AWS_DEFAULT_REGION}" \
+          aws s3 sync upload "s3://cesbo/dpl/builds/${{ needs.build-binaries.outputs.release-tag }}/" \
+              --endpoint-url "${FASTLY_ENDPOINT}" \
+              --profile "${FASTLY_PROFILE}" \
               --no-progress \
               --only-show-errors
 
       - name: Upload to Fastly Object Storage (latest)
+        env:
+          AWS_EC2_METADATA_DISABLED: true
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
         run: |
-          aws s3 sync upload "s3://${FASTLY_S3_BUCKET}/dpl/latest/" \
-              --endpoint-url "${FASTLY_S3_ENDPOINT}" \
-              --region "${AWS_DEFAULT_REGION}" \
+          aws s3 sync upload "s3://cesbo/dpl/latest/" \
+              --endpoint-url "${FASTLY_ENDPOINT}" \
+              --profile "${FASTLY_PROFILE}" \
               --delete \
               --no-progress \
               --only-show-errors
