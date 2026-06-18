@@ -29,13 +29,19 @@ server {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
 {% endif %}
-        proxy_pass {{ route.target }};
+        set $upstream {{ route.target }};
+        proxy_pass $upstream$request_uri;
+        error_page 502 503 504 = @maintenance;
 {% elif route.kind == "uwsgi" %}
         include uwsgi_params;
-        uwsgi_pass {{ route.target }};
+        set $upstream {{ route.target }};
+        uwsgi_pass $upstream;
+        error_page 502 503 504 = @maintenance;
 {% elif route.kind == "fastcgi" %}
         include fastcgi_params;
-        fastcgi_pass {{ route.target }};
+        set $upstream {{ route.target }};
+        fastcgi_pass $upstream;
+        error_page 502 503 504 = @maintenance;
 {% elif route.kind == "serve_files" %}
         root {{ route.root }};
 {% if route.spa %}
@@ -54,4 +60,10 @@ server {
 {% endif %}
     }
 {% endfor %}
+{% if with_maintenance %}
+
+    location @maintenance {
+        return 503;
+    }
+{% endif %}
 }

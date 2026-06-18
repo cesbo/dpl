@@ -1,7 +1,13 @@
 mod model;
 mod run;
 
-use std::fs;
+use std::{
+    fs,
+    io::{
+        BufWriter,
+        Write,
+    },
+};
 
 pub use self::model::{
     HttpPort,
@@ -17,6 +23,7 @@ use crate::{
     log,
     podman::{
         NGINX_WWW_MOUNT,
+        detect_network_dns,
         health,
         image_exists,
         pull_image,
@@ -107,10 +114,25 @@ impl<'a> HttpServerUnit<'a> {
                 .map_err(|e| DeployError::step_install("download http-server image", e))?;
         }
 
+        // nginx needs podman's DNS as an explicit `resolver` so app upstreams can
+        // be referenced before their containers exist (resolution deferred to
+        // request time); detect it from inside the network now that the image is local.
+        let resolver = detect_network_dns(&self.config.image)
+            .map_err(|e| DeployError::step_install("detect podman DNS resolver", e))?;
+
         log::phase("writing http-server config");
         fs::create_dir_all(&conf_dir)
             .map_err(|e| DeployError::step_install("create http-server conf dir", e))?;
-        fs::write(conf_dir.join(GLOBAL_CONFIG_FILE), GLOBAL_CONFIG)
+
+        let write_config = || -> std::io::Result<()> {
+            let file = fs::File::create(conf_dir.join(GLOBAL_CONFIG_FILE))?;
+            let mut writer = BufWriter::new(file);
+            writeln!(writer, "resolver {resolver} valid=10s ipv6=off;")?;
+            writeln!(writer)?;
+            write!(writer, "{GLOBAL_CONFIG}")?;
+            writer.flush()
+        };
+        write_config()
             .map_err(|e| DeployError::step_install("write global config for http-server", e))?;
 
         // Create the www bind source so the mount has a directory to attach to.

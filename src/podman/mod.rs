@@ -92,6 +92,34 @@ pub fn pull_image(image: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// Address of podman's embedded DNS.
+pub fn detect_network_dns(image: &str) -> io::Result<String> {
+    ensure_network(NETWORK)?;
+    let resolv = run_podman(&[
+        "run",
+        "--rm",
+        "--network",
+        NETWORK,
+        "--entrypoint",
+        "cat",
+        image,
+        "/etc/resolv.conf",
+    ])?;
+
+    parse_first_nameserver(&resolv)
+        .ok_or_else(|| io::Error::other("no IPv4 nameserver in container /etc/resolv.conf"))
+}
+
+/// First IPv4 `nameserver` entry in a `resolv.conf` body.
+fn parse_first_nameserver(resolv: &str) -> Option<String> {
+    resolv
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("nameserver"))
+        .map(str::trim)
+        .find(|ip| !ip.is_empty() && !ip.contains(':'))
+        .map(str::to_string)
+}
+
 /// Extract `source_dir` from `image` into host `dest_dir` (created if missing).
 /// Spawns a throwaway container and `podman cp`s the directory contents out.
 pub fn copy_image_dir_to_host(image: &str, source_dir: &str, dest_dir: &Path) -> io::Result<()> {
@@ -231,6 +259,22 @@ mod tests {
         let other = podman_spawn_error(io::Error::new(io::ErrorKind::PermissionDenied, "denied"));
         assert_eq!(other.kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(other.to_string(), "denied");
+    }
+
+    #[test]
+    fn parses_first_ipv4_nameserver() {
+        let resolv = "search dns.podman\nnameserver 10.89.0.1\nnameserver 8.8.8.8\n";
+        assert_eq!(parse_first_nameserver(resolv).as_deref(), Some("10.89.0.1"));
+
+        // IPv6 nameservers are skipped (resolver line is rendered with ipv6=off).
+        let v6_first = "nameserver fd00::1\nnameserver 10.89.0.1\n";
+        assert_eq!(
+            parse_first_nameserver(v6_first).as_deref(),
+            Some("10.89.0.1")
+        );
+
+        // No usable nameserver yields None.
+        assert_eq!(parse_first_nameserver("search foo\n"), None);
     }
 
     #[test]

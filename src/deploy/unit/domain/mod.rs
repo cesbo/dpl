@@ -191,10 +191,24 @@ routes:
 
         let content = fs::read_to_string(conf_dir.join("site.conf")).unwrap();
         assert!(
-            content.contains(
-                "        proxy_pass http://127.0.0.1:8000;\n\nproxy_read_timeout 60s;\nclient_max_body_size 20m;\n\n    }",
-            ),
-            "{content}",
+            content.contains("set $upstream http://127.0.0.1:8000;"),
+            "set upstream"
+        );
+        assert!(
+            content.contains("proxy_pass $upstream$request_uri;"),
+            "proxy_pass to upstream"
+        );
+        assert!(
+            content.contains("error_page 502 503 504 = @maintenance;"),
+            "maintenance error_page"
+        );
+        assert!(
+            content.contains("proxy_read_timeout 60s;"),
+            "proxy_read_timeout"
+        );
+        assert!(
+            content.contains("client_max_body_size 20m;"),
+            "client_max_body_size"
         );
     }
 

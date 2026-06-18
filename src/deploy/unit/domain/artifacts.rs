@@ -57,6 +57,16 @@ impl<'a> ArtifactsContext<'a> {
             routes.push(RenderRoute::new(self.ctx, route)?);
         }
 
+        // The @maintenance fallback only exists if some route proxies upstream.
+        let with_maintenance = self.config.routes.iter().any(|route| {
+            matches!(
+                route,
+                RouteConfig::ReverseProxy { .. }
+                    | RouteConfig::Uwsgi { .. }
+                    | RouteConfig::Fastcgi { .. }
+            )
+        });
+
         render_template(
             &TEMPLATES,
             NGINX_CONFIG_TEMPLATE,
@@ -65,6 +75,7 @@ impl<'a> ArtifactsContext<'a> {
                 proxy => self.proxy,
                 custom_config => &self.config.custom_config,
                 routes => routes,
+                with_maintenance => with_maintenance,
             },
         )
     }
