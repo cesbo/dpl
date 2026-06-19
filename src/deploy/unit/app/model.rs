@@ -179,6 +179,22 @@ impl AppConfig {
         Ok(dbs)
     }
 
+    /// The db-server units backing this app's databases, deduped. Serve gates
+    /// the app's `dpl start` on these containers being up (`start_after`).
+    pub fn db_server_deps(&self, ctx: &MainContext) -> Result<Vec<UnitName>, ReferenceError> {
+        let mut servers = BTreeSet::new();
+        for db in self.database_deps(ctx)? {
+            match UnitConfig::load(ctx, &db) {
+                Ok(UnitConfig::Db(config)) => {
+                    servers.insert(config.server);
+                }
+                Ok(_) => continue,
+                Err(err) => return Err(ReferenceError::from(err).at(Location::unit(db.as_str()))),
+            }
+        }
+        Ok(servers.into_iter().collect())
+    }
+
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), ReferenceError> {
         if let Some(runtime) = &self.runtime {
             runtime.env.resolve(ctx, "runtime.env")?;
@@ -312,6 +328,65 @@ mod tests {
         let deps = config.database_deps(&ctx).unwrap();
         let names: Vec<&str> = deps.iter().map(UnitName::as_str).collect();
         assert_eq!(names, vec!["db-x"]);
+    }
+
+    #[test]
+    fn db_server_deps_maps_db_to_server() {
+        use tempfile::TempDir;
+
+        let config: AppConfig = serde_yaml::from_str(
+            "image: alpine\nruntime:\n  port: 8080\n  cmd: ./run\n  env:\n    DB: \"${db-x:url}\"\nbuilds: []\n",
+        )
+        .unwrap();
+
+        let base = TempDir::new().unwrap();
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: None,
+        };
+        ctx.write_test_unit(
+            "db-x",
+            "type: db\nserver: pg-main\nuser: app1\nsecret: db-x-pass\n",
+        );
+
+        let deps = config.db_server_deps(&ctx).unwrap();
+        let servers: Vec<&str> = deps.iter().map(UnitName::as_str).collect();
+        assert_eq!(servers, vec!["pg-main"]);
+    }
+
+    #[test]
+    fn db_server_deps_dedups_shared_server() {
+        use tempfile::TempDir;
+
+        // Two databases on the same server collapse to one gate entry.
+        let config: AppConfig = serde_yaml::from_str(
+            "image: alpine\nruntime:\n  port: 8080\n  cmd: ./run\n  env:\n    A: \"${db-a:url}\"\n    B: \"${db-b:url}\"\nbuilds: []\n",
+        )
+        .unwrap();
+
+        let base = TempDir::new().unwrap();
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: None,
+        };
+        ctx.write_test_unit(
+            "db-a",
+            "type: db\nserver: pg-main\nuser: app1\nsecret: db-a-pass\n",
+        );
+        ctx.write_test_unit(
+            "db-b",
+            "type: db\nserver: pg-main\nuser: app2\nsecret: db-b-pass\n",
+        );
+
+        let deps = config.db_server_deps(&ctx).unwrap();
+        let servers: Vec<&str> = deps.iter().map(UnitName::as_str).collect();
+        assert_eq!(servers, vec!["pg-main"]);
+    }
+
+    #[test]
+    fn db_server_deps_empty_without_db_refs() {
+        let ctx = MainContext::default();
+        assert!(sample_config().db_server_deps(&ctx).unwrap().is_empty());
     }
 
     #[test]

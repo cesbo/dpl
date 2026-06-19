@@ -254,6 +254,11 @@ impl<'a> AppUnit<'a> {
             return Ok(());
         };
 
+        let db_servers = self
+            .config
+            .db_server_deps(self.ctx)
+            .map_err(|e| DeployError::step_prepare("resolve db-server dependencies", e))?;
+        state.set_start_after(db_servers);
         state.set_check();
         crate::serve::notify(self.ctx);
 

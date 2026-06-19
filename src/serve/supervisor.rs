@@ -47,6 +47,10 @@ const STABLE_RUN: Duration = Duration::from_secs(30);
 /// container can take many seconds to appear.
 const STARTUP_GRACE: Duration = Duration::from_secs(120);
 
+/// While a unit is held back by its `start_after` gate, re-poll this soon so the
+/// gate opens as its db-servers come up, instead of waiting a full poll cycle.
+const GATE_RECHECK: Duration = Duration::from_secs(1);
+
 /// Cap the doubling exponent so the `1 << n` shift can't overflow; the result is
 /// clamped to [`RESTART_BACKOFF_CAP`] long before this bites.
 const MAX_BACKOFF_SHIFT: u32 = 16;
@@ -135,8 +139,9 @@ fn backoff_delay(failures: u32) -> Duration {
 /// `dpl start <unit>` detached, watches via `podman`, restarts on death.
 /// Reconciled per serve tick, on SIGHUP, and on a podman events death signal.
 ///
-/// The managed set comes only from deploy state files. Shutdown leaves
-/// containers running so serve can restart without downtime.
+/// The managed set and each unit's `start_after` gate come only from deploy
+/// state files; an app's `dpl start` is held until its db-server containers are
+/// up. Shutdown leaves containers running so serve can restart without downtime.
 pub struct Supervisor {
     managed: HashMap<UnitName, ManagedUnit>,
     /// Cached `dpl` binary path; `None` disables spawning (non-fatal).
@@ -173,8 +178,18 @@ impl Supervisor {
         // Stop tracking units no longer supervised.
         self.managed.retain(|name, _| desired_names.contains(name));
 
-        for (name, status, active) in &desired {
-            let is_up = podman::is_running(name);
+        // One podman read per unit, shared by each unit's own gate check.
+        let running: HashMap<&UnitName, bool> = desired
+            .iter()
+            .map(|(name, ..)| (name, podman::is_running(name)))
+            .collect();
+
+        // True if a unit that wants to spawn (Check/Ready) is held back by its
+        // gate; only then do we re-poll early so the gate can advance.
+        let mut gated = false;
+        for (name, status, active, start_after) in &desired {
+            let is_up = running.get(name).copied().unwrap_or(false);
+            let open = can_spawn(start_after, &running);
             match status {
                 DeployStatus::Failed => {
                     self.managed.remove(name);
@@ -185,23 +200,31 @@ impl Supervisor {
                     }
                 }
                 DeployStatus::Check => {
+                    gated |= !open && !is_up;
                     let unit = self
                         .managed
                         .entry(name.clone())
                         .or_insert_with(|| ManagedUnit::new(name.clone(), *active));
-                    drive_start_once(ctx, &exe, unit, *active, is_up);
+                    drive_start_once(ctx, &exe, unit, *active, is_up, open);
                 }
                 DeployStatus::Ready => {
+                    gated |= !open && !is_up;
                     let unit = self
                         .managed
                         .entry(name.clone())
                         .or_insert_with(|| ManagedUnit::new(name.clone(), *active));
-                    drive(ctx, &exe, unit, *active, is_up);
+                    drive(ctx, &exe, unit, *active, is_up, open);
                 }
             }
         }
 
-        next_wake(&self.managed)
+        let wake = next_wake(&self.managed);
+        if gated {
+            let soon = Instant::now() + GATE_RECHECK;
+            Some(wake.map_or(soon, |at| at.min(soon)))
+        } else {
+            wake
+        }
     }
 
     /// Stop watching every supervised unit.
@@ -220,13 +243,30 @@ fn next_wake(managed: &HashMap<UnitName, ManagedUnit>) -> Option<Instant> {
         .min()
 }
 
-/// Supervised units to reconcile, straight from deploy state.
-fn desired_units(ctx: &MainContext) -> Vec<(UnitName, DeployStatus, Option<u32>)> {
+/// Supervised units to reconcile, straight from deploy state. The fourth field
+/// is the unit's `start_after` gate (db-server names it must see up first).
+fn desired_units(ctx: &MainContext) -> Vec<(UnitName, DeployStatus, Option<u32>, Vec<UnitName>)> {
     DeployState::list(ctx)
         .into_iter()
         .filter(|(_, state)| state.supervised)
-        .map(|(name, state)| (name, state.last_status, state.active_version))
+        .map(|(name, state)| {
+            (
+                name,
+                state.last_status,
+                state.active_version,
+                state.start_after,
+            )
+        })
         .collect()
+}
+
+/// Whether a unit's start gate is open: every db-server in `start_after` is up.
+/// A dep absent from `running` (e.g. unsupervised or undeployed) is queried
+/// directly, so a vanished dependency keeps the gate shut.
+fn can_spawn(start_after: &[UnitName], running: &HashMap<&UnitName, bool>) -> bool {
+    start_after
+        .iter()
+        .all(|dep| running.get(dep).copied().unwrap_or_else(|| podman::is_running(dep)))
 }
 
 fn reset_for_active_version(m: &mut ManagedUnit, active: Option<u32>) {
@@ -250,6 +290,7 @@ fn drive_start_once(
     m: &mut ManagedUnit,
     active: Option<u32>,
     is_up: bool,
+    can_spawn: bool,
 ) {
     reset_for_active_version(m, active);
 
@@ -262,7 +303,7 @@ fn drive_start_once(
         m.start_attempted = true;
     } else if m.running && m.is_death(Instant::now()) {
         observe_death(m, RestartPolicy::Never);
-    } else if !m.running && !m.start_attempted {
+    } else if can_spawn && !m.running && !m.start_attempted {
         m.start_attempted = true;
         spawn_once(ctx, exe, m);
     }
@@ -270,7 +311,14 @@ fn drive_start_once(
 
 /// Ensure a `Ready` unit's container is running: on a death arm a backoff
 /// restart, or spawn once the backoff elapses.
-fn drive(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit, active: Option<u32>, is_up: bool) {
+fn drive(
+    ctx: &MainContext,
+    exe: &Path,
+    m: &mut ManagedUnit,
+    active: Option<u32>,
+    is_up: bool,
+    can_spawn: bool,
+) {
     reset_for_active_version(m, active);
 
     let now = Instant::now();
@@ -283,7 +331,7 @@ fn drive(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit, active: Option<u32>
         m.backoff_until = None;
     } else if m.running && m.is_death(now) {
         observe_death(m, RestartPolicy::Always);
-    } else if !m.running && m.backoff_until.is_none_or(|until| now >= until) {
+    } else if can_spawn && !m.running && m.backoff_until.is_none_or(|until| now >= until) {
         spawn(ctx, exe, m);
     }
 }
@@ -596,7 +644,8 @@ mod tests {
     fn desired_units_lists_supervised_in_name_order() {
         let (_dir, ctx) = ctx();
 
-        // Kind is irrelevant now: no start ordering, just DeployState::list order.
+        // desired_units carries no kind ordering - it is just DeployState::list
+        // order. Start gating happens per-unit in reconcile via `start_after`.
         deploy_supervised_as(&ctx, "nginx", "http-server");
         deploy_supervised_as(&ctx, "web", "app");
         deploy_supervised_as(&ctx, "pg", "db-server");
@@ -658,5 +707,88 @@ mod tests {
         let desired_names: HashSet<&UnitName> = desired.iter().collect();
         supervisor.managed.retain(|n, _| desired_names.contains(n));
         assert!(supervisor.managed.is_empty());
+    }
+
+    #[test]
+    fn gate_open_only_when_every_dep_is_up() {
+        let pg = UnitName::new("pg").unwrap();
+        let cache = UnitName::new("cache").unwrap();
+
+        // No deps -> always open.
+        assert!(can_spawn(&[], &HashMap::new()));
+
+        // Single dep up -> open; down -> shut.
+        assert!(can_spawn(std::slice::from_ref(&pg), &HashMap::from([(&pg, true)])));
+        assert!(!can_spawn(
+            std::slice::from_ref(&pg),
+            &HashMap::from([(&pg, false)])
+        ));
+
+        // Two deps: gate opens only when both are up.
+        let both_up = HashMap::from([(&pg, true), (&cache, true)]);
+        let one_down = HashMap::from([(&pg, true), (&cache, false)]);
+        assert!(can_spawn(&[pg.clone(), cache.clone()], &both_up));
+        assert!(!can_spawn(&[pg.clone(), cache.clone()], &one_down));
+    }
+
+    #[test]
+    fn gate_ignores_unrelated_running_units() {
+        // An unrelated db-server being up must not open an app's gate: control
+        // is scoped to the app's own dependencies.
+        let pg = UnitName::new("pg").unwrap();
+        let unrelated = UnitName::new("other-pg").unwrap();
+        let running = HashMap::from([(&pg, false), (&unrelated, true)]);
+        assert!(!can_spawn(std::slice::from_ref(&pg), &running));
+    }
+
+    #[test]
+    fn gated_ready_unit_is_not_spawned_but_still_observed() {
+        // can_spawn=false holds back the spawn, but adoption (is_up) and death
+        // detection stay unconditional. exe is never touched while gated.
+        let (_dir, ctx) = ctx();
+        let exe = std::path::Path::new("/nonexistent/dpl");
+        let name = UnitName::new("web").unwrap();
+        let mut m = ManagedUnit::new(name, Some(1));
+
+        drive(&ctx, exe, &mut m, Some(1), false, false);
+        assert!(!m.running);
+        assert!(m.started_at.is_none());
+        assert!(m.backoff_until.is_none());
+        assert_eq!(m.consecutive_failures, 0);
+
+        // db-server came up and the app launched: adopt it even though the gate
+        // value is still false this tick.
+        drive(&ctx, exe, &mut m, Some(1), true, false);
+        assert!(m.running);
+        assert!(m.observed_up);
+    }
+
+    #[test]
+    fn gated_check_unit_is_not_started() {
+        let (_dir, ctx) = ctx();
+        let exe = std::path::Path::new("/nonexistent/dpl");
+        let name = UnitName::new("web").unwrap();
+        let mut m = ManagedUnit::new(name, Some(1));
+
+        drive_start_once(&ctx, exe, &mut m, Some(1), false, false);
+        assert!(!m.running);
+        assert!(!m.start_attempted);
+    }
+
+    #[test]
+    fn desired_units_carries_start_after() {
+        let (_dir, ctx) = ctx();
+        let app = UnitName::new("web").unwrap();
+        let pg = UnitName::new("pg").unwrap();
+
+        let (_guard, mut state) = DeployState::acquire(&ctx, &app).unwrap();
+        state.begin_deploy("app").unwrap();
+        state.set_start_after(vec![pg.clone()]);
+        state.set_check();
+        drop((_guard, state));
+
+        let found = desired_units(&ctx);
+        let entry = found.iter().find(|(n, ..)| n == &app).unwrap();
+        assert_eq!(entry.3, vec![pg]);
     }
 }

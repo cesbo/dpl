@@ -132,6 +132,12 @@ pub struct DeployState {
     #[serde(default)]
     pub supervised: bool,
 
+    /// db-server units whose container must be up before serve spawns this
+    /// unit's `dpl start`. Snapshotted from the app's `${db:...}` refs at the
+    /// deploy hand-off; empty for every non-app unit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub start_after: Vec<UnitName>,
+
     #[serde(skip)]
     path: PathBuf,
 }
@@ -165,6 +171,7 @@ impl DeployState {
                     last_status: Default::default(),
                     failure: None,
                     supervised: false,
+                    start_after: Vec::new(),
                     path,
                 });
             }
@@ -284,6 +291,14 @@ impl DeployState {
         let _ = self.save();
     }
 
+    /// Record the db-server units this unit must wait for before serve spawns
+    /// its `dpl start`. Called just before `set_check` on every app deploy, so
+    /// the edges always reflect the version being handed off.
+    pub fn set_start_after(&mut self, deps: Vec<UnitName>) {
+        self.start_after = deps;
+        let _ = self.save();
+    }
+
     /// Sets build status to ready, sets build version as active version
     pub fn set_ready(&mut self) {
         self.active_version = Some(self.last_version);
@@ -300,6 +315,7 @@ impl DeployState {
         let active_version = self.active_version;
         let changed = self.active_version.is_some()
             || self.supervised
+            || !self.start_after.is_empty()
             || self.last_status != DeployStatus::Idle
             || self.failure.is_some();
 
@@ -307,6 +323,7 @@ impl DeployState {
             self.active_version = None;
             self.last_status = DeployStatus::Idle;
             self.supervised = false;
+            self.start_after = Vec::new();
             self.failure = None;
             self.updated_at = Utc::now();
             self.save()?;
@@ -388,6 +405,7 @@ mod tests {
             last_status: Default::default(),
             failure: None,
             supervised: false,
+            start_after: Vec::new(),
             path: dir.join(".deploy.state"),
         }
     }
@@ -428,6 +446,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut state = state_at(dir.path());
         state.begin_deploy("app").unwrap();
+        state.set_start_after(vec![UnitName::new("pg").unwrap()]);
         state.set_check();
         state.set_ready();
 
@@ -440,6 +459,34 @@ mod tests {
         assert_eq!(state.active_version, None);
         assert_eq!(state.last_status, DeployStatus::Idle);
         assert!(!state.supervised);
+        assert!(state.start_after.is_empty());
         assert!(state.failure.is_none());
+    }
+
+    #[test]
+    fn set_start_after_persists_and_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = state_at(dir.path());
+        let pg = UnitName::new("pg").unwrap();
+        let path = dir.path().join(".deploy.state");
+
+        state.set_start_after(vec![pg.clone()]);
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("\"start_after\""),
+            "edges not persisted:\n{content}"
+        );
+        let reloaded: DeployState = serde_json::from_str(&content).unwrap();
+        assert_eq!(reloaded.start_after, vec![pg]);
+
+        // Empty edges are omitted (skip_serializing_if) and default back to empty.
+        state.set_start_after(Vec::new());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains("start_after"),
+            "empty edges should be omitted:\n{content}"
+        );
+        let reloaded: DeployState = serde_json::from_str(&content).unwrap();
+        assert!(reloaded.start_after.is_empty());
     }
 }
