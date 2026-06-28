@@ -407,16 +407,29 @@ fn spawn(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit) {
 /// Spawn `dpl start <unit>` detached, in its own process group so a console
 /// signal to serve does not reach it.
 fn spawn_child(exe: &Path, base: &Path, name: &UnitName) -> io::Result<()> {
-    Command::new(exe)
+    let mut cmd;
+
+    if is_running_under_systemd() {
+        let unit = format!("dpl-container-{name}.scope");
+        cmd = Command::new("systemd-run");
+        cmd.args(["--scope", "--unit", &unit, "--quiet"]);
+        cmd.arg(exe);
+    } else {
+        cmd = Command::new(exe);
+    }
+
+    cmd.args(["start", name.as_str()])
         .env("DPL_BASE", base)
-        .arg("start")
-        .arg(name.as_str())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .process_group(0)
         .spawn()
         .map(|_| ())
+}
+
+fn is_running_under_systemd() -> bool {
+    env::var_os("INVOCATION_ID").is_some()
 }
 
 #[cfg(test)]
