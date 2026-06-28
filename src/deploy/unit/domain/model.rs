@@ -55,7 +55,7 @@ pub enum ProxyConfig {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RouteConfig {
     ReverseProxy {
-        /// URL location prefix (e.g. "/billing")
+        /// URL location path, exact path, or regex (e.g. "/billing", "= /", "~ \.php$")
         location: RouteLocation,
         /// Upstream URL (e.g. "http://127.0.0.1:8000")
         target: Value,
@@ -67,7 +67,7 @@ pub enum RouteConfig {
         custom_config: String,
     },
     Uwsgi {
-        /// URL location prefix (e.g. "/app")
+        /// URL location path, exact path, or regex (e.g. "/app", "= /", "~ \.php$")
         location: RouteLocation,
         /// uwsgi upstream (e.g. "unix:/run/app.sock" or "127.0.0.1:3031")
         target: Value,
@@ -76,7 +76,7 @@ pub enum RouteConfig {
         custom_config: String,
     },
     Fastcgi {
-        /// URL location prefix (e.g. "/app")
+        /// URL location path, exact path, or regex (e.g. "/app", "= /", "~ \.php$")
         location: RouteLocation,
         /// FastCGI upstream (e.g. "unix:/run/php-fpm.sock" or "127.0.0.1:9000")
         target: Value,
@@ -85,7 +85,7 @@ pub enum RouteConfig {
         custom_config: String,
     },
     ServeFiles {
-        /// URL location prefix (e.g. "/billing/static")
+        /// URL location path, exact path, or regex (e.g. "/billing/static", "= /", "~ \.php$")
         location: RouteLocation,
         /// Filesystem root
         root: Value,
@@ -97,7 +97,7 @@ pub enum RouteConfig {
         custom_config: String,
     },
     Redirect {
-        /// URL location prefix (e.g. "/old")
+        /// URL location path, exact path, or regex (e.g. "/old", "= /", "~ \.php$")
         location: RouteLocation,
         /// Destination URL, passed to nginx
         /// (e.g. "https://example.com$request_uri").
@@ -110,7 +110,7 @@ pub enum RouteConfig {
         custom_config: String,
     },
     Return {
-        /// URL location prefix (e.g. "/health")
+        /// URL location path, exact path, or regex (e.g. "/health", "= /", "~ \.php$")
         location: RouteLocation,
         /// HTTP status code (e.g. 204, 404, 410).
         status: u16,
@@ -248,6 +248,32 @@ mod tests {
         }
         match &config.routes[1] {
             RouteConfig::Redirect { permanent, .. } => assert!(permanent, "explicit 301"),
+            _ => panic!("expected redirect"),
+        }
+    }
+
+    #[test]
+    fn parse_redirect_route_with_exact_location() {
+        let config: DomainConfig = serde_yaml::from_str(
+            r#"
+server: web
+hosts:
+  - example.com
+routes:
+  - location: '= /'
+    kind: redirect
+    target: /profile
+"#,
+        )
+        .unwrap();
+
+        match &config.routes[0] {
+            RouteConfig::Redirect {
+                location, target, ..
+            } => {
+                assert_eq!(location.as_str(), "= /");
+                assert_eq!(target, "/profile");
+            }
             _ => panic!("expected redirect"),
         }
     }

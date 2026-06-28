@@ -35,8 +35,12 @@ impl RouteLocation {
             return false;
         }
 
-        if value.starts_with('/') {
-            return !value.chars().any(char::is_whitespace);
+        if Self::is_path(value) {
+            return true;
+        }
+
+        if let Some(path) = value.strip_prefix("= ") {
+            return Self::is_path(path);
         }
 
         if let Some(regex) = value.strip_prefix("~ ") {
@@ -44,6 +48,10 @@ impl RouteLocation {
         }
 
         false
+    }
+
+    fn is_path(value: &str) -> bool {
+        value.starts_with('/') && !value.chars().any(char::is_whitespace)
     }
 }
 
@@ -78,6 +86,8 @@ mod tests {
         assert!(RouteLocation::new("/").is_ok());
         assert!(RouteLocation::new("/api").is_ok());
         assert!(RouteLocation::new("/billing/static").is_ok());
+        assert!(RouteLocation::new("= /").is_ok());
+        assert!(RouteLocation::new("= /profile").is_ok());
         assert!(RouteLocation::new(r"~ \.php$").is_ok());
     }
 
@@ -86,6 +96,9 @@ mod tests {
         assert!(RouteLocation::new("").is_err());
         assert!(RouteLocation::new("api").is_err());
         assert!(RouteLocation::new("/a b").is_err());
+        assert!(RouteLocation::new("= ").is_err());
+        assert!(RouteLocation::new("= profile").is_err());
+        assert!(RouteLocation::new("= /a b").is_err());
         assert!(RouteLocation::new("~ ").is_err());
         assert!(RouteLocation::new("~\n/foo").is_err());
     }
