@@ -264,9 +264,12 @@ fn desired_units(ctx: &MainContext) -> Vec<(UnitName, DeployStatus, Option<u32>,
 /// A dep absent from `running` (e.g. unsupervised or undeployed) is queried
 /// directly, so a vanished dependency keeps the gate shut.
 fn can_spawn(start_after: &[UnitName], running: &HashMap<&UnitName, bool>) -> bool {
-    start_after
-        .iter()
-        .all(|dep| running.get(dep).copied().unwrap_or_else(|| podman::is_running(dep)))
+    start_after.iter().all(|dep| {
+        running
+            .get(dep)
+            .copied()
+            .unwrap_or_else(|| podman::is_running(dep))
+    })
 }
 
 fn reset_for_active_version(m: &mut ManagedUnit, active: Option<u32>) {
@@ -401,7 +404,8 @@ fn spawn(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit) {
     }
 }
 
-/// Spawn `dpl start <unit>` detached.
+/// Spawn `dpl start <unit>` detached, in its own process group so a console
+/// signal to serve does not reach it.
 fn spawn_child(exe: &Path, base: &Path, name: &UnitName) -> io::Result<()> {
     Command::new(exe)
         .env("DPL_BASE", base)
@@ -718,7 +722,10 @@ mod tests {
         assert!(can_spawn(&[], &HashMap::new()));
 
         // Single dep up -> open; down -> shut.
-        assert!(can_spawn(std::slice::from_ref(&pg), &HashMap::from([(&pg, true)])));
+        assert!(can_spawn(
+            std::slice::from_ref(&pg),
+            &HashMap::from([(&pg, true)])
+        ));
         assert!(!can_spawn(
             std::slice::from_ref(&pg),
             &HashMap::from([(&pg, false)])

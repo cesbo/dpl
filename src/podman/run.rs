@@ -56,10 +56,6 @@ impl PodmanRun {
         let mut cmd = Command::new("podman");
         cmd.args(["run", "--name", container, "--replace", "--rm"]);
 
-        if !podman_service_is_remote() {
-            cmd.arg("--cgroups=split");
-        }
-
         // dpl supervises readiness itself.
         cmd.arg("--sdnotify=ignore");
 
@@ -118,12 +114,6 @@ impl PodmanRun {
     pub fn into_command(self) -> Command {
         self.cmd
     }
-}
-
-fn podman_service_is_remote() -> bool {
-    run_podman(&["info", "--format", "{{.Host.ServiceIsRemote}}"])
-        .map(|out| out == "true")
-        .unwrap_or(false)
 }
 
 /// Spawn a command as a child and keep it in the foreground for its whole life.
