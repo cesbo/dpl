@@ -36,6 +36,7 @@ pub fn deploy_style() -> ProgressStyle {
 /// [`DeployConsole`]: crate::log::DeployConsole
 pub struct Spinner {
     bar: ProgressBar,
+    is_tty: bool,
 }
 
 impl Spinner {
@@ -56,7 +57,13 @@ impl Spinner {
             bar.enable_steady_tick(Duration::from_millis(100));
         }
 
-        Self { bar }
+        Self { bar, is_tty }
+    }
+
+    /// Whether stderr is a TTY. Drives the live-spinner vs partial-line output
+    /// modes in [`DeployConsole`].
+    pub fn is_tty(&self) -> bool {
+        self.is_tty
     }
 
     /// The underlying bar, e.g. to print above the spinner via

@@ -4,6 +4,10 @@ pub mod jsonl_log;
 use std::{
     cell::RefCell,
     fmt,
+    io::{
+        self,
+        Write,
+    },
     path::Path,
     time::{
         Duration,
@@ -32,6 +36,20 @@ struct ConsoleState {
     started: Instant,
     /// Phase shown on the spinner, echoed as `✓` when the next phase opens.
     phase: Option<String>,
+    /// Non-TTY only: a partial `[MM:SS] <phase>... ` line awaits its `ok`.
+    open_line: bool,
+}
+
+/// Write to stderr and flush for partial (newline-less) lines.
+fn write_err(bytes: &[u8]) {
+    let mut err = io::stderr().lock();
+    let _ = err.write_all(bytes);
+    let _ = err.flush();
+}
+
+/// Open a non-TTY partial phase line: `[MM:SS] <name>... `.
+fn open_phase_line(started: Instant, name: &str) {
+    write_err(format!("[{}] {name}... ", fmt_stamp(started.elapsed())).as_bytes());
 }
 
 pub fn success_mark() -> console::StyledObject<&'static str> {
@@ -57,9 +75,18 @@ pub fn phase(message: impl fmt::Display) {
             return;
         };
         let message = message.to_string();
-        state.spinner.bar().set_message(message.clone());
-        if let Some(prev) = state.phase.replace(message) {
-            echo_phase_done(state.spinner.bar(), state.started, &prev);
+        if state.spinner.is_tty() {
+            state.spinner.bar().set_message(message.clone());
+            if let Some(prev) = state.phase.replace(message) {
+                echo_phase_done(state.spinner.bar(), state.started, &prev);
+            }
+        } else {
+            if state.open_line {
+                write_err(b"ok\n");
+            }
+            open_phase_line(state.started, &message);
+            state.open_line = true;
+            state.phase = Some(message);
         }
     });
 }
@@ -78,6 +105,7 @@ impl DeployConsole {
                 spinner,
                 started: Instant::now(),
                 phase: None,
+                open_line: false,
             });
         });
         DeployConsole
@@ -89,8 +117,14 @@ impl DeployConsole {
             let Some(state) = console.as_mut() else {
                 return;
             };
-            if let Some(prev) = state.phase.take() {
-                echo_phase_done(state.spinner.bar(), state.started, &prev);
+            if state.spinner.is_tty() {
+                if let Some(prev) = state.phase.take() {
+                    echo_phase_done(state.spinner.bar(), state.started, &prev);
+                }
+            } else if state.open_line {
+                write_err(b"ok\n");
+                state.open_line = false;
+                state.phase = None;
             }
             state.spinner.finish();
             eprintln!(
@@ -107,6 +141,10 @@ impl DeployConsole {
             let Some(state) = console.as_mut() else {
                 return;
             };
+            if state.open_line {
+                write_err(b"\n");
+                state.open_line = false;
+            }
             state.phase.take();
             let stamp = fmt_stamp(state.started.elapsed());
             state.spinner.finish();
@@ -142,8 +180,12 @@ pub fn error(message: impl fmt::Display) {
 }
 
 fn emit(deploy_tag: &str, plain_tag: &str, message: impl fmt::Display) {
-    CONSOLE.with_borrow(|console| match console.as_ref() {
+    CONSOLE.with_borrow_mut(|console| match console.as_mut() {
         Some(state) => {
+            if state.open_line {
+                write_err(b"\n");
+                state.open_line = false;
+            }
             let line = format!(
                 "[{}] {deploy_tag}: {message}",
                 fmt_stamp(state.started.elapsed())
