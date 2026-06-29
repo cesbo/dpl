@@ -18,8 +18,6 @@ server {
 
     location {{ route.location }} {
 {% if route.kind == "reverse_proxy" %}
-        proxy_hide_header Cache-Control;
-        add_header Cache-Control "private, no-store" always;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
