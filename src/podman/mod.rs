@@ -7,10 +7,7 @@ use std::{
     fs,
     io,
     path::Path,
-    process::{
-        Command,
-        Stdio,
-    },
+    process::Command,
 };
 
 use serde::Deserialize;
@@ -37,15 +34,15 @@ pub fn podman_spawn_error(err: io::Error) -> io::Error {
 pub fn run_podman(args: &[&str]) -> io::Result<String> {
     let output = Command::new("podman")
         .args(args)
-        .stderr(Stdio::null())
         .output()
         .map_err(podman_spawn_error)?;
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         Err(io::Error::other(format!(
-            "podman exited with {}",
+            "podman exited with {}: {stderr}",
             output.status
         )))
     }
@@ -131,7 +128,7 @@ pub fn copy_image_dir_to_host(image: &str, source_dir: &str, dest_dir: &Path) ->
 
     let src = format!("{container}:{source_dir}/.");
     let dst = dest_dir.display().to_string();
-    let copy_result = run_podman(&["cp", "--overwrite", &src, &dst]);
+    let copy_result = run_podman(&["cp", &src, &dst]);
     let _ = run_podman(&["rm", &container]);
 
     copy_result?;
