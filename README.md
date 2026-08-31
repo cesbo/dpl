@@ -109,9 +109,9 @@ timers:
 
 - `builds` - ordered build layers. `files` lists archive paths copied into
   `/app` (`"*"` = all). `script` is optional
-- `runtime` - the long-running service: `port` (listened on, also used for the
-  readiness check and `${app:url}`/`${app:socket}` refs), `cmd`, optional
-  `init` pre-start script, and `env`
+- `runtime` - the long-running service: `cmd`, optional `port` (listened on,
+  also used for the readiness check and `${app:url}`/`${app:socket}` refs),
+  optional `init` pre-start script, and `env`
 - `volumes` - persistent storage (survives redeploys). `path` must be an
   absolute container path and cannot be `/`
 - `exports` - copies files from the built image into the http-server's
@@ -141,6 +141,29 @@ builds:
 exports:
   - source: /app/dist
     path: /
+```
+
+### Workers (no port)
+
+Omit `runtime.port` for a service that listens on nothing - a queue consumer, a
+poller, a cron host. It is a normal supervised container (`cmd`, `init`, `env`,
+`volumes` and `timers` all apply), with two differences: the image gets no
+`EXPOSE`, and readiness is "the container started and stayed up" instead of a
+port probe. `${<unit>:url}` and `${<unit>:socket}` are unavailable, since there
+is nothing to connect to.
+
+```yaml
+type: app
+image: python:3.12-alpine
+
+builds:
+  - files: ["*"]
+    script: pip install -r requirements.txt
+
+runtime:
+  env:
+    DB_URL: ${app-db:url}
+  cmd: python worker.py
 ```
 
 ### Env templates

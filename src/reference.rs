@@ -31,6 +31,9 @@ pub enum ReferenceErrorKind {
     #[error("unknown export '{key}'")]
     UnknownExport { key: String },
 
+    #[error("export '{key}' needs 'runtime.port', which is not set")]
+    MissingPort { key: String },
+
     #[error("unit '{name}' has no active deployment")]
     NotDeployed { name: String },
 
@@ -53,6 +56,10 @@ impl ReferenceError {
 
     pub fn unknown_export(key: impl Into<String>) -> Self {
         ReferenceErrorKind::UnknownExport { key: key.into() }.into()
+    }
+
+    pub fn missing_port(key: impl Into<String>) -> Self {
+        ReferenceErrorKind::MissingPort { key: key.into() }.into()
     }
 
     pub fn not_deployed(name: impl Into<String>) -> Self {

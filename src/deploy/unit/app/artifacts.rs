@@ -75,7 +75,9 @@ impl<'a> ArtifactsContext<'a> {
             CONTAINERFILE_TEMPLATE,
             context! {
                 image => self.config.image,
-                port => self.config.runtime.as_ref().map(|r| r.port),
+                // `runtime` gates the service block; `port` only the EXPOSE.
+                runtime => self.config.runtime.is_some(),
+                port => self.config.runtime.as_ref().and_then(|r| r.port),
                 layers => &layers,
             },
         )?;
@@ -159,7 +161,7 @@ mod tests {
                 },
             ],
             runtime: Some(RuntimeConfig {
-                port: 8080,
+                port: Some(8080),
                 env: serde_yaml::from_str("PORT: 8080\nNODE_ENV: production\n").unwrap(),
                 init: Some("npm run static-generate\nnpm run migrate".to_owned()),
                 cmd: "demo-server".to_owned(),
@@ -230,6 +232,46 @@ mod tests {
             !run_sh.contains("timer--purge"),
             "disabled timer must not be rendered:\n{run_sh}"
         );
+    }
+
+    #[test]
+    fn render_templates_runtime_without_port() {
+        // A worker: a runtime that listens on nothing. It still needs run.sh and
+        // a CMD - only the EXPOSE goes away.
+        let config = AppConfig {
+            image: "alpine".into(),
+            builds: Vec::new(),
+            runtime: Some(RuntimeConfig {
+                port: None,
+                env: EnvList::default(),
+                init: None,
+                cmd: "worker".to_owned(),
+            }),
+            volumes: Vec::new(),
+            exports: Vec::new(),
+            timers: Vec::new(),
+        };
+
+        let temp_dir = tempdir().unwrap();
+        let deploy_dir = temp_dir.path().join("worker");
+        fs::create_dir_all(&deploy_dir).unwrap();
+
+        let artifacts = ArtifactsContext { config: &config };
+        artifacts.save(&deploy_dir).unwrap();
+
+        let artifacts_dir = deploy_dir.join("artifacts");
+        let containerfile = fs::read_to_string(artifacts_dir.join("containerfile")).unwrap();
+        assert!(
+            !containerfile.contains("EXPOSE"),
+            "a port-less runtime must not EXPOSE:\n{containerfile}"
+        );
+        assert!(
+            containerfile.contains("COPY artifacts/run.sh") && containerfile.contains("CMD"),
+            "a port-less runtime is still a service:\n{containerfile}"
+        );
+
+        let run_sh = fs::read_to_string(artifacts_dir.join("run.sh")).unwrap();
+        assert!(run_sh.contains("exec worker"), "missing cmd:\n{run_sh}");
     }
 
     #[test]

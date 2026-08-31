@@ -459,6 +459,6 @@ runtime:
         };
         let runtime = app.runtime.expect("runtime present");
         assert_eq!(runtime.cmd, "./run");
-        assert_eq!(runtime.port, 8080);
+        assert_eq!(runtime.port, Some(8080));
     }
 }

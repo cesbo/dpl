@@ -15,6 +15,7 @@ use thiserror::Error;
 use crate::{
     config::UnitName,
     podman::{
+        ContainerStatus,
         inspect_container,
         run_podman,
     },
@@ -22,6 +23,8 @@ use crate::{
 
 const ATTEMPTS: usize = 30;
 const INTERVAL: Duration = Duration::from_millis(800);
+/// Consecutive `running` observations that mark a port-less unit as up.
+const SETTLE: usize = 3;
 
 #[derive(Debug, Error)]
 pub enum HealthCheckError {
@@ -36,11 +39,23 @@ pub enum HealthCheckError {
 
     #[error("timed out waiting for port {expected}; make sure dpl serve is running")]
     Timeout { expected: u16 },
+
+    #[error("timed out waiting for the container to start; make sure dpl serve is running")]
+    NotStarted,
 }
 
-/// Wait until the container has a listening TCP socket on `port` bound to a
-/// wildcard address (`0.0.0.0` or `::`).
-pub fn check(name: &UnitName, port: u16) -> Result<(), HealthCheckError> {
+/// Wait until the unit is up. With a `port`, up means a listening TCP socket on
+/// it bound to a wildcard address (`0.0.0.0` or `::`). Without one - a service
+/// that listens on nothing - up means the container started and stayed running,
+/// the strongest signal available.
+pub fn check(name: &UnitName, port: Option<u16>) -> Result<(), HealthCheckError> {
+    match port {
+        Some(port) => check_port(name, port),
+        None => check_running(name),
+    }
+}
+
+fn check_port(name: &UnitName, port: u16) -> Result<(), HealthCheckError> {
     let container = name.scoped_unit_name();
 
     for _ in 0 .. ATTEMPTS {
@@ -61,6 +76,32 @@ pub fn check(name: &UnitName, port: u16) -> Result<(), HealthCheckError> {
     };
 
     Err(err)
+}
+
+fn check_running(name: &UnitName) -> Result<(), HealthCheckError> {
+    let mut running = 0;
+
+    for _ in 0 .. ATTEMPTS {
+        sleep(INTERVAL);
+
+        // Absent means serve has not created the container yet.
+        let Some(container) = inspect_container(name, false) else {
+            continue;
+        };
+
+        if let Some(err) = exit_error(&container.state) {
+            return Err(err);
+        }
+
+        if container.state.status == "running" {
+            running += 1;
+            if running == SETTLE {
+                return Ok(());
+            }
+        }
+    }
+
+    Err(HealthCheckError::NotStarted)
 }
 
 fn tcp_tables(container: &str) -> io::Result<String> {
@@ -91,12 +132,21 @@ fn exited(name: &UnitName) -> Result<(), HealthCheckError> {
         return Ok(());
     };
 
-    match c.state.status.as_str() {
+    match exit_error(&c.state) {
+        Some(err) => Err(err),
+        None => Ok(()),
+    }
+}
+
+/// The error for a container that reached a terminal state; `None` while it is
+/// still `created` or `running`.
+fn exit_error(state: &ContainerStatus) -> Option<HealthCheckError> {
+    match state.status.as_str() {
         // Still starting (or up): not an exit.
-        "running" | "created" => Ok(()),
-        _ => Err(HealthCheckError::Exited {
-            exit_code: c.state.exit_code,
-            uptime: uptime(&c.state.started_at, &c.state.finished_at),
+        "running" | "created" => None,
+        _ => Some(HealthCheckError::Exited {
+            exit_code: state.exit_code,
+            uptime: uptime(&state.started_at, &state.finished_at),
         }),
     }
 }

@@ -24,9 +24,11 @@ export {{ env_name }}
 {{ heredoc }}
 {% endif %}
 {% endfor -%}
-{% if port is not none %}
+{% if runtime %}
 # Runtime
 COPY artifacts/run.sh /opt/dpl/run.sh
+{% if port is not none %}
 EXPOSE {{ port }}
+{% endif %}
 CMD ["/bin/sh", "/opt/dpl/run.sh"]
 {% endif %}

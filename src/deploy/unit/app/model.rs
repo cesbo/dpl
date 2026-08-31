@@ -58,8 +58,11 @@ pub struct BuildConfig {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeConfig {
-    /// Port the application listens on
-    pub port: u16,
+    /// Port the application listens on. Omitted for a service that listens on
+    /// nothing (a worker): no `EXPOSE`, no port readiness check, and no
+    /// `${<unit>:url}`/`${<unit>:socket}` export.
+    #[serde(default)]
+    pub port: Option<u16>,
     /// Environment variables
     #[serde(default)]
     pub env: EnvList,
@@ -244,11 +247,13 @@ impl AppConfig {
         }
     }
 
+    /// The port `url`/`socket` are built from. Absent for a static unit and for
+    /// a runtime that declares no port.
     fn runtime_port(&self, key: &str) -> Result<u16, ReferenceError> {
         self.runtime
             .as_ref()
-            .map(|runtime| runtime.port)
-            .ok_or_else(|| ReferenceError::unknown_export(key))
+            .and_then(|runtime| runtime.port)
+            .ok_or_else(|| ReferenceError::missing_port(key))
     }
 }
 
@@ -261,7 +266,7 @@ mod tests {
             image: "alpine".into(),
             builds: Vec::new(),
             runtime: Some(RuntimeConfig {
-                port: 8080,
+                port: Some(8080),
                 env: EnvList::default(),
                 init: None,
                 cmd: "./run".into(),
@@ -583,15 +588,66 @@ mod tests {
         let config = static_config();
         let name = UnitName::new("web").unwrap();
 
-        // A static unit has no runtime, so the port-backed keys are unknown
-        // exports for it - only `export` is valid.
+        // A static unit has no runtime, so the port-backed keys have no port to
+        // build from - only `export` is valid.
         for key in ["url", "socket"] {
             let err = config.resolve_export(&ctx, &name, key).unwrap_err();
             assert!(
-                matches!(&err.kind, ReferenceErrorKind::UnknownExport { key: k } if k == key),
-                "expected UnknownExport for {key}, got {:?}",
+                matches!(&err.kind, ReferenceErrorKind::MissingPort { key: k } if k == key),
+                "expected MissingPort for {key}, got {:?}",
                 err.kind
             );
         }
+    }
+
+    #[test]
+    fn parse_runtime_without_port() {
+        // A worker: a long-running service that listens on nothing.
+        let config: UnitConfig = serde_yaml::from_str(
+            "type: app\nimage: alpine\nbuilds: []\nruntime:\n  cmd: ./worker\n",
+        )
+        .unwrap();
+
+        let UnitConfig::App(app) = config else {
+            panic!("expected app variant");
+        };
+        let runtime = app.runtime.expect("runtime present");
+        assert_eq!(runtime.port, None);
+        assert_eq!(runtime.cmd, "./worker");
+    }
+
+    #[test]
+    fn portless_runtime_resolve_export_url_and_socket_error() {
+        use crate::reference::ReferenceErrorKind;
+
+        // A runtime without a port is reachable by nothing: `url` and `socket`
+        // have no port to build from, and say so.
+        let mut config = sample_config();
+        config.runtime.as_mut().unwrap().port = None;
+
+        let ctx = MainContext::default();
+        let name = UnitName::new("worker").unwrap();
+
+        for key in ["url", "socket"] {
+            let err = config.resolve_export(&ctx, &name, key).unwrap_err();
+            assert!(
+                matches!(&err.kind, ReferenceErrorKind::MissingPort { key: k } if k == key),
+                "expected MissingPort for {key}, got {:?}",
+                err.kind
+            );
+        }
+    }
+
+    #[test]
+    fn portless_runtime_env_refs_still_resolve() {
+        // Dropping the port must not change dependency discovery.
+        let config: AppConfig = serde_yaml::from_str(
+            "image: alpine\nbuilds: []\nruntime:\n  cmd: ./worker\n  env:\n    DB: \"${db-x:url}\"\n",
+        )
+        .unwrap();
+
+        let deps = config.unit_deps();
+        let names: Vec<&str> = deps.iter().map(UnitName::as_str).collect();
+        assert_eq!(names, vec!["db-x"]);
     }
 }
