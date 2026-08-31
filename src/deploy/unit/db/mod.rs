@@ -53,21 +53,29 @@ pub fn wait_until_ready(ctx: &MainContext, name: &UnitName, timeout: Duration) -
         .resolve_secret(&server_config.secret)
         .map_err(io::Error::other)?;
 
-    let deadline = Instant::now() + timeout;
+    let started = Instant::now();
+    let deadline = started + timeout;
     let interval = Duration::from_millis(800);
     loop {
-        let ready = server_config
-            .engine
-            .ping(&db_config.server, &root_password, Some(name.as_str()))
-            .is_ok();
-        if ready {
-            return Ok(());
-        }
+        let now = Instant::now();
+        let last = match server_config.engine.ping(
+            &db_config.server,
+            &root_password,
+            Some(name.as_str()),
+            server::probe_budget(now, deadline, server::PING_PROBE_TIMEOUT),
+        ) {
+            Ok(()) => return Ok(()),
+            Err(err) => err,
+        };
+
         if Instant::now() >= deadline {
+            // Carry the engine's own refusal - a bare "timeout" says nothing.
             return Err(io::Error::other(format!(
-                "timeout waiting for database '{name}'"
+                "timeout waiting for database '{name}' after {}: {last}",
+                crate::log::fmt_duration(started.elapsed())
             )));
         }
+
         sleep(interval);
     }
 }

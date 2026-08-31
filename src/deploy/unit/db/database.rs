@@ -95,6 +95,7 @@ impl<'a> DbUnit<'a> {
                     &self.config.server,
                     &root_password,
                     Some(self.name.as_str()),
+                    super::server::PING_PROBE_TIMEOUT,
                 )
                 .is_ok()
         };

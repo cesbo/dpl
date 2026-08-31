@@ -46,12 +46,15 @@ use crate::{
         print_field,
         success_mark,
     },
+
+    podman::health,
     state::{
         DeployFailure,
         DeployLockGuard,
         DeployStage,
         DeployState,
         DeployStatus,
+        LockHolder,
     },
     timers::{
         TimerOutcome,
@@ -148,6 +151,9 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
     let state = DeployState::load(ctx, name).with_context(|| format!("inspect unit '{name}'"))?;
     let now = Utc::now();
 
+    // Taken while `unit` is still borrowed; used by the in-progress arms below.
+    let readiness_port = readiness_port(&unit);
+
     const ACTIVE_VERSION: &str = "Active version";
     const LATEST_DEPLOY: &str = "Latest deploy";
 
@@ -178,6 +184,15 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
                 fmt_ago(&now, &state.updated_at)
             );
             print_field(LATEST_DEPLOY, info);
+            print_field(
+                "Deploy",
+                match DeployLockGuard::holder(ctx, name) {
+                    LockHolder::Held(pid) => format!("running{}", holder_pid(pid)),
+                    // The next deploy recovers it; nothing to wait for here.
+                    LockHolder::Free => "gone - the next deploy will clear this".to_string(),
+                },
+            );
+            print_field("Build log", ctx.build_log_path(name).display());
         }
         DeployStatus::Check => {
             let info = format!(
@@ -186,6 +201,23 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
                 fmt_ago(&now, &state.updated_at)
             );
             print_field(LATEST_DEPLOY, info);
+            print_field("Waiting for", health::criterion(readiness_port));
+            print_field(
+                "Startup budget",
+                match DeployLockGuard::holder(ctx, name) {
+                    LockHolder::Held(pid) => format!(
+                        "{} · deploy waiting{}",
+                        fmt_duration(health::BUDGET),
+                        holder_pid(pid)
+                    ),
+                    // Nobody is waiting on this hand-off any more.
+                    LockHolder::Free => format!(
+                        "{} · stalled - no deploy holds deploy.lock",
+                        fmt_duration(health::BUDGET)
+                    ),
+                },
+            );
+            print_field("Runtime log", ctx.runtime_log_path(name).display());
         }
         DeployStatus::Failed => {
             let stage = match &state.failure {
@@ -389,6 +421,23 @@ pub fn timer(ctx: &MainContext, name: &UnitName, timer_name: &str) -> Result<()>
 
     crate::serve::run_timer(ctx, name, &mut timers, timer_name)
         .with_context(|| format!("run timer '{timer_name}' on unit '{name}'"))
+}
+
+/// The port a unit's readiness probe looks for, or `None` for a unit whose
+/// readiness is "the container stayed running".
+fn readiness_port(unit: &UnitConfig) -> Option<u16> {
+    match unit {
+        UnitConfig::App(config) => config.runtime.as_ref().and_then(|r| r.port),
+        UnitConfig::HttpServer(_) => Some(crate::deploy::http_server::HTTP_PORT),
+        _ => None,
+    }
+}
+
+fn holder_pid(pid: Option<u32>) -> String {
+    match pid {
+        Some(pid) => format!(" (pid {pid})"),
+        None => String::new(),
+    }
 }
 
 /// Print the failure line for a `Failed` build and point at the relevant log.

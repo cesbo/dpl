@@ -312,11 +312,16 @@ impl TimersState {
     }
 }
 
-/// Holds an OS-level exclusive `flock` on `state/{unit}/timers.lock`.
+/// Holds an OS-level exclusive `flock` on `state/{unit}/timers.lock`, released
+/// when the file handle drops.
+///
+/// The lock file is never unlinked. This guard blocks while waiting, and
+/// unlinking a held lock would let the waiter wake up owning a deleted inode
+/// while a newcomer locks a freshly created one - two "holders" of the same
+/// unit's timers at once.
 pub struct TimerLockGuard {
     #[allow(dead_code)]
     file: File,
-    path: PathBuf,
 }
 
 impl TimerLockGuard {
@@ -327,8 +332,8 @@ impl TimerLockGuard {
         }
         let file = OpenOptions::new()
             .create(true)
-            .truncate(true)
             .write(true)
+            .truncate(false)
             .open(&path)
             .map_err(TimerStateError::Lock)?;
 
@@ -336,20 +341,7 @@ impl TimerLockGuard {
         // unit waits here rather than skipping.
         file.lock_exclusive().map_err(TimerStateError::Lock)?;
 
-        Ok(TimerLockGuard { file, path })
-    }
-}
-
-impl Drop for TimerLockGuard {
-    fn drop(&mut self) {
-        if let Err(err) = std::fs::remove_file(&self.path)
-            && err.kind() != io::ErrorKind::NotFound
-        {
-            crate::log::warn(format!(
-                "remove timer lock file {}: {err}",
-                self.path.display()
-            ));
-        }
+        Ok(TimerLockGuard { file })
     }
 }
 

@@ -27,7 +27,12 @@ per-unit directory:
 - `<base>/conf/{name}.yaml` - unit config (`type:` selects the variant)
 - `<base>/state/{name}/` - per-unit runtime state, locks, and logs:
   - `deploy.json` - deploy state (unit kind, active version, last status)
-  - `deploy.lock` - advisory `flock(2)` held during a deploy
+  - `deploy.lock` - advisory `flock(2)` held for the whole lifetime of the
+    foreground `dpl deploy` process, and released only when that process exits
+    (however it exits). While held it contains the holder's pid, which is what
+    `unit busy` and `dpl inspect` report. Restarting `dpl serve` does not
+    release it - serve never holds it. Do not delete the file to clear a stuck
+    deploy; kill the pid it names
   - `timers.json` - timer run state
   - `timers.lock` - advisory `flock(2)` held while a timer runs
   - `.env-v{N}.json` - encrypted runtime env of the deployed version, written
@@ -111,7 +116,10 @@ timers:
   `/app` (`"*"` = all). `script` is optional
 - `runtime` - the long-running service: `cmd`, optional `port` (listened on,
   also used for the readiness check and `${app:url}`/`${app:socket}` refs),
-  optional `init` pre-start script, and `env`
+  optional `init` pre-start script, and `env`. The process must bind a wildcard
+  address (`0.0.0.0` or `::`) on `port`: nginx reaches the container over the
+  `dpl` podman network, so a loopback-only bind fails the readiness check even
+  though the app works inside the container
 - `volumes` - persistent storage (survives redeploys). `path` must be an
   absolute container path and cannot be `/`
 - `exports` - copies files from the built image into the http-server's
@@ -149,8 +157,10 @@ Omit `runtime.port` for a service that listens on nothing - a queue consumer, a
 poller, a cron host. It is a normal supervised container (`cmd`, `init`, `env`,
 `volumes` and `timers` all apply), with two differences: the image gets no
 `EXPOSE`, and readiness is "the container started and stayed up" instead of a
-port probe. `${<unit>:url}` and `${<unit>:socket}` are unavailable, since there
-is nothing to connect to.
+port probe - three consecutive `running` observations 800ms apart, under the
+same 90s ceiling. An earlier exit fails the deploy with the container's exit
+code and how long it ran. `${<unit>:url}` and `${<unit>:socket}` are
+unavailable, since there is nothing to connect to.
 
 ```yaml
 type: app
@@ -294,6 +304,40 @@ nudges `dpl serve` to bring the container up (SIGHUP), waits for the health
 check, then marks it ready and prints the elapsed time. Non-zero exit on any
 failure.
 
+### Readiness
+
+Every deploy that hands a container to `dpl serve` then waits for it, and the
+wait is bounded: **90s total, with a 5s cap on each individual probe**. A probe
+that does not answer costs one attempt, not the deploy.
+
+| Unit | Ready when | Probe |
+|------|-----------|-------|
+| `app` with `runtime.port` | a `LISTEN` socket on that port bound to `0.0.0.0` or `::` | `podman exec <ctr> sh -c 'cat /proc/net/tcp /proc/net/tcp6'` every 800ms |
+| `app` without `runtime.port` | 3 consecutive `running` observations | `podman container inspect` every 800ms |
+| `app` with no `runtime` | immediately (nothing runs) | none |
+| `http-server` | a `LISTEN` socket on container port 80 (regardless of `http_port`) | same as a port app |
+| `db-server` | the engine accepts the root login | `podman exec` + `SELECT 1` every 800ms, 10s per call, 60s total |
+| `db` | the same ping against that database | `dpl db wait --timeout`, default 60s |
+
+A loopback-only listener is deliberately **not** accepted: nginx reaches the
+container over the `dpl` network. The port probe needs a shell and `/proc` in
+the image.
+
+While waiting, the deploy line states the container, the criterion and the
+budget, and restates it with elapsed time (plus the last probe error, if any)
+every 10s. `dpl inspect` shows the same criterion for a unit sitting in
+`check`.
+
+Failure messages and what they mean:
+
+| Message | Cause |
+|---------|-------|
+| `container exited with code N (ran …)` | the command died; see `state/{name}/log/runtime.log` |
+| `container is running but not listening on any port` | the command never bound the port |
+| `port N not reachable; found …` | bound, but on loopback or another port - the sockets found are listed |
+| `the container was never created` | serve never started it: check `dpl serve` is running, and the unit's `start_after` db-servers |
+| `readiness probe … failed: …` | podman itself did not answer - the host, not the app, is the problem |
+
 `dpl inspect` prints aligned fields: the unit kind, the active version, the
 latest deploy when it is not `ready`, then a per-kind runtime block and the
 timers. For an app the kind carries its derived form - `app (service)` when
@@ -320,9 +364,39 @@ Serve also runs the timer loop. Due app timers are executed through
 `dpl timer <unit> <timer>`, which runs the timer script inside the running
 container and writes output to `<base>/state/{name}/log/timers.log`.
 
+## Troubleshooting
+
+**A deploy sits on `waiting for app '<name>' …`.** The line names the container,
+the readiness criterion and the budget, and refreshes every 10s. It cannot run
+past the budget (90s; a db-server 60s), so a wait that outlives it means the
+process is blocked elsewhere - almost always podman on the host.
+
+1. `dpl inspect <name>` - for a unit in `check` it prints `Waiting for` (the
+   criterion), `Startup budget`, whether a deploy still holds `deploy.lock` and
+   its pid, and the runtime log path. `stalled - no deploy holds deploy.lock`
+   means the deploy that handed the unit off is gone.
+2. `podman ps`, then `podman logs dpl--<name>`, or read
+   `<base>/state/{name}/log/runtime.log` directly.
+3. `ps -ef | grep 'podman exec'` - a wedged host-side podman is the classic
+   cause. dpl now kills its own probe after 5s and reports
+   `readiness probe … failed`, so a wedge shows up as that message rather than
+   as an unexplained wait.
+4. Ctrl-C (or `kill <pid>`) aborts a deploy. Aborting releases `deploy.lock`
+   immediately. The unit is left in `check` (run `dpl undeploy <name>`) or in
+   `building`, which the next `dpl deploy` clears automatically.
+
+**`unit busy`.** Another process holds the unit's `deploy.lock`; the message
+names its pid. A killed deploy no longer wedges a unit: the next
+`DeployState::acquire` finds the interrupted `building` status, records it as
+failed and continues.
+
 ## Notes
 
 - If the archive has a single top-level folder, `dpl` flattens it after extraction.
+- Every control-plane podman call is wall-clock bounded (15s for metadata calls,
+  120s for `stop`/`rm`, 30 min for `pull`/`cp`). `podman build` and timer
+  scripts are the deliberate exceptions: both legitimately run for a long time
+  and both stream into a log.
 
 ## Development
 

@@ -68,6 +68,12 @@ fn stop_serve(ctx: &MainContext) -> Result<()> {
     let Ok(pid) = content.trim().parse::<u32>() else {
         return Ok(());
     };
+    // `kill 0` / `kill -0 0` address our whole process group, so a corrupted
+    // pidfile would take down the caller instead of serve.
+    if pid == 0 {
+        crate::log::warn(format!("ignoring invalid serve pid in {}", path.display()));
+        return Ok(());
+    }
 
     // A stale pidfile (no live process) is harmless: nothing to stop.
     if !process_alive(pid) {

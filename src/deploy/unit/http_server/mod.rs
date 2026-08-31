@@ -31,7 +31,9 @@ use crate::{
     state::DeployState,
 };
 
-const HTTP_PORT: u16 = 80;
+/// nginx always listens on 80 inside the container; `http_port` only maps it on
+/// the host. `dpl inspect` needs it to state the readiness criterion.
+pub const HTTP_PORT: u16 = 80;
 const GLOBAL_CONFIG_FILE: &str = "00-dpl.conf";
 const GLOBAL_CONFIG: &str = include_str!("templates/00-dpl.conf");
 
@@ -52,10 +54,16 @@ impl<'a> HttpServerUnit<'a> {
 
         // Hand the container off to serve, then wait until nginx is listening.
         state.set_check();
-        crate::serve::notify(self.ctx);
+
+        let container = self.name.scoped_unit_name();
+        crate::serve::notify_or_warn(self.ctx, &container);
 
         let phase_name = format!("waiting for http-server '{}'", self.name);
-        log::phase(&phase_name);
+        log::phase(format!(
+            "{phase_name} (container {container}): {} - up to {}",
+            health::criterion(Some(HTTP_PORT)),
+            log::fmt_duration(health::BUDGET),
+        ));
         if let Err(err) = health::check(self.name, Some(HTTP_PORT)) {
             return Err(DeployError::step_startup(phase_name, err));
         }

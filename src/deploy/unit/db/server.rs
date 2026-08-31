@@ -23,8 +23,20 @@ use crate::{
     state::DeployState,
 };
 
+/// Total budget for a db-server readiness wait.
 const PING_TIMEOUT: Duration = Duration::from_secs(60);
 const PING_INTERVAL: Duration = Duration::from_millis(800);
+
+/// Cap on a single `SELECT 1` through `podman exec`. A starting engine refuses
+/// in milliseconds; a wedged one must not eat the whole [`PING_TIMEOUT`].
+pub const PING_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Budget for one probe: the per-call cap, or whatever is left of the deadline.
+/// Never zero, so the last attempt before the deadline still runs.
+pub fn probe_budget(now: Instant, deadline: Instant, cap: Duration) -> Duration {
+    cap.min(deadline.saturating_duration_since(now))
+        .max(Duration::from_millis(1))
+}
 
 #[derive(Debug)]
 pub struct DbServerUnit<'a> {
@@ -67,26 +79,44 @@ impl<'a> DbServerUnit<'a> {
         }
 
         state.set_check();
-        crate::serve::notify(self.ctx);
 
-        log::phase(format!("waiting for db-server '{}'", self.name));
-        let deadline = Instant::now() + PING_TIMEOUT;
+        let container = self.name.scoped_unit_name();
+        crate::serve::notify_or_warn(self.ctx, &container);
+
+        let phase_name = format!("waiting for db-server '{}'", self.name);
+        log::phase(format!(
+            "{phase_name} (container {container}): the engine accepts the root login              (probe: podman exec 'SELECT 1') - up to {}",
+            log::fmt_duration(PING_TIMEOUT),
+        ));
+
+        let started = Instant::now();
+        let deadline = started + PING_TIMEOUT;
         loop {
-            if self
-                .config
-                .engine
-                .ping(self.name, &root_password, None)
-                .is_ok()
-            {
-                state.set_ready();
-                return Ok(());
-            }
+            let now = Instant::now();
+            let last = match self.config.engine.ping(
+                self.name,
+                &root_password,
+                None,
+                probe_budget(now, deadline, PING_PROBE_TIMEOUT),
+            ) {
+                Ok(()) => {
+                    state.set_ready();
+                    return Ok(());
+                }
+                Err(err) => err,
+            };
+
             if Instant::now() >= deadline {
+                // Report why the engine refused, not a bare "timeout".
                 return Err(DeployError::step_startup(
-                    format!("waiting for db-server '{}'", self.name),
-                    std::io::Error::other("timeout"),
+                    phase_name,
+                    std::io::Error::other(format!(
+                        "waited {}: {last}",
+                        log::fmt_duration(started.elapsed())
+                    )),
                 ));
             }
+
             sleep(PING_INTERVAL);
         }
     }
@@ -164,5 +194,41 @@ impl<'a> DbServerUnit<'a> {
                 "remove runtime env file for '{name} v{version}': {err}"
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn probe_budget_is_capped_far_from_the_deadline() {
+        let now = Instant::now();
+        let deadline = now + Duration::from_secs(60);
+        assert_eq!(
+            probe_budget(now, deadline, PING_PROBE_TIMEOUT),
+            PING_PROBE_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn probe_budget_shrinks_near_the_deadline() {
+        let now = Instant::now();
+        let deadline = now + Duration::from_secs(2);
+        assert_eq!(
+            probe_budget(now, deadline, PING_PROBE_TIMEOUT),
+            Duration::from_secs(2)
+        );
+    }
+
+    #[test]
+    fn probe_budget_is_never_zero() {
+        // A deadline already past must still allow one bounded attempt.
+        let now = Instant::now();
+        let deadline = now - Duration::from_secs(1);
+        assert_eq!(
+            probe_budget(now, deadline, PING_PROBE_TIMEOUT),
+            Duration::from_millis(1)
+        );
     }
 }

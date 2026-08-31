@@ -55,6 +55,11 @@ const GATE_RECHECK: Duration = Duration::from_secs(1);
 /// clamped to [`RESTART_BACKOFF_CAP`] long before this bites.
 const MAX_BACKOFF_SHIFT: u32 = 16;
 
+/// Cap on the one container probe reconcile makes per unit. A reconcile pass
+/// runs on serve's main loop, so a wedged podman must cost this much and no
+/// more - otherwise one unit stalls supervision and timers for every unit.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RestartPolicy {
     Never,
@@ -179,16 +184,32 @@ impl Supervisor {
         self.managed.retain(|name, _| desired_names.contains(name));
 
         // One podman read per unit, shared by each unit's own gate check.
-        let running: HashMap<&UnitName, bool> = desired
+        // `None` means podman did not answer in time: no decision this pass.
+        let running: HashMap<&UnitName, Option<bool>> = desired
             .iter()
-            .map(|(name, ..)| (name, podman::is_running(name)))
+            .map(|(name, ..)| {
+                let state = match podman::is_running_within(name, PROBE_TIMEOUT) {
+                    Ok(up) => Some(up),
+                    Err(err) => {
+                        log::warn(format!("probe container '{name}': {err}"));
+                        None
+                    }
+                };
+                (name, state)
+            })
             .collect();
 
         // True if a unit that wants to spawn (Check/Ready) is held back by its
         // gate; only then do we re-poll early so the gate can advance.
         let mut gated = false;
         for (name, status, active, start_after) in &desired {
-            let is_up = running.get(name).copied().unwrap_or(false);
+            // Unknown state: skip this unit entirely rather than read it as
+            // down, which would spawn a second `dpl start`. The next ordinary
+            // poll retries - no early recheck, so a wedged podman is not probed
+            // in a tight loop.
+            let Some(is_up) = running.get(name).copied().flatten() else {
+                continue;
+            };
             let open = can_spawn(start_after, &running);
             match status {
                 DeployStatus::Failed => {
@@ -262,13 +283,12 @@ fn desired_units(ctx: &MainContext) -> Vec<(UnitName, DeployStatus, Option<u32>,
 
 /// Whether a unit's start gate is open: every db-server in `start_after` is up.
 /// A dep absent from `running` (e.g. unsupervised or undeployed) is queried
-/// directly, so a vanished dependency keeps the gate shut.
-fn can_spawn(start_after: &[UnitName], running: &HashMap<&UnitName, bool>) -> bool {
-    start_after.iter().all(|dep| {
-        running
-            .get(dep)
-            .copied()
-            .unwrap_or_else(|| podman::is_running(dep))
+/// directly, so a vanished dependency keeps the gate shut - and so does a dep
+/// whose probe did not answer, since a shut gate is the conservative direction.
+fn can_spawn(start_after: &[UnitName], running: &HashMap<&UnitName, Option<bool>>) -> bool {
+    start_after.iter().all(|dep| match running.get(dep) {
+        Some(state) => *state == Some(true),
+        None => podman::is_running(dep),
     })
 }
 
@@ -737,18 +757,27 @@ mod tests {
         // Single dep up -> open; down -> shut.
         assert!(can_spawn(
             std::slice::from_ref(&pg),
-            &HashMap::from([(&pg, true)])
+            &HashMap::from([(&pg, Some(true))])
         ));
         assert!(!can_spawn(
             std::slice::from_ref(&pg),
-            &HashMap::from([(&pg, false)])
+            &HashMap::from([(&pg, Some(false))])
         ));
 
         // Two deps: gate opens only when both are up.
-        let both_up = HashMap::from([(&pg, true), (&cache, true)]);
-        let one_down = HashMap::from([(&pg, true), (&cache, false)]);
+        let both_up = HashMap::from([(&pg, Some(true)), (&cache, Some(true))]);
+        let one_down = HashMap::from([(&pg, Some(true)), (&cache, Some(false))]);
         assert!(can_spawn(&[pg.clone(), cache.clone()], &both_up));
         assert!(!can_spawn(&[pg.clone(), cache.clone()], &one_down));
+    }
+
+    #[test]
+    fn gate_is_shut_when_a_dep_probe_did_not_answer() {
+        // An unanswered probe must not read as "up": holding the gate shut is
+        // the direction that cannot start an app before its database.
+        let pg = UnitName::new("pg").unwrap();
+        let unknown = HashMap::from([(&pg, None)]);
+        assert!(!can_spawn(std::slice::from_ref(&pg), &unknown));
     }
 
     #[test]
@@ -757,7 +786,7 @@ mod tests {
         // is scoped to the app's own dependencies.
         let pg = UnitName::new("pg").unwrap();
         let unrelated = UnitName::new("other-pg").unwrap();
-        let running = HashMap::from([(&pg, false), (&unrelated, true)]);
+        let running = HashMap::from([(&pg, Some(false)), (&unrelated, Some(true))]);
         assert!(!can_spawn(std::slice::from_ref(&pg), &running));
     }
 

@@ -7,6 +7,7 @@ use std::{
         Command,
         Stdio,
     },
+    time::Duration,
 };
 
 use sea_query::{
@@ -23,17 +24,23 @@ use super::model::DbServerEngine;
 use crate::{
     config::UnitName,
     deploy::db::DbConnectionParams,
-    podman::podman_spawn_error,
+    podman::{
+        podman_spawn_error,
+        wait_within,
+    },
 };
 
 impl DbServerEngine {
     /// Returns `Ok` only when the container is up and the SQL server accepts
     /// the root login.
+    /// `limit` caps the `podman exec`: without it a wedged host would defeat
+    /// every enclosing ping deadline, which can only fire between calls.
     pub fn ping(
         self,
         server: &UnitName,
         root_password: &str,
         db_name: Option<&str>,
+        limit: Duration,
     ) -> io::Result<()> {
         let server = server.scoped_unit_name();
         let password_env = self.client_password_env();
@@ -68,12 +75,14 @@ impl DbServerEngine {
             }
         }
 
-        let status = cmd
+        let mut child = cmd
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .status()
+            .spawn()
             .map_err(podman_spawn_error)?;
+
+        let status = wait_within(&mut child, limit, "podman exec (db ping)")?;
         if status.success() {
             Ok(())
         } else {

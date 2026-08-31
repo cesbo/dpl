@@ -91,6 +91,30 @@ pub fn phase(message: impl fmt::Display) {
     });
 }
 
+/// Refresh the phase in progress with live detail (what is being waited for,
+/// elapsed vs budget). On a TTY it replaces the spinner message; off it the
+/// stamped progress line takes over as the phase's open line, so the pending
+/// `ok` still lands - after the last progress line instead of the first.
+/// No-op outside a deploy.
+pub fn progress(message: impl fmt::Display) {
+    CONSOLE.with_borrow_mut(|console| {
+        let Some(state) = console.as_mut() else {
+            return;
+        };
+        let message = message.to_string();
+        if state.spinner.is_tty() {
+            state.spinner.bar().set_message(message);
+            return;
+        }
+
+        if state.open_line {
+            write_err(b"\n");
+        }
+        open_phase_line(state.started, &message);
+        state.open_line = true;
+    });
+}
+
 /// Drives the deploy spinner and the `[MM:SS] ✓ <phase>` lines.
 pub struct DeployConsole;
 

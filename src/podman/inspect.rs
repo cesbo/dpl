@@ -13,17 +13,27 @@ use crate::{
         success_mark,
     },
     podman::{
+        REPORT_TIMEOUT,
         container_stats,
         image_size,
-        inspect_container,
+        try_inspect_container,
     },
 };
 
 /// Print live container/runtime detail.
 pub fn print_container_state(name: &UnitName) {
-    let Some(c) = inspect_container(name, true) else {
-        print_field("Container", format!("{} unavailable", error_mark()));
-        return;
+    // Distinguish "no container" from "podman never answered": the second one
+    // is the host's problem, and hiding it is what makes a stall unreadable.
+    let c = match try_inspect_container(name, true, REPORT_TIMEOUT) {
+        Ok(Some(state)) => state,
+        Ok(None) => {
+            print_field("Container", format!("{} not created", error_mark()));
+            return;
+        }
+        Err(err) => {
+            print_field("Container", format!("{} unavailable: {err}", error_mark()));
+            return;
+        }
     };
 
     let running = c.state.status == "running";

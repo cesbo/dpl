@@ -7,6 +7,9 @@ use std::{
     },
     io::{
         self,
+        Read,
+        Seek,
+        SeekFrom,
         Write,
     },
     path::PathBuf,
@@ -33,8 +36,8 @@ pub enum DeployStateError {
     #[error("lock unit")]
     Lock(#[source] io::Error),
 
-    #[error("unit busy")]
-    Busy,
+    #[error("unit busy: another process holds the deploy lock{}", holder(*.pid))]
+    Busy { pid: Option<u32> },
 
     #[error("read state file")]
     Read(#[source] io::Error),
@@ -47,6 +50,23 @@ pub enum DeployStateError {
 
     #[error("unit has no active version")]
     NoActiveVersion,
+}
+
+/// Render the holder pid for the `Busy` message.
+fn holder(pid: Option<u32>) -> String {
+    match pid {
+        Some(pid) => format!(" (pid {pid})"),
+        None => String::new(),
+    }
+}
+
+/// Who holds a unit's deploy lock right now.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LockHolder {
+    /// Nobody holds it - or it could not be probed at all.
+    Free,
+    /// Held by a live process; the pid when the lock file carries one.
+    Held(Option<u32>),
 }
 
 #[derive(Debug)]
@@ -144,14 +164,25 @@ pub struct DeployState {
 
 impl DeployState {
     /// Acquire the unit-level busy lock and load its state.
+    ///
+    /// A `Building` status read *under* the lock has no live deployer - every
+    /// writer of `Building` holds this flock for its whole deploy - so it is
+    /// recorded as a failed attempt instead of latching the unit as busy
+    /// forever after a killed deploy or a reboot.
     pub fn acquire(
         ctx: &MainContext,
         name: &UnitName,
     ) -> Result<(DeployLockGuard, DeployState), DeployStateError> {
         let guard = DeployLockGuard::lock(ctx, name)?;
-        let state = DeployState::load(ctx, name)?;
+        let mut state = DeployState::load(ctx, name)?;
+
         if state.last_status == DeployStatus::Building {
-            return Err(DeployStateError::Busy);
+            crate::log::warn(format!(
+                "unit '{name}': deploy of version {} never finished (last update {}) - \
+                 marking it failed",
+                state.last_version, state.updated_at
+            ));
+            state.set_failed(DeployStage::Prepare, "deploy interrupted".to_string());
         }
 
         Ok((guard, state))
@@ -337,30 +368,55 @@ impl DeployState {
     }
 }
 
-/// Holds an OS-level exclusive `flock` on `state/{unit}/deploy.lock`.
+/// Holds an OS-level exclusive `flock` on `state/{unit}/deploy.lock` and, while
+/// held, records the holder's pid in it. The flock is released when the file
+/// handle drops - including when the process dies, however it dies.
+///
+/// The lock file itself is never unlinked: unlink-while-locked lets a waiter
+/// wake up holding a deleted inode while a newcomer locks a fresh one, and the
+/// pid must stay readable by whoever gets `Busy`.
 pub struct DeployLockGuard {
     #[allow(dead_code)]
     file: File,
-    path: PathBuf,
 }
 
 impl DeployLockGuard {
     fn lock(ctx: &MainContext, name: &UnitName) -> Result<Self, DeployStateError> {
+        Self::open(ctx, name, true)
+    }
+
+    /// `write_pid` records this process as the holder; a bare probe passes
+    /// `false` so it never rewrites a lock it is only inspecting.
+    fn open(
+        ctx: &MainContext,
+        name: &UnitName,
+        write_pid: bool,
+    ) -> Result<Self, DeployStateError> {
         let path = ctx.deploy_lock_path(name);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(DeployStateError::Lock)?;
         }
 
-        let file = OpenOptions::new()
+        // Never truncate before the flock attempt: it would wipe the holder pid
+        // of a lock somebody else currently holds.
+        let mut file = OpenOptions::new()
             .create(true)
-            .truncate(true)
+            .read(true)
             .write(true)
+            .truncate(false)
             .open(&path)
             .map_err(DeployStateError::Lock)?;
 
         match file.try_lock_exclusive() {
-            Ok(true) => Ok(DeployLockGuard { file, path }),
-            Ok(false) => Err(DeployStateError::Busy),
+            Ok(true) => {
+                if write_pid {
+                    write_holder(&mut file);
+                }
+                Ok(DeployLockGuard { file })
+            }
+            Ok(false) => Err(DeployStateError::Busy {
+                pid: read_holder(&mut file),
+            }),
             Err(err) => Err(DeployStateError::Lock(err)),
         }
     }
@@ -373,23 +429,40 @@ impl DeployLockGuard {
     ) -> Result<Option<Self>, DeployStateError> {
         match Self::lock(ctx, name) {
             Ok(guard) => Ok(Some(guard)),
-            Err(DeployStateError::Busy) => Ok(None),
+            Err(DeployStateError::Busy { .. }) => Ok(None),
             Err(err) => Err(err),
+        }
+    }
+
+    /// Who holds the unit's deploy lock, for reports. There is no way to peek at
+    /// an `flock`, so this takes and immediately drops the lock: never call it
+    /// while this process already holds it, and only when a report actually
+    /// needs the answer, since for that instant a deploy would see `Busy`.
+    pub fn holder(ctx: &MainContext, name: &UnitName) -> LockHolder {
+        match Self::open(ctx, name, false) {
+            Ok(_released) => LockHolder::Free,
+            Err(DeployStateError::Busy { pid }) => LockHolder::Held(pid),
+            Err(_) => LockHolder::Free,
         }
     }
 }
 
-impl Drop for DeployLockGuard {
-    fn drop(&mut self) {
-        if let Err(err) = std::fs::remove_file(&self.path)
-            && err.kind() != io::ErrorKind::NotFound
-        {
-            crate::log::warn(format!(
-                "remove deploy lock file {}: {err}",
-                self.path.display()
-            ));
-        }
-    }
+/// Record this process as the lock holder. Best-effort: losing the pid costs a
+/// detail in one error message, never the lock itself.
+fn write_holder(file: &mut File) {
+    let pid = std::process::id().to_string();
+    let _ = file.seek(SeekFrom::Start(0));
+    let _ = file.write_all(pid.as_bytes());
+    let _ = file.set_len(pid.len() as u64);
+    let _ = file.flush();
+}
+
+/// The pid recorded in a lock file, if it holds a readable one.
+fn read_holder(file: &mut File) -> Option<u32> {
+    file.seek(SeekFrom::Start(0)).ok()?;
+    let mut content = String::new();
+    file.read_to_string(&mut content).ok()?;
+    content.trim().parse().ok()
 }
 
 #[cfg(test)]
@@ -408,6 +481,112 @@ mod tests {
             start_after: Vec::new(),
             path: dir.join(".deploy.state"),
         }
+    }
+
+    fn ctx_at(dir: &std::path::Path) -> MainContext {
+        MainContext {
+            base: dir.to_path_buf(),
+            master_key: None,
+        }
+    }
+
+    #[test]
+    fn busy_names_the_holder_pid() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ctx_at(dir.path());
+        let name = UnitName::new("web").unwrap();
+
+        let _held = DeployLockGuard::lock(&ctx, &name).unwrap();
+        let Err(err) = DeployState::acquire(&ctx, &name) else {
+            panic!("expected Busy while the lock is held");
+        };
+
+        let DeployStateError::Busy { pid } = &err else {
+            panic!("expected Busy, got {err:?}");
+        };
+        let pid = *pid;
+        assert_eq!(pid, Some(std::process::id()));
+        assert!(
+            err.to_string().contains(&std::process::id().to_string()),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn holder_reports_free_and_held() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ctx_at(dir.path());
+        let name = UnitName::new("web").unwrap();
+
+        assert_eq!(DeployLockGuard::holder(&ctx, &name), LockHolder::Free);
+
+        let held = DeployLockGuard::lock(&ctx, &name).unwrap();
+        assert_eq!(
+            DeployLockGuard::holder(&ctx, &name),
+            LockHolder::Held(Some(std::process::id()))
+        );
+
+        drop(held);
+        assert_eq!(DeployLockGuard::holder(&ctx, &name), LockHolder::Free);
+    }
+
+    #[test]
+    fn lock_file_survives_guard_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ctx_at(dir.path());
+        let name = UnitName::new("web").unwrap();
+
+        drop(DeployLockGuard::lock(&ctx, &name).unwrap());
+
+        // One stable inode per path: never unlinked while anyone could hold it.
+        assert!(ctx.deploy_lock_path(&name).exists());
+        assert!(DeployLockGuard::lock(&ctx, &name).is_ok());
+    }
+
+    #[test]
+    fn acquire_recovers_a_stale_building_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ctx_at(dir.path());
+        let name = UnitName::new("web").unwrap();
+
+        // v1 live, then a v2 deploy that bumped the version and died mid-build.
+        {
+            let (_guard, mut state) = DeployState::acquire(&ctx, &name).unwrap();
+            state.begin_deploy("app").unwrap();
+            state.set_ready();
+            state.begin_deploy("app").unwrap();
+            assert_eq!(state.last_status, DeployStatus::Building);
+            assert_eq!(state.last_version, 2);
+        }
+
+        let (_guard, state) = DeployState::acquire(&ctx, &name).unwrap();
+        assert_eq!(state.last_status, DeployStatus::Failed);
+        let failure = state.failure.as_ref().unwrap();
+        assert_eq!(failure.stage, DeployStage::Prepare);
+        assert_eq!(failure.error, "deploy interrupted");
+        assert_eq!(state.last_version, 2);
+        // The live version stays claimed, so a later undeploy can still clean it.
+        assert_eq!(state.active_version, Some(1));
+
+        // The recovery is persisted, not just returned.
+        let reloaded = DeployState::load(&ctx, &name).unwrap();
+        assert_eq!(reloaded.last_status, DeployStatus::Failed);
+    }
+
+    #[test]
+    fn acquire_is_busy_only_while_the_lock_is_held() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ctx_at(dir.path());
+        let name = UnitName::new("web").unwrap();
+
+        let held = DeployLockGuard::lock(&ctx, &name).unwrap();
+        assert!(matches!(
+            DeployState::acquire(&ctx, &name),
+            Err(DeployStateError::Busy { .. })
+        ));
+
+        drop(held);
+        assert!(DeployState::acquire(&ctx, &name).is_ok());
     }
 
     #[test]

@@ -5,6 +5,8 @@
 //! from the provider's public IP-list API on every deploy; a fetch or decode
 //! failure aborts the deploy rather than rendering an empty allowlist.
 
+use std::time::Duration;
+
 use serde::{
     Deserialize,
     Serialize,
@@ -13,6 +15,12 @@ use serde::{
 use thiserror::Error;
 
 use super::model::ProxyConfig;
+
+/// End-to-end cap on one provider IP-list fetch.
+const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Cap on establishing the connection alone.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Cloudflare's published IP ranges.
 const CLOUDFLARE_URL: &str = "https://api.cloudflare.com/client/v4/ips";
@@ -82,11 +90,19 @@ pub fn resolve(proxy: &ProxyConfig) -> Result<ResolvedProxy, ProxyError> {
 /// `GET url` and decode the JSON body into `T`, tagging both the transport and
 /// decode failures with the provider for a useful deploy error.
 fn fetch<T: DeserializeOwned>(provider: &'static str, url: &'static str) -> Result<T, ProxyError> {
-    let mut response = ureq::get(url).call().map_err(|source| ProxyError::Fetch {
-        provider,
-        url,
-        source: Box::new(source),
-    })?;
+    // ureq defaults every timeout to None, so without these a hung provider
+    // endpoint would hang a domain deploy. These are small static documents.
+    let mut response = ureq::get(url)
+        .config()
+        .timeout_global(Some(FETCH_TIMEOUT))
+        .timeout_connect(Some(CONNECT_TIMEOUT))
+        .build()
+        .call()
+        .map_err(|source| ProxyError::Fetch {
+            provider,
+            url,
+            source: Box::new(source),
+        })?;
 
     response
         .body_mut()

@@ -41,7 +41,10 @@ use crate::{
         },
     },
     log,
-    podman::copy_image_dir_to_host,
+    podman::{
+        copy_image_dir_to_host,
+        health,
+    },
     state::DeployState,
     timers::TimersState,
 };
@@ -260,11 +263,19 @@ impl<'a> AppUnit<'a> {
             .map_err(|e| DeployError::step_prepare("resolve db-server dependencies", e))?;
         state.set_start_after(db_servers);
         state.set_check();
-        crate::serve::notify(self.ctx);
 
+        let container = self.name.scoped_unit_name();
+        crate::serve::notify_or_warn(self.ctx, &container);
+
+        // The console states the criterion and the budget; the error keeps the
+        // short form, since the check's own message carries the detail.
         let phase_name = format!("waiting for app '{}'", self.name);
-        log::phase(&phase_name);
-        if let Err(err) = crate::podman::health::check(self.name, runtime.port) {
+        log::phase(format!(
+            "{phase_name} (container {container}): {} - up to {}",
+            health::criterion(runtime.port),
+            log::fmt_duration(health::BUDGET),
+        ));
+        if let Err(err) = health::check(self.name, runtime.port) {
             return Err(DeployError::step_startup(phase_name, err));
         }
 
