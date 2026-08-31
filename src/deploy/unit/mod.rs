@@ -85,6 +85,15 @@ impl UnitConfig {
         }
     }
 
+    /// The kind as shown to the user, qualified with an app's derived shape
+    /// (`app (worker)`). Everything else prints its bare kind.
+    pub fn kind_display(&self) -> String {
+        match self {
+            UnitConfig::App(config) => format!("{} ({})", AppConfig::KIND, config.shape()),
+            other => other.kind().to_owned(),
+        }
+    }
+
     pub fn resolve_export(
         &self,
         ctx: &MainContext,
@@ -434,6 +443,32 @@ secret: pg-pass
         let err = resolve_export(&ctx, &UnitName::new("example-com").unwrap(), "host").unwrap_err();
         assert!(matches!(&err.trail[0], Location::Unit { name } if name == "example-com"));
         assert!(matches!(err.kind, ReferenceErrorKind::UnknownExport { ref key } if key == "host"));
+    }
+
+    #[test]
+    fn kind_display_qualifies_app_with_its_shape() {
+        let app = |yaml: &str| -> UnitConfig { serde_yaml::from_str(yaml).unwrap() };
+
+        assert_eq!(
+            app("type: app\nimage: alpine\nbuilds: []\nruntime:\n  port: 8080\n  cmd: ./run\n")
+                .kind_display(),
+            "app (service)"
+        );
+        assert_eq!(
+            app("type: app\nimage: alpine\nbuilds: []\nruntime:\n  cmd: ./worker\n")
+                .kind_display(),
+            "app (worker)"
+        );
+        assert_eq!(
+            app("type: app\nimage: alpine\nbuilds: []\nexports:\n  - source: /app/dist\n    path: /\n")
+                .kind_display(),
+            "app (static)"
+        );
+
+        // Other kinds print bare.
+        let domain: UnitConfig =
+            serde_yaml::from_str("type: domain\nserver: nginx\nhosts: [\"example.com\"]\n").unwrap();
+        assert_eq!(domain.kind_display(), "domain");
     }
 
     #[test]

@@ -151,7 +151,7 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
     const ACTIVE_VERSION: &str = "Active version";
     const LATEST_DEPLOY: &str = "Latest deploy";
 
-    print_field("Unit", unit.kind());
+    print_field("Unit", unit.kind_display());
     match state.active_version {
         Some(active) => {
             let deployed =

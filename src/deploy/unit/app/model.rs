@@ -155,6 +155,17 @@ pub struct TimerConfig {
 impl AppConfig {
     pub const KIND: &'static str = "app";
 
+    /// The form this unit takes, derived from its config rather than declared:
+    /// a `service` listens on a port, a `worker` runs without one, and a
+    /// `static` unit only builds and exports.
+    pub fn shape(&self) -> &'static str {
+        match &self.runtime {
+            Some(runtime) if runtime.port.is_some() => "service",
+            Some(_) => "worker",
+            None => "static",
+        }
+    }
+
     /// Units referenced through `${unit:key}` tokens across `runtime.env` and
     /// every build layer's `env`, deduplicated and sorted.
     pub fn unit_deps(&self) -> BTreeSet<UnitName> {
@@ -598,6 +609,18 @@ mod tests {
                 err.kind
             );
         }
+    }
+
+    #[test]
+    fn shape_follows_runtime_and_port() {
+        let service = sample_config();
+        assert_eq!(service.shape(), "service");
+
+        let mut worker = sample_config();
+        worker.runtime.as_mut().unwrap().port = None;
+        assert_eq!(worker.shape(), "worker");
+
+        assert_eq!(static_config().shape(), "static");
     }
 
     #[test]

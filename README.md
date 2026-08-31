@@ -62,7 +62,7 @@ DPL_BASE=/opt/dpl dpl <command> [args]
 | `dpl check <name>`   | Validate config and reference graph |
 | `dpl deploy <name> [path]` | Deploy a unit. App: `.tar.gz` (or `-`). Db: optional SQL dump to restore |
 | `dpl undeploy <name>` | Remove a unit's active deployment from service |
-| `dpl inspect <name>` | Print runtime state as JSON |
+| `dpl inspect <name>` | Print deploy and runtime state |
 | `dpl serve` | Run the long-lived local serve process |
 | `dpl down` | Stop serve and tear down all supervised containers (keeps deploy state) |
 | `dpl db wait\|console\|backup` | Database operations |
@@ -285,7 +285,7 @@ files, and decrypted values end up inlined into the generated artifacts.
 dpl check myapp                                     # validate config + references
 git archive --format=tar.gz HEAD | dpl deploy myapp -
 dpl deploy myapp ./build.tar.gz
-dpl inspect myapp                                   # JSON status
+dpl inspect myapp                                   # deploy + runtime state
 ```
 
 A deploy acquires `deploy.lock`, bumps the version, renders artifacts, runs
@@ -294,10 +294,13 @@ nudges `dpl serve` to bring the container up (SIGHUP), waits for the health
 check, then marks it ready and prints the elapsed time. Non-zero exit on any
 failure.
 
-`dpl inspect` prints sections (`deploy`, `container` for app units). Each
-field carries a `health` signal (`ok`, `warn`, `down`, `unknown`). Deploy
-`status` is one of `idle`, `building`, `check`, `ready`, `failed`. On `failed`,
-an `error` field carries the message.
+`dpl inspect` prints aligned fields: the unit kind, the active version, the
+latest deploy when it is not `ready`, then a per-kind runtime block and the
+timers. For an app the kind carries its derived form - `app (service)` when
+`runtime.port` is set, `app (worker)` for a runtime without one, `app (static)`
+with no runtime at all. Deploy status is one of `idle`, `building`, `check`,
+`ready`, `failed`; on `failed` the failing stage and message are printed with a
+pointer to the log.
 
 ## Serve
 
