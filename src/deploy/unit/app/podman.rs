@@ -156,14 +156,8 @@ mod tests {
 
     #[test]
     fn export_destination_places_path_under_version_dir() {
-        assert_eq!(
-            export_destination("web_3", "/"),
-            "web_3"
-        );
-        assert_eq!(
-            export_destination("web_3", "/static"),
-            "web_3/static"
-        );
+        assert_eq!(export_destination("web_3", "/"), "web_3");
+        assert_eq!(export_destination("web_3", "/static"), "web_3/static");
         assert_eq!(
             export_destination("web_3", "assets/css"),
             "web_3/assets/css"

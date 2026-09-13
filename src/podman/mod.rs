@@ -309,8 +309,7 @@ pub fn try_inspect_container(
 /// Whether the unit's container is running, under an explicit cap.
 /// `Err` means podman did not answer - the caller must not read that as "down".
 pub fn is_running_within(name: &UnitName, limit: Duration) -> io::Result<bool> {
-    Ok(try_inspect_container(name, false, limit)?
-        .is_some_and(|c| c.state.status == "running"))
+    Ok(try_inspect_container(name, false, limit)?.is_some_and(|c| c.state.status == "running"))
 }
 
 /// Returns `true` if the unit's container is currently running.
@@ -390,8 +389,12 @@ mod tests {
 
     #[test]
     fn capture_within_reports_stderr_on_failure() {
-        let err = capture_within(&mut sh("echo boom 1>&2; exit 3"), Duration::from_secs(5), "sh")
-            .unwrap_err();
+        let err = capture_within(
+            &mut sh("echo boom 1>&2; exit 3"),
+            Duration::from_secs(5),
+            "sh",
+        )
+        .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("boom"), "{msg}");
         assert!(msg.contains('3'), "{msg}");
@@ -411,7 +414,10 @@ mod tests {
         assert!(is_unresponsive(&err));
         assert!(err.to_string().contains("podman exec"), "{err}");
         // The point of the timeout: it returns instead of waiting out the child.
-        assert!(started.elapsed() < Duration::from_secs(5), "did not give up");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "did not give up"
+        );
     }
 
     #[test]
@@ -432,7 +438,9 @@ mod tests {
         assert!(is_unresponsive(&io::Error::from(io::ErrorKind::TimedOut)));
         assert!(is_unresponsive(&io::Error::from(io::ErrorKind::NotFound)));
         // "no such container" is podman answering, and must stay distinguishable.
-        assert!(!is_unresponsive(&io::Error::other("podman exited with 125")));
+        assert!(!is_unresponsive(&io::Error::other(
+            "podman exited with 125"
+        )));
     }
 
     #[test]

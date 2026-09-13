@@ -455,8 +455,7 @@ secret: pg-pass
             "app (service)"
         );
         assert_eq!(
-            app("type: app\nimage: alpine\nbuilds: []\nruntime:\n  cmd: ./worker\n")
-                .kind_display(),
+            app("type: app\nimage: alpine\nbuilds: []\nruntime:\n  cmd: ./worker\n").kind_display(),
             "app (worker)"
         );
         assert_eq!(
@@ -467,7 +466,8 @@ secret: pg-pass
 
         // Other kinds print bare.
         let domain: UnitConfig =
-            serde_yaml::from_str("type: domain\nserver: nginx\nhosts: [\"example.com\"]\n").unwrap();
+            serde_yaml::from_str("type: domain\nserver: nginx\nhosts: [\"example.com\"]\n")
+                .unwrap();
         assert_eq!(domain.kind_display(), "domain");
     }
 

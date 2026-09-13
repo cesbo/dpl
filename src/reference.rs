@@ -122,7 +122,9 @@ impl From<SecretError> for ReferenceError {
 impl From<ConfigError> for ReferenceError {
     fn from(err: ConfigError) -> Self {
         let kind = match &err {
-            ConfigError::NotFound { name } => ReferenceErrorKind::UnknownUnit { name: name.clone() },
+            ConfigError::NotFound { name } => {
+                ReferenceErrorKind::UnknownUnit { name: name.clone() }
+            }
             ConfigError::Read { name, .. } => ReferenceErrorKind::LoadConfig {
                 name: name.clone(),
                 source: err,

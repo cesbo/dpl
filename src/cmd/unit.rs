@@ -46,7 +46,6 @@ use crate::{
         print_field,
         success_mark,
     },
-
     podman::health,
     state::{
         DeployFailure,

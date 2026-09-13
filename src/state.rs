@@ -387,11 +387,7 @@ impl DeployLockGuard {
 
     /// `write_pid` records this process as the holder; a bare probe passes
     /// `false` so it never rewrites a lock it is only inspecting.
-    fn open(
-        ctx: &MainContext,
-        name: &UnitName,
-        write_pid: bool,
-    ) -> Result<Self, DeployStateError> {
+    fn open(ctx: &MainContext, name: &UnitName, write_pid: bool) -> Result<Self, DeployStateError> {
         let path = ctx.deploy_lock_path(name);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(DeployStateError::Lock)?;

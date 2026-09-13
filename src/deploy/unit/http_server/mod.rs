@@ -83,8 +83,8 @@ impl<'a> HttpServerUnit<'a> {
 
     /// Make this http-server reflect on-disk config:
     ///   - if its container is running, ask nginx to reload (fast path);
-    ///   - otherwise run a full deploy under the unit's own DeployState lock,
-    ///     so a dependent unit (e.g. a domain) can trigger the chain.
+    ///   - otherwise run a full deploy under the unit's own DeployState lock, so a dependent unit
+    ///     (e.g. a domain) can trigger the chain.
     pub fn reload_or_deploy(self) -> Result<(), DeployError> {
         if crate::podman::is_running(self.name) {
             log::phase(format!("reloading http-server '{}'", self.name));

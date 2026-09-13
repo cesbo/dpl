@@ -93,7 +93,8 @@ struct Probes<'a> {
 pub fn check(name: &UnitName, port: Option<u16>) -> Result<(), HealthCheckError> {
     let container = name.scoped_unit_name();
     let mut table = || tcp_tables(&container);
-    let mut state = || try_inspect_container(name, false, PROBE_TIMEOUT).map(|c| c.map(|c| c.state));
+    let mut state =
+        || try_inspect_container(name, false, PROBE_TIMEOUT).map(|c| c.map(|c| c.state));
 
     let mut probes = Probes {
         table: &mut table,
@@ -230,7 +231,13 @@ fn check_running(container: &str, p: &mut Probes<'_>) -> Result<(), HealthCheckE
 
         if heartbeat.elapsed() >= HEARTBEAT {
             heartbeat = Instant::now();
-            report_progress(container, None, started.elapsed(), p.budget, last_err.as_ref());
+            report_progress(
+                container,
+                None,
+                started.elapsed(),
+                p.budget,
+                last_err.as_ref(),
+            );
         }
     }
 
@@ -500,7 +507,10 @@ mod tests {
             )
         };
 
-        let Err(HealthCheckError::WrongBinding { expected, found, .. }) = result else {
+        let Err(HealthCheckError::WrongBinding {
+            expected, found, ..
+        }) = result
+        else {
             panic!("expected WrongBinding, got {result:?}");
         };
         assert_eq!(expected, 8080);
@@ -612,7 +622,10 @@ mod tests {
             "{result:?}"
         );
         // The whole point of the deadline: it gives up on time.
-        assert!(started.elapsed() < Duration::from_secs(2), "overshot budget");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "overshot budget"
+        );
     }
 
     #[test]
@@ -620,7 +633,9 @@ mod tests {
         let calls = Cell::new(0);
         let (budget, interval) = fast(Duration::from_secs(5));
         let result = {
-            let states = ["created", "running", "created", "running", "running", "running"];
+            let states = [
+                "created", "running", "created", "running", "running", "running",
+            ];
             let mut probe = || Ok(table(&[]));
             let mut state = || {
                 let index = calls.get();

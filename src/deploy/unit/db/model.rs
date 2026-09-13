@@ -315,17 +315,15 @@ secret: Bad/Name
     }
 
     // TODO: re-enable when proper validator lands
-    /*
-    #[test]
-    fn reject_empty_version() {
-        let config = DbServerConfig {
-            engine: DbServerEngine::Postgresql,
-            version: " ".into(),
-            secret: SecretName::new("pg-pass").unwrap(),
-        };
-        assert!(config.validate_config().is_err());
-    }
-    */
+    // #[test]
+    // fn reject_empty_version() {
+    // let config = DbServerConfig {
+    // engine: DbServerEngine::Postgresql,
+    // version: " ".into(),
+    // secret: SecretName::new("pg-pass").unwrap(),
+    // };
+    // assert!(config.validate_config().is_err());
+    // }
 
     #[test]
     fn parse_db_unit_config() {
