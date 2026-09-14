@@ -16,7 +16,7 @@ explicit `dpl down`.
 
 ## Requirements
 
-- podman
+- podman 4.8+
 
 ## Layout
 

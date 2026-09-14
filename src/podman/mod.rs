@@ -233,15 +233,12 @@ pub fn network_subnets(name: &str) -> io::Result<Vec<String>> {
     parse_network_subnets(&out)
 }
 
-/// One entry of the `podman network inspect` JSON array. Both backends are
-/// covered: netavark (podman 4.x) lists `subnets` at the top level, CNI
-/// (podman 3.x, Ubuntu 22.04) nests them under `plugins[].ipam.ranges`.
+/// One entry of the `podman network inspect` JSON array (netavark layout,
+/// podman 4.x+): `subnets` at the top level.
 #[derive(Debug, Deserialize)]
 struct NetworkInspect {
     #[serde(default)]
     subnets: Vec<NetworkSubnet>,
-    #[serde(default)]
-    plugins: Vec<CniPlugin>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -249,34 +246,14 @@ struct NetworkSubnet {
     subnet: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct CniPlugin {
-    #[serde(default)]
-    ipam: Option<CniIpam>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CniIpam {
-    #[serde(default)]
-    ranges: Vec<Vec<NetworkSubnet>>,
-}
-
-/// Every subnet CIDR in a `podman network inspect` body, whichever backend
-/// produced it. Pure, so both layouts can be tested without podman.
+/// Every subnet CIDR in a `podman network inspect` body. Pure, so it can be
+/// tested without podman.
 fn parse_network_subnets(json: &str) -> io::Result<Vec<String>> {
     let networks: Vec<NetworkInspect> = serde_json::from_str(json).map_err(io::Error::other)?;
 
     let subnets: Vec<String> = networks
         .into_iter()
-        .flat_map(|net| {
-            let cni = net
-                .plugins
-                .into_iter()
-                .filter_map(|plugin| plugin.ipam)
-                .flat_map(|ipam| ipam.ranges)
-                .flatten();
-            net.subnets.into_iter().chain(cni)
-        })
+        .flat_map(|net| net.subnets)
         .map(|range| range.subnet)
         .collect();
 
@@ -533,17 +510,12 @@ mod tests {
     }
 
     #[test]
-    fn parses_network_subnets_netavark() {
-        // podman 4.x (Debian 12 and newer).
-        let json = r#"[{"name":"dpl","driver":"bridge","subnets":[{"subnet":"10.89.0.0/24","gateway":"10.89.0.1"}],"dns_enabled":true}]"#;
-        assert_eq!(parse_network_subnets(json).unwrap(), vec!["10.89.0.0/24"]);
-    }
-
-    #[test]
-    fn parses_network_subnets_cni() {
-        // podman 3.4 (Ubuntu 22.04): only the bridge plugin carries ipam.
-        let json = r#"[{"cniVersion":"0.4.0","name":"dpl","plugins":[{"type":"bridge","ipam":{"type":"host-local","ranges":[[{"subnet":"10.89.1.0/24","gateway":"10.89.1.1"}]]}},{"type":"portmap"},{"type":"firewall"}]}]"#;
-        assert_eq!(parse_network_subnets(json).unwrap(), vec!["10.89.1.0/24"]);
+    fn parses_network_subnets() {
+        let json = r#"[{"name":"dpl","driver":"bridge","subnets":[{"subnet":"10.89.0.0/24","gateway":"10.89.0.1"},{"subnet":"fd00:dead:beef::/64","gateway":"fd00:dead:beef::1"}],"dns_enabled":true}]"#;
+        assert_eq!(
+            parse_network_subnets(json).unwrap(),
+            vec!["10.89.0.0/24", "fd00:dead:beef::/64"]
+        );
     }
 
     #[test]

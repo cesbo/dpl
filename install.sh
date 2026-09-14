@@ -16,7 +16,16 @@ fi
 
 echo "Installing..."
 
-src_url="https://dpl.cesbo.com/latest"
+case "$(uname -m)" in
+    x86_64) arch="x86_64" ;;
+    aarch64 | arm64) arch="aarch64" ;;
+    *)
+        echo "Error: unsupported architecture $(uname -m)" >&2
+        exit 1
+        ;;
+esac
+
+src_url="https://cdn.cesbo.com/dpl/latest/dpl-linux-${arch}.tar.gz"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
