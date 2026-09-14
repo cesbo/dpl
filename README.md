@@ -1,10 +1,10 @@
 # dpl
 
 `dpl` is a single-binary deploy CLI. It manages local units (apps, database
-servers, databases, domains), keeps encrypted secrets on disk, and performs
-one-shot deploys: extract a `.tar.gz`, render artifacts from MiniJinja
-templates, run `podman build`, then hand the container off to the `dpl serve`
-daemon to run.
+servers, databases, HTTP servers, domains, Cloudflare tunnels), keeps encrypted
+secrets on disk, and performs one-shot deploys: extract a `.tar.gz`, render
+artifacts from MiniJinja templates, run `podman build`, then hand the container
+off to the `dpl serve` daemon to run.
 
 Most `dpl` commands run to completion in the foreground. The exception is
 `dpl serve`: a long-running daemon that runs the in-process timer scheduler
@@ -190,6 +190,55 @@ runtime:
 
 References are validated by `dpl check`.
 
+## Domain units
+
+A `domain` unit is an nginx `server` block written into an `http-server`
+unit's `conf/` and reloaded there. It is not a container.
+
+```yaml
+type: domain
+server: web             # http-server unit that serves it
+hosts:
+  - example.com
+routes:
+  - location: /
+    kind: reverse_proxy
+    target: ${myapp:url}
+```
+
+Optional `proxy` names the trusted proxy in front of nginx. Its addresses are
+allowlisted with `set_real_ip_from` and the client IP is taken from the proxy's
+header (`real_ip_header`):
+
+```yaml
+proxy:
+  type: cloudflare
+```
+
+| `type` | Trusted addresses | Client IP header |
+|--------|-------------------|------------------|
+| `cloudflare` | Cloudflare's public IP list, fetched at every deploy | `CF-Connecting-IP` |
+| `fastly` | Fastly's public IP list, fetched at every deploy | `Fastly-Client-IP` |
+| `custom` | `proxies:` list of CIDRs, inline | `header:` |
+| `cloudflare-tunnel` | the `dpl` podman network subnet(s) | `CF-Connecting-IP` |
+
+Use `cloudflare-tunnel` when the domain is served through a
+[`cloudflare-tunnel`](#cloudflare-tunnel) unit: the peer nginx sees is the
+`cloudflared` container on the `dpl` network, not Cloudflare's public ranges.
+The allowlist is the whole container subnet, so the `http-server` must have
+`http_port: false` and `https_port: false` - the domain deploy refuses
+otherwise. A published port would deliver host-side traffic from inside that
+subnet (rootless podman proxies every connection; rootful masquerades
+loopback), letting such a client spoof `CF-Connecting-IP`.
+A list fetch failure aborts the deploy rather than rendering an empty
+allowlist.
+
+With `proxy` set, the `X-Forwarded-Proto` passed to `reverse_proxy` upstreams
+is taken from the proxy's `X-Forwarded-Proto` header, but only on requests
+that arrived from an allowlisted address and carried the client IP header
+(`http`/`https` only, anything else falls back to nginx's own `$scheme`).
+Without `proxy`, or from any other peer, it is always nginx's `$scheme`.
+
 ## HTTP server units
 
 An `http-server` unit runs nginx and publishes HTTP on the host.
@@ -205,13 +254,58 @@ access_log:
 ```
 
 - `http_port` - host HTTP port to publish to nginx's container port 80
-  (default: `80`)
+  (default: `80`); set `false` (or `null`) to publish nothing on the host. Use
+  that when a `cloudflare-tunnel` unit is the only ingress: nginx stays
+  reachable on the `dpl` network as `http://dpl--<name>:80`, with no inbound
+  port on the host
 - `https_port` - host HTTPS port to publish to nginx's container port 443;
   omit it or set `false` to disable HTTPS publishing
 - `access_log.max_size_mb` - access log rotation threshold in MiB
   (default: `200`)
 - `access_log.max_files` - number of archived access log files to keep
   (`access.log.1`, `access.log.2`, ...; default: `1`)
+
+## Cloudflare Tunnel
+
+A `cloudflare-tunnel` unit runs Cloudflare's `cloudflared` connector as a
+supervised container on the `dpl` network. Use it when the host has no public
+address, or to hide the origin: the connector dials out to Cloudflare, TLS
+terminates at Cloudflare's edge, and the host publishes no inbound ports.
+
+```yaml
+type: cloudflare-tunnel
+secret: cf-tunnel-token
+image: docker.io/cloudflare/cloudflared:latest   # default
+```
+
+- `secret` - secret holding the tunnel token from the Zero Trust dashboard
+- `image` - connector image (default: `docker.io/cloudflare/cloudflared:latest`)
+
+Operator flow:
+
+1. In the Zero Trust dashboard create a tunnel (Networks -> Tunnels ->
+   Cloudflared connector) and copy its token.
+2. `dpl secret create cf-tunnel-token -` with the token on stdin.
+3. Write `conf/<name>.yaml` as above.
+4. `dpl deploy <name>`. It pulls the image if missing, snapshots the token into
+   the version's encrypted runtime env, hands the container to `dpl serve` and
+   waits for readiness. On success it prints the service URL format to enter
+   in the dashboard: `http://dpl--<http-server>:80`.
+5. In the dashboard add a Public Hostname per site pointing at that URL.
+   Cloudflare creates the DNS record.
+
+Notes:
+
+- The token reaches the container as env `TUNNEL_TOKEN` from the podman process
+  env, never on argv. It is stored in `state/<name>/.env-v{N}.json`.
+- `cloudflared` output lands in `state/<name>/log/runtime.log`. Readiness only
+  means the connector process stayed up, not that it registered with
+  Cloudflare: a token it rejects at once fails the deploy; one revoked later
+  shows up in the log, and serve restarts the connector with backoff.
+- Companion settings: `http_port: false` on the `http-server` unit so the host
+  publishes nothing, and `proxy: {type: cloudflare-tunnel}` on each `domain`
+  served through the tunnel so nginx trusts peers on the `dpl` network (the
+  connector) and logs the real client IP.
 
 ## Database units
 
@@ -315,6 +409,7 @@ that does not answer costs one attempt, not the deploy.
 | `app` with `runtime.port` | a `LISTEN` socket on that port bound to `0.0.0.0` or `::` | `podman exec <ctr> sh -c 'cat /proc/net/tcp /proc/net/tcp6'` every 800ms |
 | `app` without `runtime.port` | 3 consecutive `running` observations | `podman container inspect` every 800ms |
 | `app` with no `runtime` | immediately (nothing runs) | none |
+| `cloudflare-tunnel` | 3 consecutive `running` observations | `podman container inspect` every 800ms |
 | `http-server` | a `LISTEN` socket on container port 80 (regardless of `http_port`) | same as a port app |
 | `db-server` | the engine accepts the root login | `podman exec` + `SELECT 1` every 800ms, 10s per call, 60s total |
 | `db` | the same ping against that database | `dpl db wait --timeout`, default 60s |

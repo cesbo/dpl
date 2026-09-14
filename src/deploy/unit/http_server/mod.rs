@@ -19,12 +19,12 @@ use crate::{
     deploy::{
         DeployError,
         RunError,
+        wait_ready,
     },
     log,
     podman::{
         NGINX_WWW_MOUNT,
         detect_network_dns,
-        health,
         image_exists,
         pull_image,
     },
@@ -58,16 +58,7 @@ impl<'a> HttpServerUnit<'a> {
         let container = self.name.scoped_unit_name();
         crate::serve::notify_or_warn(self.ctx, &container);
 
-        let phase_name = format!("waiting for http-server '{}'", self.name);
-        log::phase(format!(
-            "{phase_name} (container {container}): {} - up to {}",
-            health::criterion(Some(HTTP_PORT)),
-            log::fmt_duration(health::BUDGET),
-        ));
-        if let Err(err) = health::check(self.name, Some(HTTP_PORT)) {
-            return Err(DeployError::step_startup(phase_name, err));
-        }
-
+        wait_ready(self.name, HttpServerConfig::KIND, Some(HTTP_PORT))?;
         state.set_ready();
         Ok(())
     }
@@ -160,7 +151,9 @@ impl<'a> HttpServerUnit<'a> {
         let mut cmd = crate::podman::PodmanRun::new(&container)
             .map_err(|e| RunError::new(format!("prepare podman to run '{}'", self.name), e))?;
 
-        cmd.publish(self.config.http_port, HTTP_PORT);
+        if let HttpPort::Port(http_port) = self.config.http_port {
+            cmd.publish(http_port, HTTP_PORT);
+        }
         if let HttpPort::Port(https_port) = self.config.https_port {
             cmd.publish(https_port, 443);
         }

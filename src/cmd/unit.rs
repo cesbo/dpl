@@ -28,6 +28,10 @@ use crate::{
             AppConfig,
             AppUnit,
         },
+        cloudflare_tunnel::{
+            CloudflareTunnelConfig,
+            CloudflareTunnelUnit,
+        },
         db::{
             DbServerConfig,
             DbServerUnit,
@@ -38,6 +42,7 @@ use crate::{
             DomainUnit,
         },
         http_server::HttpServerUnit,
+        undeploy_container,
     },
     log::{
         DeployConsole,
@@ -106,6 +111,9 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
         UnitConfig::App(app_config) => {
             // validated Some in the pre-flight match
             AppUnit::new(ctx, name, app_config).deploy(&mut state, version, input.unwrap())
+        }
+        UnitConfig::CloudflareTunnel(tunnel_config) => {
+            CloudflareTunnelUnit::new(ctx, name, tunnel_config).deploy(&mut state)
         }
         UnitConfig::Db(db_config) => DbUnit::new(ctx, name, db_config).deploy(&mut state, input),
         UnitConfig::DbServer(db_server_config) => {
@@ -250,6 +258,10 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
                 .inspect()
                 .with_context(|| format!("inspect unit '{name}'"))?;
         }
+        UnitConfig::CloudflareTunnel(tunnel_config) => {
+            println!();
+            CloudflareTunnelUnit::new(ctx, name, tunnel_config).inspect();
+        }
         UnitConfig::DbServer(db_server_config) => {
             println!();
             DbServerUnit::new(ctx, name, db_server_config).inspect();
@@ -347,6 +359,9 @@ pub fn start(ctx: &MainContext, name: &UnitName) -> Result<()> {
 
     let result = match unit {
         UnitConfig::App(config) => AppUnit::new(ctx, name, config).start(),
+        UnitConfig::CloudflareTunnel(config) => {
+            CloudflareTunnelUnit::new(ctx, name, config).start()
+        }
         UnitConfig::DbServer(config) => DbServerUnit::new(ctx, name, config).start(),
         UnitConfig::HttpServer(config) => HttpServerUnit::new(ctx, name, config).start(),
         UnitConfig::Db(_) | UnitConfig::Domain(_) => {
@@ -375,8 +390,10 @@ pub fn undeploy(ctx: &MainContext, name: &UnitName) -> Result<()> {
                 AppUnit::undeploy(ctx, name, active_version);
             }
         }
-        Some(DbServerConfig::KIND) if outcome.active_version.is_some() => {
-            DbServerUnit::undeploy(ctx, name, outcome.active_version.unwrap());
+        Some(DbServerConfig::KIND | CloudflareTunnelConfig::KIND)
+            if outcome.active_version.is_some() =>
+        {
+            undeploy_container(ctx, name, outcome.active_version.unwrap());
         }
         Some(DomainConfig::KIND) => DomainUnit::undeploy(ctx, name),
         _ => {

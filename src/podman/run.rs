@@ -119,7 +119,11 @@ impl PodmanRun {
 /// Spawn a command as a child and keep it in the foreground for its whole life.
 /// Drain its stdout/stderr to `log_path` in CRI format.
 /// Returns once the child (and the log drain) finish.
-fn run_foreground(mut cmd: Command, container: &str, log_path: &Path) -> io::Result<()> {
+pub(crate) fn run_foreground(
+    mut cmd: Command,
+    container: &str,
+    log_path: &Path,
+) -> io::Result<()> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = cmd.spawn().map_err(podman_spawn_error)?;

@@ -4,8 +4,13 @@
 //! `custom` carries its data inline. `cloudflare` / `fastly` are fetched fresh
 //! from the provider's public IP-list API on every deploy; a fetch or decode
 //! failure aborts the deploy rather than rendering an empty allowlist.
+//! `cloudflare-tunnel` trusts the shared podman network instead, since the
+//! peer nginx sees is the `cloudflared` container.
 
-use std::time::Duration;
+use std::{
+    io,
+    time::Duration,
+};
 
 use serde::{
     Deserialize,
@@ -15,6 +20,7 @@ use serde::{
 use thiserror::Error;
 
 use super::model::ProxyConfig;
+use crate::podman;
 
 /// End-to-end cap on one provider IP-list fetch.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
@@ -57,6 +63,13 @@ pub enum ProxyError {
         #[source]
         source: Box<ureq::Error>,
     },
+
+    #[error("detect subnets of podman network '{network}'")]
+    NetworkSubnets {
+        network: &'static str,
+        #[source]
+        source: io::Error,
+    },
 }
 
 /// Turn a configured proxy into its rendered header + CIDR allowlist.
@@ -70,6 +83,18 @@ pub fn resolve(proxy: &ProxyConfig) -> Result<ResolvedProxy, ProxyError> {
             let body: CloudflareIps = fetch("cloudflare", CLOUDFLARE_URL)?;
             let mut proxies = body.result.ipv4_cidrs;
             proxies.extend(body.result.ipv6_cidrs);
+            Ok(ResolvedProxy {
+                header: CLOUDFLARE_HEADER.to_string(),
+                proxies,
+            })
+        }
+        ProxyConfig::CloudflareTunnel => {
+            let proxies = podman::network_subnets(podman::NETWORK).map_err(|source| {
+                ProxyError::NetworkSubnets {
+                    network: podman::NETWORK,
+                    source,
+                }
+            })?;
             Ok(ResolvedProxy {
                 header: CLOUDFLARE_HEADER.to_string(),
                 proxies,

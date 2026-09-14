@@ -28,6 +28,7 @@ use std::{
 use serde::Deserialize;
 
 pub use self::run::PodmanRun;
+pub(crate) use self::run::run_foreground;
 use crate::config::UnitName;
 
 /// The shared podman network every dpl container joins.
@@ -223,6 +224,66 @@ fn parse_first_nameserver(resolv: &str) -> Option<String> {
         .map(str::trim)
         .find(|ip| !ip.is_empty() && !ip.contains(':'))
         .map(str::to_string)
+}
+
+/// CIDR subnets of the named podman network, creating it first if missing.
+pub fn network_subnets(name: &str) -> io::Result<Vec<String>> {
+    ensure_network(name)?;
+    let out = run_podman(&["network", "inspect", name])?;
+    parse_network_subnets(&out)
+}
+
+/// One entry of the `podman network inspect` JSON array. Both backends are
+/// covered: netavark (podman 4.x) lists `subnets` at the top level, CNI
+/// (podman 3.x, Ubuntu 22.04) nests them under `plugins[].ipam.ranges`.
+#[derive(Debug, Deserialize)]
+struct NetworkInspect {
+    #[serde(default)]
+    subnets: Vec<NetworkSubnet>,
+    #[serde(default)]
+    plugins: Vec<CniPlugin>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NetworkSubnet {
+    subnet: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CniPlugin {
+    #[serde(default)]
+    ipam: Option<CniIpam>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CniIpam {
+    #[serde(default)]
+    ranges: Vec<Vec<NetworkSubnet>>,
+}
+
+/// Every subnet CIDR in a `podman network inspect` body, whichever backend
+/// produced it. Pure, so both layouts can be tested without podman.
+fn parse_network_subnets(json: &str) -> io::Result<Vec<String>> {
+    let networks: Vec<NetworkInspect> = serde_json::from_str(json).map_err(io::Error::other)?;
+
+    let subnets: Vec<String> = networks
+        .into_iter()
+        .flat_map(|net| {
+            let cni = net
+                .plugins
+                .into_iter()
+                .filter_map(|plugin| plugin.ipam)
+                .flat_map(|ipam| ipam.ranges)
+                .flatten();
+            net.subnets.into_iter().chain(cni)
+        })
+        .map(|range| range.subnet)
+        .collect();
+
+    if subnets.is_empty() {
+        return Err(io::Error::other("no subnets in podman network inspect output"));
+    }
+    Ok(subnets)
 }
 
 /// Extract `source_dir` from `image` into host `dest_dir` (created if missing).
@@ -469,6 +530,28 @@ mod tests {
 
         // No usable nameserver yields None.
         assert_eq!(parse_first_nameserver("search foo\n"), None);
+    }
+
+    #[test]
+    fn parses_network_subnets_netavark() {
+        // podman 4.x (Debian 12 and newer).
+        let json = r#"[{"name":"dpl","driver":"bridge","subnets":[{"subnet":"10.89.0.0/24","gateway":"10.89.0.1"}],"dns_enabled":true}]"#;
+        assert_eq!(parse_network_subnets(json).unwrap(), vec!["10.89.0.0/24"]);
+    }
+
+    #[test]
+    fn parses_network_subnets_cni() {
+        // podman 3.4 (Ubuntu 22.04): only the bridge plugin carries ipam.
+        let json = r#"[{"cniVersion":"0.4.0","name":"dpl","plugins":[{"type":"bridge","ipam":{"type":"host-local","ranges":[[{"subnet":"10.89.1.0/24","gateway":"10.89.1.1"}]]}},{"type":"portmap"},{"type":"firewall"}]}]"#;
+        assert_eq!(parse_network_subnets(json).unwrap(), vec!["10.89.1.0/24"]);
+    }
+
+    #[test]
+    fn network_subnets_missing_is_an_error() {
+        // A network without any subnet must not silently yield an empty allowlist.
+        assert!(parse_network_subnets(r#"[{"name":"dpl","driver":"macvlan"}]"#).is_err());
+        assert!(parse_network_subnets("[]").is_err());
+        assert!(parse_network_subnets("not json").is_err());
     }
 
     #[test]

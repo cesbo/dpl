@@ -14,6 +14,8 @@ use crate::{
     deploy::{
         DeployError,
         RunError,
+        deployed_version,
+        podman_run_with_env,
     },
     log,
     podman::{
@@ -154,46 +156,14 @@ impl<'a> DbServerUnit<'a> {
 
     /// Run the db-server container in the foreground.
     pub fn start(&self) -> Result<(), RunError> {
-        let version = {
-            let state = DeployState::load(self.ctx, self.name)
-                .map_err(|e| RunError::new(format!("load state for '{}'", self.name), e))?;
-            state.active_version.unwrap_or(state.last_version)
-        };
-
-        if version == 0 {
-            return Err(RunError::new(
-                format!("db-server '{}' has not been deployed", self.name),
-                std::io::Error::other("no deployed version"),
-            ));
-        }
-
-        let container = self.name.scoped_unit_name();
-        let mut cmd = crate::podman::PodmanRun::new(&container)
-            .map_err(|e| RunError::new(format!("prepare podman to run '{}'", self.name), e))?;
-
-        let env = crate::podman::env::load(self.ctx, self.name, version)
-            .map_err(|e| RunError::new("load runtime env", e))?;
-        for (env_name, value) in env {
-            cmd.env(&env_name, value);
-        }
+        let version = deployed_version(self.ctx, self.name, DbServerConfig::KIND)?;
+        let mut cmd = podman_run_with_env(self.ctx, self.name, version)?;
 
         let engine = self.config.engine;
-        cmd.volume(&container, engine.data_path(), &[]);
+        cmd.volume(self.name.scoped_unit_name(), engine.data_path(), &[]);
 
         cmd.run_foreground(self.config.image(), &self.ctx.runtime_log_path(self.name))
             .map_err(|e| RunError::new("run podman foreground", e))
-    }
-
-    /// Tear down a deployed version: stop the container and drop its env file.
-    pub fn undeploy(ctx: &MainContext, name: &UnitName, version: u32) {
-        if let Err(err) = crate::podman::stop_and_remove(name) {
-            log::warn(format!("stop container '{name}': {err}"));
-        }
-        if let Err(err) = crate::podman::env::remove(ctx, name, version) {
-            log::warn(format!(
-                "remove runtime env file for '{name} v{version}': {err}"
-            ));
-        }
     }
 }
 

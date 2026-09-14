@@ -1,4 +1,5 @@
 pub mod app;
+pub mod cloudflare_tunnel;
 pub mod db;
 pub mod domain;
 pub mod http_server;
@@ -15,6 +16,7 @@ use serde::{
 
 use self::{
     app::AppConfig,
+    cloudflare_tunnel::CloudflareTunnelConfig,
     db::{
         DbConfig,
         DbServerConfig,
@@ -28,16 +30,28 @@ use crate::{
         ConfigError,
         UnitName,
     },
+    deploy::{
+        DeployError,
+        RunError,
+    },
+    log,
+    podman::{
+        self,
+        PodmanRun,
+        health,
+    },
     reference::{
         Location,
         ReferenceError,
     },
+    state::DeployState,
 };
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum UnitConfig {
     App(AppConfig),
+    CloudflareTunnel(CloudflareTunnelConfig),
     Db(DbConfig),
     DbServer(DbServerConfig),
     Domain(DomainConfig),
@@ -68,6 +82,7 @@ impl UnitConfig {
     pub fn validate_references(&self, ctx: &MainContext) -> Result<(), ReferenceError> {
         match self {
             UnitConfig::App(config) => config.validate_references(ctx),
+            UnitConfig::CloudflareTunnel(config) => config.validate_references(ctx),
             UnitConfig::Db(config) => config.validate_references(ctx),
             UnitConfig::DbServer(config) => config.validate_references(ctx),
             UnitConfig::Domain(config) => config.validate_references(ctx),
@@ -78,6 +93,7 @@ impl UnitConfig {
     pub fn kind(&self) -> &'static str {
         match self {
             UnitConfig::App(_) => AppConfig::KIND,
+            UnitConfig::CloudflareTunnel(_) => CloudflareTunnelConfig::KIND,
             UnitConfig::Db(_) => DbConfig::KIND,
             UnitConfig::DbServer(_) => DbServerConfig::KIND,
             UnitConfig::Domain(_) => DomainConfig::KIND,
@@ -165,6 +181,69 @@ where
     out
 }
 
+/// Wait until a supervised container meets its readiness criterion (a listening
+/// `port`, or "started and stayed running" without one). The console states the
+/// criterion and the budget; the error keeps the short form, since the check's
+/// own message carries the detail.
+pub fn wait_ready(name: &UnitName, kind: &str, port: Option<u16>) -> Result<(), DeployError> {
+    let container = name.scoped_unit_name();
+    let phase_name = format!("waiting for {kind} '{name}'");
+    log::phase(format!(
+        "{phase_name} (container {container}): {} - up to {}",
+        health::criterion(port),
+        log::fmt_duration(health::BUDGET),
+    ));
+    health::check(name, port).map_err(|e| DeployError::step_startup(phase_name, e))
+}
+
+/// The version `dpl start` runs: the active one, else the last deployed.
+pub fn deployed_version(ctx: &MainContext, name: &UnitName, kind: &str) -> Result<u32, RunError> {
+    let state = DeployState::load(ctx, name)
+        .map_err(|e| RunError::new(format!("load state for '{name}'"), e))?;
+    let version = state.active_version.unwrap_or(state.last_version);
+
+    if version == 0 {
+        return Err(RunError::new(
+            format!("{kind} '{name}' has not been deployed"),
+            io::Error::other("no deployed version"),
+        ));
+    }
+
+    Ok(version)
+}
+
+/// `podman run` for the unit's container with that version's encrypted runtime
+/// env loaded into the podman process env (`--env=NAME`), never onto argv.
+pub fn podman_run_with_env(
+    ctx: &MainContext,
+    name: &UnitName,
+    version: u32,
+) -> Result<PodmanRun, RunError> {
+    let mut cmd = PodmanRun::new(&name.scoped_unit_name())
+        .map_err(|e| RunError::new(format!("prepare podman to run '{name}'"), e))?;
+
+    let env = podman::env::load(ctx, name, version)
+        .map_err(|e| RunError::new("load runtime env", e))?;
+    for (env_name, value) in env {
+        cmd.env(&env_name, value);
+    }
+
+    Ok(cmd)
+}
+
+/// Tear down a supervised unit's deployed version: stop the container (serve
+/// sees the unit leave `Ready` and won't restart it) and drop its env file.
+pub fn undeploy_container(ctx: &MainContext, name: &UnitName, version: u32) {
+    if let Err(err) = podman::stop_and_remove(name) {
+        log::warn(format!("stop container '{name}': {err}"));
+    }
+    if let Err(err) = podman::env::remove(ctx, name, version) {
+        log::warn(format!(
+            "remove runtime env file for '{name} v{version}': {err}"
+        ));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,7 +293,7 @@ access_log:
             panic!("expected http-server variant");
         };
         assert_eq!(http.image, "docker.io/library/nginx:1.27");
-        assert_eq!(http.http_port, 8080);
+        assert_eq!(http.http_port, HttpPort::Port(8080));
         assert_eq!(http.https_port, HttpPort::Port(8443));
         assert_eq!(http.access_log.max_size_mb, 512);
         assert_eq!(http.access_log.max_files, 3);
@@ -228,7 +307,7 @@ access_log:
             panic!("expected http-server variant");
         };
         assert_eq!(http.image, "docker.io/library/nginx:stable");
-        assert_eq!(http.http_port, 80);
+        assert_eq!(http.http_port, HttpPort::Port(80));
         assert_eq!(http.https_port, HttpPort::Disabled);
         assert_eq!(http.access_log.max_size_mb, 200);
         assert_eq!(http.access_log.max_files, 1);
@@ -251,6 +330,18 @@ secret: pg-pass
         };
         assert_eq!(db.version.as_deref(), Some("18"));
         assert_eq!(db.secret.as_str(), "pg-pass");
+    }
+
+    #[test]
+    fn parse_cloudflare_tunnel_unit_config() {
+        let config: UnitConfig =
+            serde_yaml::from_str("type: cloudflare-tunnel\nsecret: cf-tunnel-token\n").unwrap();
+
+        let UnitConfig::CloudflareTunnel(tunnel) = &config else {
+            panic!("expected cloudflare-tunnel variant");
+        };
+        assert_eq!(tunnel.secret.as_str(), "cf-tunnel-token");
+        assert_eq!(config.kind_display(), "cloudflare-tunnel");
     }
 
     #[test]

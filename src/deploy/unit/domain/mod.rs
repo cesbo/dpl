@@ -9,7 +9,10 @@ use std::{
     path::Path,
 };
 
-use self::artifacts::ArtifactsContext;
+use self::{
+    artifacts::ArtifactsContext,
+    model::ProxyConfig,
+};
 pub use self::model::DomainConfig;
 use super::app;
 use crate::{
@@ -18,6 +21,7 @@ use crate::{
     deploy::{
         DeployError,
         http_server::{
+            HttpPort,
             HttpServerConfig,
             HttpServerUnit,
         },
@@ -53,6 +57,21 @@ impl<'a> DomainUnit<'a> {
         let server_config = self.config.resolve_server(self.ctx).map_err(|e| {
             DeployError::step_prepare(format!("resolve http-server '{}'", self.config.server), e)
         })?;
+
+        // The tunnel allowlist is the whole container subnet, and a published port
+        // delivers host-side traffic from inside that subnet (rootlessport, or
+        // masqueraded loopback); such a client could then spoof the client IP.
+        if self.config.proxy == Some(ProxyConfig::CloudflareTunnel)
+            && (server_config.http_port != HttpPort::Disabled
+                || server_config.https_port != HttpPort::Disabled)
+        {
+            return Err(DeployError::step_prepare(
+                format!("check http-server '{}'", self.config.server),
+                std::io::Error::other(
+                    "proxy cloudflare-tunnel requires http_port: false and https_port: false",
+                ),
+            ));
+        }
 
         // Resolve the proxy's trusted-IP allowlist.
         let resolved = match &self.config.proxy {
@@ -209,6 +228,70 @@ routes:
         assert!(
             content.contains("client_max_body_size 20m;"),
             "client_max_body_size"
+        );
+    }
+
+    #[test]
+    fn write_config_trusts_forwarded_proto_only_behind_proxy() {
+        let base = TempDir::new().unwrap();
+        let ctx = test_ctx(&base);
+        let name = UnitName::new("site").unwrap();
+        let yaml = "server: web\nhosts:\n  - example.com\nroutes:\n  - location: /\n    kind: reverse_proxy\n    target: \"http://127.0.0.1:8000\"\n";
+        let conf_dir = base.path().join("conf.d");
+
+        // No proxy: the header could come from any client, so keep $scheme.
+        let unit = DomainUnit::new(&ctx, &name, domain(yaml));
+        unit.write_config(&conf_dir, None).unwrap();
+        let content = fs::read_to_string(conf_dir.join("site.conf")).unwrap();
+        assert!(content.contains("X-Forwarded-Proto $scheme;"), "{content}");
+        assert!(!content.contains("set_real_ip_from"), "{content}");
+
+        // Behind a trusted proxy: forward the mapped header and trust its peers.
+        let resolved = proxy::ResolvedProxy {
+            header: "CF-Connecting-IP".into(),
+            proxies: vec!["10.89.0.0/24".into()],
+        };
+        let unit = DomainUnit::new(&ctx, &name, domain(yaml));
+        unit.write_config(&conf_dir, Some(&resolved)).unwrap();
+        let content = fs::read_to_string(conf_dir.join("site.conf")).unwrap();
+        assert!(
+            content.contains("X-Forwarded-Proto $dpl_forwarded_proto;"),
+            "{content}"
+        );
+        // The header is only trusted once realip has replaced the peer address.
+        assert!(
+            content.contains("if ($realip_remote_addr != $remote_addr)"),
+            "{content}"
+        );
+        assert!(content.contains("set_real_ip_from 10.89.0.0/24;"), "{content}");
+        assert!(content.contains("real_ip_header CF-Connecting-IP;"), "{content}");
+    }
+
+    #[test]
+    fn cloudflare_tunnel_proxy_rejects_a_published_http_server() {
+        let base = TempDir::new().unwrap();
+        let ctx = test_ctx(&base);
+        let name = UnitName::new("site").unwrap();
+        let yaml = "server: web\nhosts:\n  - example.com\nproxy:\n  type: cloudflare-tunnel\n";
+
+        // Default http_port (80) is published: the subnet allowlist would be spoofable.
+        ctx.write_test_unit("web", "type: http-server\n");
+        let err = DomainUnit::new(&ctx, &name, domain(yaml))
+            .install_inner()
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("check http-server 'web'"),
+            "unexpected error: {err}"
+        );
+
+        // https_port alone is published: still rejected.
+        ctx.write_test_unit("web", "type: http-server\nhttp_port: false\nhttps_port: 443\n");
+        let err = DomainUnit::new(&ctx, &name, domain(yaml))
+            .install_inner()
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("check http-server 'web'"),
+            "unexpected error: {err}"
         );
     }
 

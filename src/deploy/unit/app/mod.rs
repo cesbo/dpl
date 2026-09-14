@@ -33,18 +33,19 @@ use crate::{
         RunError,
         UnitConfig,
         unit::{
+            deployed_version,
             domain::{
                 DomainConfig,
                 DomainUnit,
             },
             list_units,
+            podman_run_with_env,
+            undeploy_container,
+            wait_ready,
         },
     },
     log,
-    podman::{
-        copy_image_dir_to_host,
-        health,
-    },
+    podman::copy_image_dir_to_host,
     state::DeployState,
     timers::TimersState,
 };
@@ -267,18 +268,7 @@ impl<'a> AppUnit<'a> {
         let container = self.name.scoped_unit_name();
         crate::serve::notify_or_warn(self.ctx, &container);
 
-        // The console states the criterion and the budget; the error keeps the
-        // short form, since the check's own message carries the detail.
-        let phase_name = format!("waiting for app '{}'", self.name);
-        log::phase(format!(
-            "{phase_name} (container {container}): {} - up to {}",
-            health::criterion(runtime.port),
-            log::fmt_duration(health::BUDGET),
-        ));
-        if let Err(err) = health::check(self.name, runtime.port) {
-            return Err(DeployError::step_startup(phase_name, err));
-        }
-
+        wait_ready(self.name, AppConfig::KIND, runtime.port)?;
         state.set_ready();
         Ok(())
     }
@@ -306,21 +296,9 @@ impl<'a> AppUnit<'a> {
     }
 
     pub fn undeploy(ctx: &MainContext, name: &UnitName, version: u32) {
-        // Stop the running container (serve was supervising it) before dropping
-        // its image; serve sees the unit leave `Ready` and won't restart it.
-        if let Err(err) = crate::podman::stop_and_remove(name) {
-            log::warn(format!("stop container '{name}': {err}"));
-        }
-
-        let podman_ctx = PodmanContext::new(name, version);
-
-        if let Err(err) = crate::podman::env::remove(ctx, name, version) {
-            log::warn(format!(
-                "remove runtime env file for '{name} v{version}': {err}"
-            ));
-        }
-
-        podman_ctx.remove();
+        // Stop the running container before dropping its image.
+        undeploy_container(ctx, name, version);
+        PodmanContext::new(name, version).remove();
     }
 
     pub fn inspect(&self) -> Result<(), DeployError> {
@@ -347,28 +325,8 @@ impl<'a> AppUnit<'a> {
             ));
         }
 
-        let version = {
-            let state = DeployState::load(self.ctx, self.name)
-                .map_err(|e| RunError::new(format!("load state for '{}'", self.name), e))?;
-            state.active_version.unwrap_or(state.last_version)
-        };
-
-        if version == 0 {
-            return Err(RunError::new(
-                format!("app '{}' has not been deployed", self.name),
-                io::Error::other("no deployed version"),
-            ));
-        }
-
-        let container = self.name.scoped_unit_name();
-        let mut cmd = crate::podman::PodmanRun::new(&container)
-            .map_err(|e| RunError::new(format!("prepare podman to run '{}'", self.name), e))?;
-
-        let env = crate::podman::env::load(self.ctx, self.name, version)
-            .map_err(|e| RunError::new("load runtime env", e))?;
-        for (env_name, value) in env {
-            cmd.env(&env_name, value);
-        }
+        let version = deployed_version(self.ctx, self.name, AppConfig::KIND)?;
+        let mut cmd = podman_run_with_env(self.ctx, self.name, version)?;
 
         let databases = self
             .config

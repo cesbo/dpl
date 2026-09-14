@@ -41,9 +41,13 @@ pub struct DomainConfig {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum ProxyConfig {
     Cloudflare,
+    /// Cloudflare Tunnel: `cloudflared` runs as a container on the shared `dpl`
+    /// network, so the trusted peer is that network, not Cloudflare's public
+    /// ranges.
+    CloudflareTunnel,
     Fastly,
     Custom {
         header: String,
@@ -456,6 +460,15 @@ routes:
             RouteConfig::ServeFiles { spa, .. } => assert!(*spa),
             _ => panic!("expected serve_files action"),
         }
+    }
+
+    #[test]
+    fn parse_cloudflare_tunnel_proxy() {
+        let config: DomainConfig = serde_yaml::from_str(
+            "server: web\nhosts:\n  - example.com\nproxy:\n  type: cloudflare-tunnel\n",
+        )
+        .unwrap();
+        assert_eq!(config.proxy, Some(ProxyConfig::CloudflareTunnel));
     }
 
     #[test]

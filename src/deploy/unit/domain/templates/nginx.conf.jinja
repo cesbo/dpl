@@ -9,6 +9,16 @@ server {
     set_real_ip_from {{ ip }};
 {% endfor %}
     real_ip_header {{ proxy.header }};
+    # Trust X-Forwarded-Proto only when realip replaced the peer address, i.e.
+    # the request came from an allowlisted proxy that sent {{ proxy.header }}.
+    set $dpl_forwarded_proto $scheme;
+    set $dpl_xfp "";
+    if ($realip_remote_addr != $remote_addr) {
+        set $dpl_xfp $http_x_forwarded_proto;
+    }
+    if ($dpl_xfp ~ ^https?$) {
+        set $dpl_forwarded_proto $dpl_xfp;
+    }
 {% endif %}
 {% if custom_config %}
 
@@ -21,7 +31,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto {{ "$dpl_forwarded_proto" if proxy else "$scheme" }};
 {% if route.websocket %}
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;

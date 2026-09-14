@@ -23,7 +23,7 @@ pub struct HttpServerConfig {
     pub image: String,
 
     #[serde(default = "default_http_port")]
-    pub http_port: u16,
+    pub http_port: HttpPort,
 
     #[serde(default)]
     pub https_port: HttpPort,
@@ -53,8 +53,8 @@ fn default_image() -> String {
     DEFAULT_IMAGE.to_string()
 }
 
-fn default_http_port() -> u16 {
-    DEFAULT_HTTP_PORT
+fn default_http_port() -> HttpPort {
+    HttpPort::Port(DEFAULT_HTTP_PORT)
 }
 
 fn default_access_log_max_size_mb() -> u64 {
@@ -82,7 +82,7 @@ impl<'de> Deserialize<'de> for HttpPort {
             Some(ConfigValue::Port(port)) => Ok(Self::Port(port)),
             Some(ConfigValue::Disabled(false)) => Ok(Self::Disabled),
             Some(ConfigValue::Disabled(true)) => Err(de::Error::custom(
-                "https_port must be a port number or false",
+                "must be a port number or false",
             )),
         }
     }
@@ -131,7 +131,7 @@ mod tests {
     fn parse_minimal_config_uses_defaults() {
         let config: HttpServerConfig = serde_yaml::from_str("{}").unwrap();
         assert_eq!(config.image, DEFAULT_IMAGE);
-        assert_eq!(config.http_port, DEFAULT_HTTP_PORT);
+        assert_eq!(config.http_port, HttpPort::Port(DEFAULT_HTTP_PORT));
         assert_eq!(config.https_port, HttpPort::Disabled);
         assert_eq!(
             config.access_log.max_size_mb,
@@ -155,7 +155,7 @@ access_log:
         )
         .unwrap();
         assert_eq!(config.image, "docker.io/library/nginx:1.27");
-        assert_eq!(config.http_port, 8080);
+        assert_eq!(config.http_port, HttpPort::Port(8080));
         assert_eq!(config.https_port, HttpPort::Port(8443));
         assert_eq!(config.access_log.max_size_mb, 512);
         assert_eq!(config.access_log.max_files, 3);
@@ -178,8 +178,28 @@ access_log:
     fn reject_https_port_true() {
         let err = serde_yaml::from_str::<HttpServerConfig>("https_port: true\n").unwrap_err();
         assert!(
-            err.to_string()
-                .contains("https_port must be a port number or false"),
+            err.to_string().contains("must be a port number or false"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_http_port_false_as_disabled() {
+        let config: HttpServerConfig = serde_yaml::from_str("http_port: false\n").unwrap();
+        assert_eq!(config.http_port, HttpPort::Disabled);
+    }
+
+    #[test]
+    fn parse_http_port_null_as_disabled() {
+        let config: HttpServerConfig = serde_yaml::from_str("http_port: null\n").unwrap();
+        assert_eq!(config.http_port, HttpPort::Disabled);
+    }
+
+    #[test]
+    fn reject_http_port_true() {
+        let err = serde_yaml::from_str::<HttpServerConfig>("http_port: true\n").unwrap_err();
+        assert!(
+            err.to_string().contains("must be a port number or false"),
             "unexpected error: {err}"
         );
     }
