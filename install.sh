@@ -14,8 +14,6 @@ if ! command -v podman >/dev/null 2>&1; then
     echo "Warning: podman not found, dpl requires podman to run containers" >&2
 fi
 
-echo "Installing..."
-
 case "$(uname -m)" in
     x86_64) arch="x86_64" ;;
     aarch64 | arm64) arch="aarch64" ;;
@@ -75,11 +73,7 @@ fi
 rm -f "$DST/dpl"
 install -m 755 "$tmp/dpl" "$DST/dpl"
 
-echo "Creating base directory..."
-
 mkdir -p "$BASE/conf" "$BASE/state" "$BASE/secrets" "$BASE/backup"
-
-echo "Registering system service..."
 
 cat << EOF > /etc/systemd/system/dpl.service
 [Unit]
