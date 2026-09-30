@@ -69,6 +69,7 @@ DPL_BASE=/opt/dpl dpl <command> [args]
 | `dpl undeploy <name>` | Remove a unit's active deployment from service |
 | `dpl status` | One line per unit: kind, version, deploy status, container state (`RUN`) |
 | `dpl inspect <name>` | Print deploy and runtime state |
+| `dpl upgrade` | Upgrade dpl to the latest release (needs root) |
 | `dpl serve` | Run the long-lived local serve process |
 | `dpl down` | Stop serve and tear down all supervised containers (keeps deploy state) |
 | `dpl db wait\|console\|backup` | Database operations |

@@ -28,10 +28,29 @@ esac
 # DPL_VERSION=1.2.3 pins a release; default is the latest published one.
 repo="https://github.com/cesbo/dpl/releases"
 if [ -n "${DPL_VERSION:-}" ]; then
-    src_url="$repo/download/v${DPL_VERSION#v}/dpl-linux-${arch}.tar.gz"
+    version="${DPL_VERSION#v}"
 else
-    src_url="$repo/latest/download/dpl-linux-${arch}.tar.gz"
+    # /releases/latest redirects to /releases/tag/vX.Y.Z (no API, no rate limit)
+    latest=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$repo/latest")
+    version="${latest##*/v}"
 fi
+
+case "$version" in
+    [0-9]*) ;;
+    *)
+        echo "Error: cannot determine the release version" >&2
+        exit 1
+        ;;
+esac
+
+# Same version and already registered: nothing to do (no restart either).
+if [ -x "$DST/dpl" ] && [ -f /etc/systemd/system/dpl.service ] &&
+    [ "$("$DST/dpl" -V 2>/dev/null | awk '{print $NF}')" = "$version" ]; then
+    echo "dpl $version is already installed, version not changed"
+    exit 0
+fi
+
+src_url="$repo/download/v$version/dpl-linux-${arch}.tar.gz"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT

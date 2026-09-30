@@ -3,6 +3,7 @@ pub mod down;
 pub mod secret;
 pub mod serve;
 pub mod unit;
+pub mod upgrade;
 
 use dialoguer::theme::ColorfulTheme;
 

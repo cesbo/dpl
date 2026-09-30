@@ -68,6 +68,9 @@ enum Command {
     /// Show a one-line summary of every unit
     Status,
 
+    /// Upgrade dpl to the latest release (runs the install script; needs root)
+    Upgrade,
+
     /// Start a unit's container (internal: called by `dpl serve`)
     #[command(hide = true)]
     Start {
@@ -128,6 +131,7 @@ fn run() -> Result<()> {
         Command::Deploy { name, path } => cmd::unit::deploy(&ctx, &name, path.as_deref()),
         Command::Inspect { name } => cmd::unit::inspect(&ctx, &name),
         Command::Status => cmd::unit::status(&ctx),
+        Command::Upgrade => cmd::upgrade::run(),
         Command::Start { name } => cmd::unit::start(&ctx, &name),
         Command::Undeploy { name } => cmd::unit::undeploy(&ctx, &name),
         Command::Timer { name, timer } => cmd::unit::timer(&ctx, &name, &timer),
