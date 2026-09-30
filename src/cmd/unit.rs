@@ -1,4 +1,8 @@
 use std::{
+    collections::{
+        BTreeMap,
+        HashMap,
+    },
     fs,
     io::{
         self,
@@ -42,6 +46,7 @@ use crate::{
             DomainUnit,
         },
         http_server::HttpServerUnit,
+        list_units,
         undeploy_container,
     },
     log::{
@@ -51,7 +56,10 @@ use crate::{
         print_field,
         success_mark,
     },
-    podman::health,
+    podman::{
+        self,
+        health,
+    },
     state::{
         DeployFailure,
         DeployLockGuard,
@@ -149,6 +157,113 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
             console.finish_err(&cause, &log_path);
             Err(anyhow::Error::new(DeployError::Reported))
         }
+    }
+}
+
+/// One line per unit. `RUN` comes from a single `podman ps`; `?` means podman
+/// did not answer, `-` a unit that has no container of its own.
+pub fn status(ctx: &MainContext) -> Result<()> {
+    let serve = match fs::read_to_string(ctx.serve_pid_path())
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .filter(|&pid| pid != 0 && super::down::process_alive(pid))
+    {
+        Some(pid) => format!("running (pid {pid})"),
+        None => "not running".to_string(),
+    };
+    print_field("Serve", serve);
+    println!();
+
+    let containers = podman::run_podman(&[
+        "ps",
+        "-a",
+        "--filter",
+        "name=dpl--",
+        "--format",
+        "{{.Names}} {{.State}}",
+    ])
+    .map_err(|err| crate::log::warn(format!("podman did not answer: {err}")))
+    .ok()
+    .map(|out| {
+        out.lines()
+            .filter_map(|l| l.split_once(' '))
+            .map(|(n, s)| (n.to_string(), s.to_string()))
+            .collect::<HashMap<_, _>>()
+    });
+
+    let mut units: BTreeMap<UnitName, (Option<UnitConfig>, Option<DeployState>)> = BTreeMap::new();
+    for (name, config) in list_units(ctx, |_| true) {
+        units.entry(name).or_default().0 = Some(config);
+    }
+    for (name, state) in DeployState::list(ctx) {
+        units.entry(name).or_default().1 = Some(state);
+    }
+
+    let now = Utc::now();
+    let rows: Vec<[String; 6]> = units
+        .into_iter()
+        .map(|(name, (config, state))| {
+            let kind = match (&config, state.as_ref().and_then(|s| s.kind.clone())) {
+                (Some(c), _) => c.kind_display(),
+                (None, Some(kind)) => format!("{kind} (no config)"),
+                (None, None) => "?".to_string(),
+            };
+            let (version, deploy, age) = match &state {
+                Some(s) => (
+                    s.active_version.map_or("-".to_string(), |v| format!("v{v}")),
+                    deploy_status_name(s.last_status).to_string(),
+                    fmt_ago(&now, &s.updated_at),
+                ),
+                None => ("-".into(), "idle".into(), "-".into()),
+            };
+            let run = run_column(
+                state.as_ref().is_some_and(|s| s.supervised),
+                containers.as_ref().map(|c| c.get(&name.scoped_unit_name())),
+            );
+            [name.to_string(), kind, version, deploy, run, age]
+        })
+        .collect();
+
+    let header = ["UNIT", "KIND", "VERSION", "DEPLOY", "RUN", "AGE"].map(String::from);
+    let mut widths = [0; 6];
+    for row in std::iter::once(&header).chain(&rows) {
+        for (w, cell) in widths.iter_mut().zip(row) {
+            *w = (*w).max(cell.len());
+        }
+    }
+    let line = |row: &[String; 6]| {
+        let cells: Vec<String> = row
+            .iter()
+            .zip(widths)
+            .map(|(cell, w)| format!("{cell:<w$}"))
+            .collect();
+        cells.join("  ").trim_end().to_string()
+    };
+    println!("{}", console::style(line(&header)).bold());
+    for row in &rows {
+        println!("{}", line(row));
+    }
+    Ok(())
+}
+
+/// `RUN` cell. `container`: outer `None` = podman did not answer, inner `None`
+/// = no such container.
+fn run_column(supervised: bool, container: Option<Option<&String>>) -> String {
+    match (supervised, container) {
+        (false, _) => "-".into(),
+        (true, None) => "?".into(),
+        (true, Some(None)) => "down".into(),
+        (true, Some(Some(state))) => state.clone(),
+    }
+}
+
+fn deploy_status_name(status: DeployStatus) -> &'static str {
+    match status {
+        DeployStatus::Idle => "idle",
+        DeployStatus::Building => "building",
+        DeployStatus::Check => "check",
+        DeployStatus::Ready => "ready",
+        DeployStatus::Failed => "failed",
     }
 }
 
@@ -494,4 +609,18 @@ fn load_unit(ctx: &MainContext, name: &UnitName) -> Result<UnitConfig> {
         .with_context(|| format!("unit '{name}': broken reference chain"))?;
 
     Ok(unit)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_column_distinguishes_down_unknown_and_no_container() {
+        let running = "running".to_string();
+        assert_eq!(run_column(false, Some(None)), "-");
+        assert_eq!(run_column(true, None), "?");
+        assert_eq!(run_column(true, Some(None)), "down");
+        assert_eq!(run_column(true, Some(Some(&running))), "running");
+    }
 }

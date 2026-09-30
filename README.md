@@ -67,6 +67,7 @@ DPL_BASE=/opt/dpl dpl <command> [args]
 | `dpl check <name>`   | Validate config and reference graph |
 | `dpl deploy <name> [path]` | Deploy a unit. App: `.tar.gz` (or `-`). Db: optional SQL dump to restore |
 | `dpl undeploy <name>` | Remove a unit's active deployment from service |
+| `dpl status` | One line per unit: kind, version, deploy status, container state (`RUN`) |
 | `dpl inspect <name>` | Print deploy and runtime state |
 | `dpl serve` | Run the long-lived local serve process |
 | `dpl down` | Stop serve and tear down all supervised containers (keeps deploy state) |
@@ -389,6 +390,7 @@ files, and decrypted values end up inlined into the generated artifacts.
 dpl check myapp                                     # validate config + references
 git archive --format=tar.gz HEAD | dpl deploy myapp -
 dpl deploy myapp ./build.tar.gz
+dpl status                                          # all units at a glance
 dpl inspect myapp                                   # deploy + runtime state
 ```
 

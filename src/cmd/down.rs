@@ -107,7 +107,7 @@ fn stop_serve(ctx: &MainContext) -> Result<()> {
     Ok(())
 }
 
-fn process_alive(pid: u32) -> bool {
+pub(super) fn process_alive(pid: u32) -> bool {
     Command::new("kill")
         .arg("-0")
         .arg(pid.to_string())
