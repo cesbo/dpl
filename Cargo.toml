@@ -1,6 +1,6 @@
 [package]
 name = "dpl"
-version = "0.5.2"
+version = "0.5.3"
 edition = "2024"
 description = "Single-binary deploy CLI and local supervisor for web apps, databases and HTTP servers on top of podman"
 license = "MIT"
