@@ -25,14 +25,32 @@ case "$(uname -m)" in
         ;;
 esac
 
-src_url="https://cdn.cesbo.com/dpl/latest/dpl-linux-${arch}.tar.gz"
+# DPL_VERSION=1.2.3 pins a release; default is the latest published one.
+repo="https://github.com/cesbo/dpl/releases"
+if [ -n "${DPL_VERSION:-}" ]; then
+    src_url="$repo/download/v${DPL_VERSION#v}/dpl-linux-${arch}.tar.gz"
+else
+    src_url="$repo/latest/download/dpl-linux-${arch}.tar.gz"
+fi
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 curl -fsSL "$src_url" | tar -C "$tmp" -xzf -
 
-"$tmp/dpl" -V
+new=$("$tmp/dpl" -V)
+old=""
+if [ -x "$DST/dpl" ]; then
+    old=$("$DST/dpl" -V 2>/dev/null || true)
+fi
+
+if [ -n "$old" ] && [ "$old" != "$new" ]; then
+    echo "Upgrading: $old -> $new"
+elif [ -n "$old" ]; then
+    echo "Reinstalling: $new"
+else
+    echo "Version: $new"
+fi
 
 # rm first: overwriting a running binary fails with ETXTBSY
 rm -f "$DST/dpl"

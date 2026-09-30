@@ -1,7 +1,15 @@
 [package]
 name = "dpl"
-version = "0.0.1"
+version = "0.5.2"
 edition = "2024"
+description = "Single-binary deploy CLI and local supervisor for web apps, databases and HTTP servers on top of podman"
+license = "MIT"
+repository = "https://github.com/cesbo/dpl"
+homepage = "https://dpl.cesbo.com"
+documentation = "https://dpl.cesbo.com"
+readme = "README.md"
+keywords = ["deploy", "podman", "devops", "cli", "supervisor"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 aes-gcm = "0.10"
