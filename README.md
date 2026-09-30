@@ -345,13 +345,15 @@ gunzip -c app1.sql.gz | dpl deploy app1 -
 
 dpl db wait app1 --timeout 60         # block until reachable
 dpl db console app1                   # interactive client (--root for superuser)
+dpl db console db-main                # superuser client on the db-server
 dpl db backup app1 app1.sql           # dump to file
 dpl db backup app1 app1.sql.gz        # .gz → gzip
 dpl db backup app1 - | gzip > out.gz  # stdout when path is omitted/`-`
 ```
 
 `dpl db console` runs `psql` / `mariadb` / `mysql` inside the running
-`db-server` via `podman exec -it`.
+`db-server` via `podman exec -it`. Given a `db-server` unit, it connects as the
+engine superuser without selecting a database.
 
 `dpl db backup` runs the engine's dump client as the db's login user. Client
 messages go to stderr so stdout stays clean for piping.

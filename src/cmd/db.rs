@@ -56,11 +56,13 @@ enum Cmd {
         #[arg(long, default_value_t = 60)]
         timeout: u64,
     },
-    /// Open an interactive SQL console to a database as its own login user
+    /// Open an interactive SQL console to a database as its own login user,
+    /// or to a db-server as the engine superuser
     Console {
-        /// Database unit name
+        /// Database or db-server unit name
         name: UnitName,
         /// Connect as the engine superuser with the db-server's root password
+        /// (implied for a db-server)
         #[arg(long)]
         root: bool,
     },
@@ -100,7 +102,17 @@ fn wait(ctx: &MainContext, name: &UnitName, timeout_secs: u64) -> Result<()> {
 }
 
 fn console(ctx: &MainContext, name: &UnitName, root: bool) -> Result<()> {
-    let db_config = load_db(ctx, name)?;
+    let db_config = match UnitConfig::load(ctx, name)? {
+        UnitConfig::Db(config) => config,
+        UnitConfig::DbServer(server_config) => {
+            let password = ctx.resolve_secret(&server_config.secret)?;
+            return server_config
+                .engine
+                .console(name, server_config.engine.superuser(), &password, None)
+                .with_context(|| format!("open console to '{name}'"));
+        }
+        _ => bail!("unit '{name}' is not a db or db-server"),
+    };
     let server_config = load_db_server(ctx, &db_config.server)?;
 
     let (user, password) = if root {
@@ -117,7 +129,7 @@ fn console(ctx: &MainContext, name: &UnitName, root: bool) -> Result<()> {
 
     server_config
         .engine
-        .console(&db_config.server, &user, &password, name.as_str())
+        .console(&db_config.server, &user, &password, Some(name.as_str()))
         .with_context(|| format!("open console to '{name}'"))
 }
 

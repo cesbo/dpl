@@ -10,15 +10,15 @@ use crate::{
 };
 
 impl DbServerEngine {
-    /// Open an interactive SQL client against `db_name` as `user` inside the
-    /// running db-server container. stdin/stdout/stderr inherit the parent
+    /// Open an interactive SQL client against `db_name` (the engine's default
+    /// when `None`) as `user` inside the running db-server container. stdin/stdout/stderr inherit the parent
     /// terminal (the default), so the client gets a real TTY via `-it`.
     pub fn console(
         self,
         server: &UnitName,
         user: &str,
         password: &str,
-        db_name: &str,
+        db_name: Option<&str>,
     ) -> io::Result<()> {
         let server = server.scoped_unit_name();
         let password_env = self.client_password_env();
@@ -37,18 +37,20 @@ impl DbServerEngine {
     }
 
     /// Args to open an interactive client session as `user` against `db_name`.
-    fn console_args(self, user: &str, db_name: &str) -> Vec<String> {
-        let args = match self {
-            DbServerEngine::Postgresql => {
-                vec!["psql", "-U", user, "-d", db_name]
-            }
-            DbServerEngine::Mariadb => {
-                vec!["mariadb", "-u", user, db_name]
-            }
-            DbServerEngine::Mysql => {
-                vec!["mysql", "-u", user, db_name]
-            }
+    /// Without `db_name`, psql opens the database named after the user and the
+    /// MySQL clients open none.
+    fn console_args(self, user: &str, db_name: Option<&str>) -> Vec<String> {
+        let mut args = match self {
+            DbServerEngine::Postgresql => vec!["psql", "-U", user],
+            DbServerEngine::Mariadb => vec!["mariadb", "-u", user],
+            DbServerEngine::Mysql => vec!["mysql", "-u", user],
         };
+        if let Some(db_name) = db_name {
+            if self == DbServerEngine::Postgresql {
+                args.push("-d");
+            }
+            args.push(db_name);
+        }
         args.into_iter().map(String::from).collect()
     }
 }
@@ -60,16 +62,24 @@ mod tests {
     #[test]
     fn console_args() {
         assert_eq!(
-            DbServerEngine::Postgresql.console_args("app1", "app-db"),
+            DbServerEngine::Postgresql.console_args("app1", Some("app-db")),
             ["psql", "-U", "app1", "-d", "app-db"]
         );
         assert_eq!(
-            DbServerEngine::Mariadb.console_args("app1", "app-db"),
+            DbServerEngine::Mariadb.console_args("app1", Some("app-db")),
             ["mariadb", "-u", "app1", "app-db"]
         );
         assert_eq!(
-            DbServerEngine::Mysql.console_args("app1", "app-db"),
+            DbServerEngine::Mysql.console_args("app1", Some("app-db")),
             ["mysql", "-u", "app1", "app-db"]
+        );
+        assert_eq!(
+            DbServerEngine::Postgresql.console_args("postgres", None),
+            ["psql", "-U", "postgres"]
+        );
+        assert_eq!(
+            DbServerEngine::Mariadb.console_args("root", None),
+            ["mariadb", "-u", "root"]
         );
     }
 }
