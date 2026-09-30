@@ -100,4 +100,3 @@ systemctl enable dpl
 systemctl restart dpl
 
 echo "🎉 dpl is successfully installed"
-echo "Documentation can be found at: https://dpl.cesbo.com"
