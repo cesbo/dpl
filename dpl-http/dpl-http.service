@@ -1,0 +1,15 @@
+# /etc/systemd/system/dpl-http.service, script at /usr/local/bin/dpl-http.py
+[Unit]
+Description=dpl deploy over HTTP
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+# DEPLOY_ALLOW (required, space-separated client IPs): set with `systemctl edit dpl-http`
+Environment=DEPLOY_PORT=8099
+ExecStart=/usr/bin/python3 /opt/dpl/dpl-http.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
