@@ -1,4 +1,4 @@
-# /etc/systemd/system/dpl-http.service, script at /usr/local/bin/dpl-http.py
+# /etc/systemd/system/dpl-http.service, script at /opt/dpl/dpl-http.py
 [Unit]
 Description=dpl deploy over HTTP
 Wants=network-online.target
