@@ -5,7 +5,8 @@
 
 Accepts requests only from the IPs in DEPLOY_ALLOW (space-separated), saves the
 archive to a temp file and runs `dpl deploy <unit> <file>`. The response is the
-dpl output: status 200 on success, 500 on failure.
+dpl output: status 200 on success, 500 on failure. On failure the `Log: <path>`
+line is replaced with the tail of that log: the client cannot read server files.
 """
 import os
 import re
@@ -17,6 +18,19 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 ALLOW = set(os.environ['DEPLOY_ALLOW'].split())
 PORT = int(os.environ.get('DEPLOY_PORT', '8099'))
 UNIT = re.compile(r'[a-z0-9]+(-[a-z0-9]+)*')  # dpl unit names
+LOG_LINE = re.compile(r'^ *Log: (\S+)\s*\Z', re.M)  # last line of a failed `dpl deploy`
+
+
+def log_tail(path, lines=100, limit=64 << 10):
+    try:
+        with open(path, 'rb') as f:
+            f.seek(max(0, f.seek(0, os.SEEK_END) - limit))
+            if f.tell():
+                f.readline()  # drop the line cut by the seek
+            tail = f.read().decode(errors='replace').splitlines()[-lines:]
+    except OSError as e:
+        return f'\nread {os.path.basename(path)}: {e.strerror}\n'
+    return f'\n--- {os.path.basename(path)}, last {len(tail)} lines ---\n' + ''.join(l + '\n' for l in tail)
 
 
 class Server(HTTPServer):
@@ -48,7 +62,10 @@ class Handler(BaseHTTPRequestHandler):
             f.flush()
             r = subprocess.run(['dpl', 'deploy', unit, f.name], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         self.log_message('deploy %s: exit %d', unit, r.returncode)
-        self.reply(200 if r.returncode == 0 else 500, r.stdout)
+        out = r.stdout
+        if m := LOG_LINE.search(out):
+            out = out[:m.start()] + log_tail(m[1])
+        self.reply(200 if r.returncode == 0 else 500, out)
 
     def reply(self, code, text):
         body = text.encode()
