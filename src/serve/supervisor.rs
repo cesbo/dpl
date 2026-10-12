@@ -472,9 +472,15 @@ fn spawn_child(exe: &Path, base: &Path, name: &UnitName, version: Option<u32>) -
     let mut cmd;
 
     if is_running_under_systemd() {
-        let unit = format!("dpl-container-{name}.scope");
+        // No fixed `--unit`: the scope lives as long as the attached `dpl start`,
+        // so a fixed name is still taken while the previous run is stopping (and
+        // by a sibling version), and systemd-run then fails silently.
+        let description = match version {
+            Some(version) => format!("dpl start {name} {version}"),
+            None => format!("dpl start {name}"),
+        };
         cmd = Command::new("systemd-run");
-        cmd.args(["--scope", "--unit", &unit, "--quiet"]);
+        cmd.args(["--scope", "--description", &description, "--quiet"]);
         cmd.arg(exe);
     } else {
         cmd = Command::new(exe);
