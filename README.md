@@ -56,6 +56,13 @@ per-unit directory:
 - `<base>/secrets/` - encrypted secrets (`master.key` plus `{name}.json`)
 - `<base>/backup/` - database dumps written before a destructive drop
 
+Containers join the podman network `dpl`. An app's container is named
+`dpl--<name>--<version>` and carries the DNS alias `dpl--<name>`, which stays
+the same across versions and is what `${<app>:url}` resolves to. Every other
+unit kind (`db-server`, `http-server`, `cloudflare-tunnel`) runs as
+`dpl--<name>`. An app container still named `dpl--<name>` by an older dpl is
+adopted as the active version until its next deploy.
+
 ## CLI
 
 ```bash
@@ -187,8 +194,8 @@ runtime:
   `password`, `host`, `port`, `url`. The referenced db is added as a startup
   dependency automatically (no separate `databases:` list)
 - `${<app-unit>:<key>}` - export from an `app` unit. Keys: `url`
-  (`http://dpl-<name>:<port>`), `socket` (without scheme), `export` (static
-  export path inside the nginx container)
+  (`http://dpl--<name>:<port>`, the container's stable DNS alias), `socket`
+  (without scheme), `export` (static export path inside the nginx container)
 
 References are validated by `dpl check`.
 
@@ -475,8 +482,8 @@ process is blocked elsewhere - almost always podman on the host.
    criterion), `Startup budget`, whether a deploy still holds `deploy.lock` and
    its pid, and the runtime log path. `stalled - no deploy holds deploy.lock`
    means the deploy that handed the unit off is gone.
-2. `podman ps`, then `podman logs dpl--<name>`, or read
-   `<base>/state/{name}/log/runtime.log` directly.
+2. `podman ps`, then `podman logs dpl--<name>--<version>` (an app; other kinds
+   are `dpl--<name>`), or read `<base>/state/{name}/log/runtime.log` directly.
 3. `ps -ef | grep 'podman exec'` - a wedged host-side podman is the classic
    cause. dpl now kills its own probe after 5s and reports
    `readiness probe … failed`, so a wedge shows up as that message rather than

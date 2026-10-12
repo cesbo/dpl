@@ -14,6 +14,8 @@ use anyhow::{
 
 use crate::{
     MainContext,
+    config::UnitName,
+    deploy::app::probe_names,
     log::success_mark,
     podman,
     state::DeployState,
@@ -41,22 +43,32 @@ pub fn run(ctx: &MainContext) -> Result<()> {
     }
 
     let mut stopped = 0usize;
-    for name in &supervised {
-        match podman::stop_and_remove(name) {
-            Ok(()) => stopped += 1,
-            Err(err) => crate::log::warn(format!("stop container '{}': {err}", name.as_str())),
+    for (name, containers) in &supervised {
+        let mut ok = true;
+        for container in containers {
+            if let Err(err) = podman::stop_and_remove(container) {
+                ok = false;
+                crate::log::warn(format!("stop container '{}': {err}", name.as_str()));
+            }
         }
+        stopped += usize::from(ok);
     }
 
     eprintln!("{} stopped {stopped} container(s)", success_mark());
     Ok(())
 }
 
-fn supervised_targets(ctx: &MainContext) -> Vec<crate::config::UnitName> {
+/// Every supervised unit with the container names it may run under: an app
+/// with an active version under its versioned name or a legacy one (started by
+/// an older dpl), everything else under the legacy name only.
+fn supervised_targets(ctx: &MainContext) -> Vec<(UnitName, Vec<String>)> {
     DeployState::list(ctx)
         .into_iter()
         .filter(|(_, state)| state.supervised)
-        .map(|(name, _)| name)
+        .map(|(name, state)| {
+            let containers = probe_names(&name, state.kind.as_deref(), state.active_version);
+            (name, containers)
+        })
         .collect()
 }
 
@@ -121,7 +133,6 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::config::UnitName;
 
     fn ctx() -> (TempDir, MainContext) {
         let dir = TempDir::new().unwrap();
@@ -165,7 +176,13 @@ mod tests {
         targets.sort();
         assert_eq!(
             targets,
-            vec![UnitName::new("pg").unwrap(), UnitName::new("web").unwrap()]
+            vec![
+                (UnitName::new("pg").unwrap(), vec!["dpl--pg".to_string()]),
+                (
+                    UnitName::new("web").unwrap(),
+                    vec!["dpl--web--1".to_string(), "dpl--web".to_string()],
+                ),
+            ]
         );
     }
 

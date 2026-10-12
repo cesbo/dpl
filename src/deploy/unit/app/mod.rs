@@ -45,7 +45,10 @@ use crate::{
         },
     },
     log,
-    podman::copy_image_dir_to_host,
+    podman::{
+        REPORT_TIMEOUT,
+        copy_image_dir_to_host,
+    },
     state::DeployState,
     timers::TimersState,
 };
@@ -258,6 +261,11 @@ impl<'a> AppUnit<'a> {
             return Ok(());
         };
 
+        // Anything else of this unit still around (a stop an earlier deploy
+        // missed) would share the DNS alias with the container about to start.
+        let container = self.name.container_name(state.last_version);
+        evict_strays(self.name, &container);
+
         let db_servers = self
             .config
             .db_server_deps(self.ctx)
@@ -265,10 +273,9 @@ impl<'a> AppUnit<'a> {
         state.set_start_after(db_servers);
         state.set_check();
 
-        let container = self.name.scoped_unit_name();
         crate::serve::notify_or_warn(self.ctx, &container);
 
-        wait_ready(self.name, AppConfig::KIND, runtime.port)?;
+        wait_ready(self.name, AppConfig::KIND, &container, runtime.port)?;
         state.set_ready();
         Ok(())
     }
@@ -296,12 +303,18 @@ impl<'a> AppUnit<'a> {
     }
 
     pub fn undeploy(ctx: &MainContext, name: &UnitName, version: u32) {
-        // Stop the running container before dropping its image.
+        // Stop the running container before dropping its image: the versioned
+        // one, then a legacy-named one left by an older dpl (plus the env file).
+        if let Err(err) = crate::podman::stop_and_remove(&name.container_name(version)) {
+            log::warn(format!("stop container '{name}' v{version}: {err}"));
+        }
         undeploy_container(ctx, name, version);
         PodmanContext::new(name, version).remove();
     }
 
-    pub fn inspect(&self) -> Result<(), DeployError> {
+    /// `active` is the version in service: its container is reported, or a
+    /// legacy-named one still running from before the upgrade.
+    pub fn inspect(&self, active: u32) -> Result<(), DeployError> {
         // A static build-and-export unit never runs a container.
         if self.config.runtime.is_none() {
             log::print_field(
@@ -311,13 +324,19 @@ impl<'a> AppUnit<'a> {
             return Ok(());
         }
 
-        crate::podman::inspect::print_container_state(self.name);
+        // A probe failure is reported by print_container_state itself.
+        let container = running_container(self.name, active, REPORT_TIMEOUT)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| self.name.container_name(active));
+        crate::podman::inspect::print_container_state(&container);
 
         Ok(())
     }
 
-    /// Run the app container in the foreground.
-    pub fn start(&self) -> Result<(), RunError> {
+    /// Run the app container in the foreground. `version` overrides the
+    /// deployed one (serve passes the slot it supervises).
+    pub fn start(&self, version: Option<u32>) -> Result<(), RunError> {
         if self.config.runtime.is_none() {
             return Err(RunError::new(
                 format!("app '{}' is a static unit with no container", self.name),
@@ -325,8 +344,14 @@ impl<'a> AppUnit<'a> {
             ));
         }
 
-        let version = deployed_version(self.ctx, self.name, AppConfig::KIND)?;
-        let mut cmd = podman_run_with_env(self.ctx, self.name, version)?;
+        let version = match version {
+            Some(version) => version,
+            None => deployed_version(self.ctx, self.name, AppConfig::KIND)?,
+        };
+        let container = self.name.container_name(version);
+        let mut cmd = podman_run_with_env(self.ctx, self.name, &container, version)?;
+        // Stable DNS name across versions: `${app:url}` resolves to it.
+        cmd.network_alias(&self.name.scoped_unit_name());
 
         let databases = self
             .config
@@ -353,6 +378,89 @@ fn save_archive<R: Read>(archive: R, dst: &Path) -> io::Result<()> {
     let mut archive_file = fs::File::create(dst)?;
     io::copy(&mut reader, &mut archive_file)?;
     Ok(())
+}
+
+/// Whether deploy state's `kind` names an app. A missing kind (a state file
+/// written before `kind` existed, so its container carries the legacy name)
+/// counts as one: the version argv and the legacy fallback this enables are
+/// harmless for every other kind.
+pub fn is_app_kind(kind: Option<&str>) -> bool {
+    kind.is_none_or(|k| k == AppConfig::KIND)
+}
+
+/// The names an app's container of `version` may run under, most specific
+/// first: `dpl--{unit}--{version}`, then the legacy `dpl--{unit}` of a
+/// container started by an older dpl (adopted until its next deploy).
+pub fn container_names(name: &UnitName, version: u32) -> [String; 2] {
+    [name.container_name(version), name.scoped_unit_name()]
+}
+
+/// The names a supervised unit's container may run under, as deploy state
+/// describes the unit: [`container_names`] for an app with an active version,
+/// the legacy `dpl--{unit}` alone for everything else.
+pub fn probe_names(name: &UnitName, kind: Option<&str>, active: Option<u32>) -> Vec<String> {
+    match active {
+        Some(version) if is_app_kind(kind) => container_names(name, version).to_vec(),
+        _ => vec![name.scoped_unit_name()],
+    }
+}
+
+/// Stop and remove every container of `name` other than `keep`. A stop an
+/// earlier deploy missed (interrupted, or podman did not answer) leaves a
+/// container that shares the DNS alias with the one about to start, and
+/// nothing else revisits it: `--replace` only evicts the same name. Best
+/// effort - the next deploy runs it again.
+fn evict_strays(name: &UnitName, keep: &str) {
+    let filter = format!("name={}", name.scoped_unit_name());
+    let args = ["ps", "-a", "--filter", &filter, "--format", "{{.Names}}"];
+    let listed = match crate::podman::run_podman(&args) {
+        Ok(out) => out,
+        Err(err) => {
+            log::warn(format!("list containers of '{name}': {err}"));
+            return;
+        }
+    };
+    for stray in stray_containers(name, keep, &listed) {
+        log::warn(format!("removing stray container '{stray}'"));
+        if let Err(err) = crate::podman::stop_and_remove(stray) {
+            log::warn(format!("stop container '{stray}': {err}"));
+        }
+    }
+}
+
+/// The containers of `name` among `ps_names` (one per line) other than `keep`:
+/// the legacy `dpl--{unit}` or any `dpl--{unit}--{version}`. Exact, since the
+/// `podman ps` name filter is a substring match that also returns other units
+/// sharing the prefix.
+fn stray_containers<'a>(name: &UnitName, keep: &str, ps_names: &'a str) -> Vec<&'a str> {
+    let legacy = name.scoped_unit_name();
+    let prefix = format!("{legacy}--");
+    ps_names
+        .lines()
+        .map(str::trim)
+        .filter(|n| *n != keep)
+        .filter(|n| {
+            *n == legacy
+                || n.strip_prefix(&prefix)
+                    .is_some_and(|v| v.parse::<u32>().is_ok())
+        })
+        .collect()
+}
+
+/// The first of [`container_names`] that podman reports running. `Err` only
+/// when podman did not answer (the first probe to fail ends the search, so a
+/// wedged podman costs one `limit`, not two).
+pub fn running_container(
+    name: &UnitName,
+    version: u32,
+    limit: Duration,
+) -> io::Result<Option<String>> {
+    for container in container_names(name, version) {
+        if crate::podman::is_running_within(&container, limit)? {
+            return Ok(Some(container));
+        }
+    }
+    Ok(None)
 }
 
 /// Copy `app`'s static exports (its active version) into `www_dir`
@@ -461,6 +569,43 @@ mod tests {
         let domains = app.dependent_domains();
         let names: Vec<&str> = domains.iter().map(|(name, _)| name.as_str()).collect();
         assert_eq!(names, vec!["site"]);
+    }
+
+    #[test]
+    fn is_app_kind_treats_missing_kind_as_app() {
+        assert!(is_app_kind(Some("app")));
+        assert!(is_app_kind(None));
+        assert!(!is_app_kind(Some("db-server")));
+    }
+
+    #[test]
+    fn container_names_versioned_first_then_legacy() {
+        let app = UnitName::new("web").unwrap();
+        assert_eq!(container_names(&app, 3), ["dpl--web--3", "dpl--web"]);
+    }
+
+    #[test]
+    fn probe_names_follow_kind_and_active_version() {
+        let unit = UnitName::new("web").unwrap();
+        let both = vec!["dpl--web--3".to_string(), "dpl--web".to_string()];
+        let legacy = vec!["dpl--web".to_string()];
+        assert_eq!(probe_names(&unit, Some("app"), Some(3)), both);
+        assert_eq!(probe_names(&unit, None, Some(3)), both);
+        assert_eq!(probe_names(&unit, Some("app"), None), legacy);
+        assert_eq!(probe_names(&unit, Some("db-server"), Some(3)), legacy);
+    }
+
+    #[test]
+    fn stray_containers_are_the_units_other_names_only() {
+        let app = UnitName::new("web").unwrap();
+        // What `podman ps --filter name=dpl--web` returns: every name
+        // containing the substring, other units included.
+        let ps = "dpl--web--3\ndpl--web--1\ndpl--web\ndpl--web-api\n\
+                  dpl--web-api--2\ndpl--webapp--2\ndpl--web--x\n";
+        assert_eq!(
+            stray_containers(&app, "dpl--web--3", ps),
+            ["dpl--web--1", "dpl--web"]
+        );
     }
 
     #[test]

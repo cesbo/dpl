@@ -101,7 +101,7 @@ impl<'a> CloudflareTunnelUnit<'a> {
 
         // The image is distroless (no shell), so the exec-based port probe cannot
         // run: readiness is the worker criterion, "started and stayed running".
-        wait_ready(self.name, CloudflareTunnelConfig::KIND, None)?;
+        wait_ready(self.name, CloudflareTunnelConfig::KIND, &container, None)?;
         state.set_ready();
 
         // Routing lives in the dashboard; tell the operator what to enter there.
@@ -113,7 +113,7 @@ impl<'a> CloudflareTunnelUnit<'a> {
     }
 
     pub fn inspect(&self) {
-        crate::podman::inspect::print_container_state(self.name);
+        crate::podman::inspect::print_container_state(&self.name.scoped_unit_name());
     }
 
     /// Run the connector container in the foreground.
@@ -122,7 +122,7 @@ impl<'a> CloudflareTunnelUnit<'a> {
         let container = self.name.scoped_unit_name();
 
         // The token rides in the podman process env (`--env=TUNNEL_TOKEN`), never on argv.
-        let cmd = podman_run_with_env(self.ctx, self.name, version)?;
+        let cmd = podman_run_with_env(self.ctx, self.name, &container, version)?;
 
         // ENTRYPOINT is `cloudflared --no-autoupdate`; the args follow the image.
         let mut cmd = cmd.into_command();

@@ -105,6 +105,12 @@ impl PodmanRun {
         self.arg(format!("--publish={host_port}:{container_port}"))
     }
 
+    /// Extra DNS name for the container on the dpl network.
+    /// Adds argument `--network-alias={alias}` to pass to podman.
+    pub fn network_alias(&mut self, alias: &str) {
+        self.arg(format!("--network-alias={alias}"))
+    }
+
     /// Run the container in the foreground under dpl's control.
     pub fn run_foreground(mut self, image: impl AsRef<str>, log_path: &Path) -> io::Result<()> {
         self.arg(image.as_ref());

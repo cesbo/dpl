@@ -52,6 +52,12 @@ impl UnitName {
     pub fn scoped_unit_name(&self) -> String {
         format!("dpl--{name}", name = self.as_str())
     }
+
+    /// Container name of one deployed version: `dpl--<name>--<version>`.
+    /// Unambiguous because unit names never contain `--`.
+    pub fn container_name(&self, version: u32) -> String {
+        format!("dpl--{name}--{version}", name = self.as_str())
+    }
 }
 
 impl std::str::FromStr for UnitName {
@@ -113,6 +119,13 @@ mod tests {
         assert!(UnitName::new("foo.bar").is_err());
         assert!(UnitName::new("foo/bar").is_err());
         assert!(UnitName::new(" foo").is_err());
+    }
+
+    #[test]
+    fn container_names() {
+        let name = UnitName::new("web").unwrap();
+        assert_eq!(name.scoped_unit_name(), "dpl--web");
+        assert_eq!(name.container_name(3), "dpl--web--3");
     }
 
     #[test]

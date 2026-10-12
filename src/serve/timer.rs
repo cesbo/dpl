@@ -15,8 +15,11 @@ use chrono::Utc;
 use crate::{
     MainContext,
     config::UnitName,
+    deploy::app::running_container,
     log,
     log::cri_log::CriLog,
+    podman::CONTROL_TIMEOUT,
+    state::DeployState,
     timers::{
         TimerError,
         TimerState,
@@ -49,13 +52,22 @@ pub fn run_timer(
 
     let running = prev.running(started_at, next_run);
 
-    if !crate::podman::is_running(name) {
+    // The active version's container, under its versioned or legacy name. No
+    // state, no active version, or no answer from podman all read as down.
+    let container = DeployState::load(ctx, name)
+        .ok()
+        .and_then(|state| state.active_version)
+        .and_then(|version| {
+            running_container(name, version, CONTROL_TIMEOUT)
+                .ok()
+                .flatten()
+        });
+    let Some(container) = container else {
         let error = format!("container for '{name}' not running");
         timers.set_timer_state(timer_name, running.failed(Duration::default(), error));
         return Ok(());
-    }
+    };
 
-    let container = name.scoped_unit_name();
     let command = format!("timer--{timer_name}");
 
     timers.set_timer_state(timer_name, running.clone());

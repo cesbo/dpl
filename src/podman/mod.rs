@@ -29,7 +29,6 @@ use serde::Deserialize;
 
 pub use self::run::PodmanRun;
 pub(crate) use self::run::run_foreground;
-use crate::config::UnitName;
 
 /// The shared podman network every dpl container joins.
 pub const NETWORK: &str = "dpl";
@@ -162,12 +161,11 @@ pub fn ensure_network(name: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Stop and remove a unit's container.
-pub fn stop_and_remove(name: &UnitName) -> io::Result<()> {
-    let container = name.scoped_unit_name();
-    if container_exists(&container) {
-        run_podman_within(&["stop", &container], STOP_TIMEOUT)?;
-        run_podman_within(&["rm", "--force", "--volumes", &container], STOP_TIMEOUT)?;
+/// Stop and remove a container by name.
+pub fn stop_and_remove(container: &str) -> io::Result<()> {
+    if container_exists(container) {
+        run_podman_within(&["stop", container], STOP_TIMEOUT)?;
+        run_podman_within(&["rm", "--force", "--volumes", container], STOP_TIMEOUT)?;
     }
 
     Ok(())
@@ -327,12 +325,11 @@ pub struct ContainerStatus {
 /// answer, so a caller can tell "no such container" from "podman is wedged".
 /// `sized` to compute the writeable-layer size, used for the inspect report.
 pub fn try_inspect_container(
-    name: &UnitName,
+    container: &str,
     sized: bool,
     limit: Duration,
 ) -> io::Result<Option<ContainerState>> {
-    let name = name.scoped_unit_name();
-    let mut args = vec!["container", "inspect", &name, "--format", "{{json .}}"];
+    let mut args = vec!["container", "inspect", container, "--format", "{{json .}}"];
     if sized {
         args.push("--size");
     }
@@ -344,15 +341,18 @@ pub fn try_inspect_container(
     }
 }
 
-/// Whether the unit's container is running, under an explicit cap.
+/// Whether the container is running, under an explicit cap.
 /// `Err` means podman did not answer - the caller must not read that as "down".
-pub fn is_running_within(name: &UnitName, limit: Duration) -> io::Result<bool> {
-    Ok(try_inspect_container(name, false, limit)?.is_some_and(|c| c.state.status == "running"))
+pub fn is_running_within(container: &str, limit: Duration) -> io::Result<bool> {
+    Ok(
+        try_inspect_container(container, false, limit)?
+            .is_some_and(|c| c.state.status == "running"),
+    )
 }
 
-/// Returns `true` if the unit's container is currently running.
-pub fn is_running(name: &UnitName) -> bool {
-    is_running_within(name, CONTROL_TIMEOUT).unwrap_or(false)
+/// Returns `true` if the container is currently running.
+pub fn is_running(container: &str) -> bool {
+    is_running_within(container, CONTROL_TIMEOUT).unwrap_or(false)
 }
 
 /// Live resource usage from `podman stats --no-stream`. The fields are
@@ -368,14 +368,14 @@ pub struct ContainerStats {
 
 /// Sample live resource stats for a running container. `None` when the
 /// container is not running or stats are unavailable (e.g. rootless cgroup v1).
-pub fn container_stats(name: &UnitName) -> Option<ContainerStats> {
+pub fn container_stats(container: &str) -> Option<ContainerStats> {
     let out = run_podman_within(
         &[
             "stats",
             "--no-stream",
             "--format",
             "{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}",
-            &name.scoped_unit_name(),
+            container,
         ],
         REPORT_TIMEOUT,
     )

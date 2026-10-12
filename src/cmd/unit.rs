@@ -31,6 +31,7 @@ use crate::{
         app::{
             AppConfig,
             AppUnit,
+            probe_names,
         },
         cloudflare_tunnel::{
             CloudflareTunnelConfig,
@@ -216,9 +217,17 @@ pub fn status(ctx: &MainContext) -> Result<()> {
                 ),
                 None => ("-".into(), "idle".into(), "-".into()),
             };
+            // The names its container may run under, most specific first.
+            let names = probe_names(
+                &name,
+                state.as_ref().and_then(|s| s.kind.as_deref()),
+                state.as_ref().and_then(|s| s.active_version),
+            );
             let run = run_column(
                 state.as_ref().is_some_and(|s| s.supervised),
-                containers.as_ref().map(|c| c.get(&name.scoped_unit_name())),
+                containers
+                    .as_ref()
+                    .map(|c| names.iter().find_map(|n| c.get(n))),
             );
             [name.to_string(), kind, version, deploy, run, age]
         })
@@ -362,15 +371,15 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
     }
 
     // Per-unit runtime detail. Run it whenever a version is live.
-    if state.active_version.is_none() {
+    let Some(active) = state.active_version else {
         return Ok(());
-    }
+    };
 
     match unit {
         UnitConfig::App(app_config) => {
             println!();
             AppUnit::new(ctx, name, app_config)
-                .inspect()
+                .inspect(active)
                 .with_context(|| format!("inspect unit '{name}'"))?;
         }
         UnitConfig::CloudflareTunnel(tunnel_config) => {
@@ -467,13 +476,14 @@ fn print_timers(now: chrono::DateTime<Utc>, timers: &TimersState) {
     }
 }
 
-/// Start a unit's container.
+/// Start a unit's container. `version` picks the app slot to run (serve passes
+/// the one it supervises); other kinds ignore it.
 /// Units without a runtime container error out.
-pub fn start(ctx: &MainContext, name: &UnitName) -> Result<()> {
+pub fn start(ctx: &MainContext, name: &UnitName, version: Option<u32>) -> Result<()> {
     let unit = load_unit(ctx, name)?;
 
     let result = match unit {
-        UnitConfig::App(config) => AppUnit::new(ctx, name, config).start(),
+        UnitConfig::App(config) => AppUnit::new(ctx, name, config).start(version),
         UnitConfig::CloudflareTunnel(config) => {
             CloudflareTunnelUnit::new(ctx, name, config).start()
         }
@@ -513,8 +523,14 @@ pub fn undeploy(ctx: &MainContext, name: &UnitName) -> Result<()> {
         Some(DomainConfig::KIND) => DomainUnit::undeploy(ctx, name),
         _ => {
             if supervised {
-                crate::podman::stop_and_remove(name)
-                    .with_context(|| format!("stop container '{name}'"))?;
+                // Same names serve probes for this state (an app with a version
+                // runs under its versioned or legacy name).
+                for container in
+                    probe_names(name, outcome.kind.as_deref(), outcome.active_version)
+                {
+                    crate::podman::stop_and_remove(&container)
+                        .with_context(|| format!("stop container '{container}'"))?;
+                }
             }
         }
     }

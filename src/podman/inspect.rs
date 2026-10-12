@@ -4,7 +4,6 @@ use chrono::{
 };
 
 use crate::{
-    config::UnitName,
     log::{
         error_mark,
         fmt_ago,
@@ -21,10 +20,10 @@ use crate::{
 };
 
 /// Print live container/runtime detail.
-pub fn print_container_state(name: &UnitName) {
+pub fn print_container_state(container: &str) {
     // Distinguish "no container" from "podman never answered": the second one
     // is the host's problem, and hiding it is what makes a stall unreadable.
-    let c = match try_inspect_container(name, true, REPORT_TIMEOUT) {
+    let c = match try_inspect_container(container, true, REPORT_TIMEOUT) {
         Ok(Some(state)) => state,
         Ok(None) => {
             print_field("Container", format!("{} not created", error_mark()));
@@ -48,7 +47,7 @@ pub fn print_container_state(name: &UnitName) {
         if let Ok(started) = DateTime::parse_from_rfc3339(&c.state.started_at) {
             print_field("Uptime", fmt_ago(&Utc::now(), &started.with_timezone(&Utc)));
         }
-        if let Some(s) = container_stats(name) {
+        if let Some(s) = container_stats(container) {
             print_field("CPU", s.cpu_perc);
             print_field("Memory", format!("{} ({})", s.mem_usage, s.mem_perc));
             if !s.net_io.is_empty() && s.net_io != "-- / --" {

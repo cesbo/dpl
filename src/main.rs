@@ -76,6 +76,8 @@ enum Command {
     Start {
         /// Unit name
         name: config::UnitName,
+        /// App version to run (default: the deployed one)
+        version: Option<u32>,
     },
 
     /// Remove a unit's active deployment from service
@@ -132,7 +134,7 @@ fn run() -> Result<()> {
         Command::Inspect { name } => cmd::unit::inspect(&ctx, &name),
         Command::Status => cmd::unit::status(&ctx),
         Command::Upgrade => cmd::upgrade::run(),
-        Command::Start { name } => cmd::unit::start(&ctx, &name),
+        Command::Start { name, version } => cmd::unit::start(&ctx, &name, version),
         Command::Undeploy { name } => cmd::unit::undeploy(&ctx, &name),
         Command::Timer { name, timer } => cmd::unit::timer(&ctx, &name, &timer),
         Command::Serve => cmd::serve::run(&ctx),

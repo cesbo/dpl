@@ -136,7 +136,7 @@ impl<'a> DomainUnit<'a> {
             let conf_file = ctx.http_conf_dir(&server).join(&conf_name);
             match fs::remove_file(&conf_file) {
                 Ok(()) => {
-                    if crate::podman::is_running(&server)
+                    if crate::podman::is_running(&server.scoped_unit_name())
                         && let Err(err) = HttpServerUnit::reload(&server)
                     {
                         log::warn(format!("reload http-server '{server}': {err}"));

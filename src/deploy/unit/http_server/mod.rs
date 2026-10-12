@@ -58,7 +58,12 @@ impl<'a> HttpServerUnit<'a> {
         let container = self.name.scoped_unit_name();
         crate::serve::notify_or_warn(self.ctx, &container);
 
-        wait_ready(self.name, HttpServerConfig::KIND, Some(HTTP_PORT))?;
+        wait_ready(
+            self.name,
+            HttpServerConfig::KIND,
+            &container,
+            Some(HTTP_PORT),
+        )?;
         state.set_ready();
         Ok(())
     }
@@ -77,7 +82,7 @@ impl<'a> HttpServerUnit<'a> {
     ///   - otherwise run a full deploy under the unit's own DeployState lock, so a dependent unit
     ///     (e.g. a domain) can trigger the chain.
     pub fn reload_or_deploy(self) -> Result<(), DeployError> {
-        if crate::podman::is_running(self.name) {
+        if crate::podman::is_running(&self.name.scoped_unit_name()) {
             log::phase(format!("reloading http-server '{}'", self.name));
             return Self::reload(self.name);
         }
@@ -142,7 +147,7 @@ impl<'a> HttpServerUnit<'a> {
     }
 
     pub fn inspect(&self) {
-        crate::podman::inspect::print_container_state(self.name);
+        crate::podman::inspect::print_container_state(&self.name.scoped_unit_name());
     }
 
     /// Run the nginx container in the foreground.

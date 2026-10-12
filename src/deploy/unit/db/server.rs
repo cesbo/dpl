@@ -126,7 +126,7 @@ impl<'a> DbServerUnit<'a> {
     /// Bring the db-server up if it isn't already running.
     /// When the container is already running this is a no-op.
     pub fn reload_or_deploy(self) -> Result<(), DeployError> {
-        if crate::podman::is_running(self.name) {
+        if crate::podman::is_running(&self.name.scoped_unit_name()) {
             return Ok(());
         }
 
@@ -151,16 +151,17 @@ impl<'a> DbServerUnit<'a> {
     }
 
     pub fn inspect(&self) {
-        crate::podman::inspect::print_container_state(self.name);
+        crate::podman::inspect::print_container_state(&self.name.scoped_unit_name());
     }
 
     /// Run the db-server container in the foreground.
     pub fn start(&self) -> Result<(), RunError> {
         let version = deployed_version(self.ctx, self.name, DbServerConfig::KIND)?;
-        let mut cmd = podman_run_with_env(self.ctx, self.name, version)?;
+        let container = self.name.scoped_unit_name();
+        let mut cmd = podman_run_with_env(self.ctx, self.name, &container, version)?;
 
         let engine = self.config.engine;
-        cmd.volume(self.name.scoped_unit_name(), engine.data_path(), &[]);
+        cmd.volume(&container, engine.data_path(), &[]);
 
         cmd.run_foreground(self.config.image(), &self.ctx.runtime_log_path(self.name))
             .map_err(|e| RunError::new("run podman foreground", e))

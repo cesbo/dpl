@@ -15,13 +15,10 @@ use std::{
 use chrono::DateTime;
 use thiserror::Error;
 
-use crate::{
-    config::UnitName,
-    podman::{
-        ContainerStatus,
-        run_podman_within,
-        try_inspect_container,
-    },
+use crate::podman::{
+    ContainerStatus,
+    run_podman_within,
+    try_inspect_container,
 };
 
 /// Total wall-clock budget for one readiness wait. A slow-but-healthy boot (a
@@ -90,11 +87,10 @@ struct Probes<'a> {
 /// listening TCP socket on it bound to a wildcard address (`0.0.0.0` or `::`).
 /// Without one - a service that listens on nothing - up means the container
 /// started and stayed running, the strongest signal available.
-pub fn check(name: &UnitName, port: Option<u16>) -> Result<(), HealthCheckError> {
-    let container = name.scoped_unit_name();
-    let mut table = || tcp_tables(&container);
+pub fn check(container: &str, port: Option<u16>) -> Result<(), HealthCheckError> {
+    let mut table = || tcp_tables(container);
     let mut state =
-        || try_inspect_container(name, false, PROBE_TIMEOUT).map(|c| c.map(|c| c.state));
+        || try_inspect_container(container, false, PROBE_TIMEOUT).map(|c| c.map(|c| c.state));
 
     let mut probes = Probes {
         table: &mut table,
@@ -104,8 +100,8 @@ pub fn check(name: &UnitName, port: Option<u16>) -> Result<(), HealthCheckError>
     };
 
     match port {
-        Some(port) => check_port(&container, port, &mut probes),
-        None => check_running(&container, &mut probes),
+        Some(port) => check_port(container, port, &mut probes),
+        None => check_running(container, &mut probes),
     }
 }
 

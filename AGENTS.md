@@ -15,7 +15,7 @@ DPL_BASE=/opt/dpl cargo run -- deploy myapp ./build.tar.gz
 
 Never run `cargo fmt`. Edition 2024. Release is a musl Linux static binary (`x86_64` and `aarch64`) plus macOS; see `.github/workflows/deploy.yml`.
 
-Hidden CLI (not for operators): `dpl start <unit>`, `dpl timer <unit> <timer>`.
+Hidden CLI (not for operators): `dpl start <unit> [version]`, `dpl timer <unit> <timer>`.
 
 ## Layout
 
@@ -42,7 +42,7 @@ Deploys never start containers. They lock `deploy.lock` (whole process lifetime;
 
 `start_after` (on `deploy.json`) is snapshotted from an app's `${db:…}` refs at hand-off. Serve will not spawn until those db-server containers are up. Domain deploys write nginx conf + www into the http-server unit and reload it; they are not supervised containers.
 
-Container name: `dpl--{unit}` (`UnitName::scoped_unit_name`). Shared network: `dpl`.
+Container names: an app runs as `dpl--{unit}--{version}` (`UnitName::container_name`) with the DNS alias `dpl--{unit}` (`--network-alias`, what `${app:url}` resolves to); every other kind runs as `dpl--{unit}` (`UnitName::scoped_unit_name`). A legacy-named app container (`dpl--{unit}`, started by an older dpl) is adopted as the active version until its next deploy; that fallback lives in `app::container_names` (versioned name first, then legacy), which `app::probe_names` and `app::running_container` consume. Shared network: `dpl`.
 
 App shapes: `runtime.port` → service; `runtime` without port → worker; no `runtime` → static (build+export only).
 

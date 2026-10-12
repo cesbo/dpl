@@ -23,6 +23,10 @@ use std::{
 use crate::{
     MainContext,
     config::UnitName,
+    deploy::app::{
+        is_app_kind,
+        probe_names,
+    },
     log,
     podman,
     state::{
@@ -55,9 +59,11 @@ const GATE_RECHECK: Duration = Duration::from_secs(1);
 /// clamped to [`RESTART_BACKOFF_CAP`] long before this bites.
 const MAX_BACKOFF_SHIFT: u32 = 16;
 
-/// Cap on the one container probe reconcile makes per unit. A reconcile pass
-/// runs on serve's main loop, so a wedged podman must cost this much and no
-/// more - otherwise one unit stalls supervision and timers for every unit.
+/// Cap on each container probe reconcile makes per unit (one, or two for an
+/// app whose versioned name is not up; a probe error ends the search). A
+/// reconcile pass runs on serve's main loop, so a wedged podman must cost this
+/// much and no more - otherwise one unit stalls supervision and timers for
+/// every unit.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -84,6 +90,9 @@ struct ManagedUnit {
     /// Whether this active version has already been started/adopted while in
     /// `Check`. Reset on redeploy; ignored once the unit is `Ready`.
     start_attempted: bool,
+    /// An app: `dpl start` gets the active version, so it runs the versioned
+    /// container. Refreshed from deploy state every pass.
+    is_app: bool,
 }
 
 impl ManagedUnit {
@@ -97,6 +106,7 @@ impl ManagedUnit {
             consecutive_failures: 0,
             active_version,
             start_attempted: false,
+            is_app: false,
         }
     }
 
@@ -114,6 +124,12 @@ impl ManagedUnit {
         self.started_at = None;
         self.observed_up = false;
         self.backoff_until = Some(now + backoff_delay(self.consecutive_failures));
+    }
+
+    /// The version argv for `dpl start`: the active one for an app (it names
+    /// the versioned container), nothing for every other kind.
+    fn start_version(&self) -> Option<u32> {
+        self.active_version.filter(|_| self.is_app)
     }
 
     fn note_exit_without_restart(&mut self) {
@@ -187,8 +203,8 @@ impl Supervisor {
         // `None` means podman did not answer in time: no decision this pass.
         let running: HashMap<&UnitName, Option<bool>> = desired
             .iter()
-            .map(|(name, ..)| {
-                let state = match podman::is_running_within(name, PROBE_TIMEOUT) {
+            .map(|(name, _, active, _, kind)| {
+                let state = match probe_up(name, kind.as_deref(), *active) {
                     Ok(up) => Some(up),
                     Err(err) => {
                         log::warn(format!("probe container '{name}': {err}"));
@@ -202,7 +218,7 @@ impl Supervisor {
         // True if a unit that wants to spawn (Check/Ready) is held back by its
         // gate; only then do we re-poll early so the gate can advance.
         let mut gated = false;
-        for (name, status, active, start_after) in &desired {
+        for (name, status, active, start_after, kind) in &desired {
             // Unknown state: skip this unit entirely rather than read it as
             // down, which would spawn a second `dpl start`. The next ordinary
             // poll retries - no early recheck, so a wedged podman is not probed
@@ -211,6 +227,7 @@ impl Supervisor {
                 continue;
             };
             let open = can_spawn(start_after, &running);
+            let is_app = is_app_kind(kind.as_deref());
             match status {
                 DeployStatus::Failed => {
                     self.managed.remove(name);
@@ -226,6 +243,7 @@ impl Supervisor {
                         .managed
                         .entry(name.clone())
                         .or_insert_with(|| ManagedUnit::new(name.clone(), *active));
+                    unit.is_app = is_app;
                     drive_start_once(ctx, &exe, unit, *active, is_up, open);
                 }
                 DeployStatus::Ready => {
@@ -234,6 +252,7 @@ impl Supervisor {
                         .managed
                         .entry(name.clone())
                         .or_insert_with(|| ManagedUnit::new(name.clone(), *active));
+                    unit.is_app = is_app;
                     drive(ctx, &exe, unit, *active, is_up, open);
                 }
             }
@@ -264,9 +283,18 @@ fn next_wake(managed: &HashMap<UnitName, ManagedUnit>) -> Option<Instant> {
         .min()
 }
 
-/// Supervised units to reconcile, straight from deploy state. The fourth field
-/// is the unit's `start_after` gate (db-server names it must see up first).
-fn desired_units(ctx: &MainContext) -> Vec<(UnitName, DeployStatus, Option<u32>, Vec<UnitName>)> {
+/// One supervised unit as deploy state describes it: name, status, active
+/// version, `start_after` gate (db-server names it must see up first), kind.
+type Desired = (
+    UnitName,
+    DeployStatus,
+    Option<u32>,
+    Vec<UnitName>,
+    Option<String>,
+);
+
+/// Supervised units to reconcile, straight from deploy state.
+fn desired_units(ctx: &MainContext) -> Vec<Desired> {
     DeployState::list(ctx)
         .into_iter()
         .filter(|(_, state)| state.supervised)
@@ -276,9 +304,23 @@ fn desired_units(ctx: &MainContext) -> Vec<(UnitName, DeployStatus, Option<u32>,
                 state.last_status,
                 state.active_version,
                 state.start_after,
+                state.kind,
             )
         })
         .collect()
+}
+
+/// Whether a unit's container is up under any of its [`probe_names`].
+/// `Err` means podman did not answer - the caller must not read that as down.
+/// The first probe to fail ends the search, so a wedged podman costs one
+/// [`PROBE_TIMEOUT`], not one per name.
+fn probe_up(name: &UnitName, kind: Option<&str>, active: Option<u32>) -> io::Result<bool> {
+    for container in probe_names(name, kind, active) {
+        if podman::is_running_within(&container, PROBE_TIMEOUT)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Whether a unit's start gate is open: every db-server in `start_after` is up.
@@ -288,7 +330,7 @@ fn desired_units(ctx: &MainContext) -> Vec<(UnitName, DeployStatus, Option<u32>,
 fn can_spawn(start_after: &[UnitName], running: &HashMap<&UnitName, Option<bool>>) -> bool {
     start_after.iter().all(|dep| match running.get(dep) {
         Some(state) => *state == Some(true),
-        None => podman::is_running(dep),
+        None => podman::is_running(&dep.scoped_unit_name()),
     })
 }
 
@@ -392,7 +434,7 @@ fn observe(m: &mut ManagedUnit, is_up: bool) {
 /// Spawn `dpl start <unit>` once for the startup check. Spawn failure is left
 /// for the deploy health-check to report; it must not arm a restart loop.
 fn spawn_once(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit) {
-    match spawn_child(exe, ctx.base(), &m.name) {
+    match spawn_child(exe, ctx.base(), &m.name, m.start_version()) {
         Ok(()) => {
             m.running = true;
             m.started_at = Some(Instant::now());
@@ -410,7 +452,7 @@ fn spawn_once(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit) {
 /// Spawn `dpl start <unit>`; back off (exponentially) on spawn failure.
 fn spawn(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit) {
     let now = Instant::now();
-    match spawn_child(exe, ctx.base(), &m.name) {
+    match spawn_child(exe, ctx.base(), &m.name, m.start_version()) {
         Ok(()) => {
             m.running = true;
             m.started_at = Some(now);
@@ -424,9 +466,9 @@ fn spawn(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit) {
     }
 }
 
-/// Spawn `dpl start <unit>` detached, in its own process group so a console
-/// signal to serve does not reach it.
-fn spawn_child(exe: &Path, base: &Path, name: &UnitName) -> io::Result<()> {
+/// Spawn `dpl start <unit> [version]` detached, in its own process group so a
+/// console signal to serve does not reach it.
+fn spawn_child(exe: &Path, base: &Path, name: &UnitName, version: Option<u32>) -> io::Result<()> {
     let mut cmd;
 
     if is_running_under_systemd() {
@@ -438,8 +480,11 @@ fn spawn_child(exe: &Path, base: &Path, name: &UnitName) -> io::Result<()> {
         cmd = Command::new(exe);
     }
 
-    cmd.args(["start", name.as_str()])
-        .env("DPL_BASE", base)
+    cmd.args(["start", name.as_str()]);
+    if let Some(version) = version {
+        cmd.arg(version.to_string());
+    }
+    cmd.env("DPL_BASE", base)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -822,6 +867,32 @@ mod tests {
         drive_start_once(&ctx, exe, &mut m, Some(1), false, false);
         assert!(!m.running);
         assert!(!m.start_attempted);
+    }
+
+    #[test]
+    fn desired_units_carries_kind() {
+        let (_dir, ctx) = ctx();
+        deploy_supervised_as(&ctx, "web", "app");
+        deploy_supervised_as(&ctx, "pg", "db-server");
+
+        let found = desired_units(&ctx);
+        let kind = |unit: &str| {
+            let name = UnitName::new(unit).unwrap();
+            found.iter().find(|(n, ..)| n == &name).unwrap().4.clone()
+        };
+        assert_eq!(kind("web").as_deref(), Some("app"));
+        assert_eq!(kind("pg").as_deref(), Some("db-server"));
+    }
+
+    #[test]
+    fn start_version_only_for_apps() {
+        let name = UnitName::new("web").unwrap();
+        let mut m = ManagedUnit::new(name, Some(3));
+        assert_eq!(m.start_version(), None);
+        m.is_app = true;
+        assert_eq!(m.start_version(), Some(3));
+        m.active_version = None;
+        assert_eq!(m.start_version(), None);
     }
 
     #[test]

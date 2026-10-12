@@ -185,15 +185,19 @@ where
 /// `port`, or "started and stayed running" without one). The console states the
 /// criterion and the budget; the error keeps the short form, since the check's
 /// own message carries the detail.
-pub fn wait_ready(name: &UnitName, kind: &str, port: Option<u16>) -> Result<(), DeployError> {
-    let container = name.scoped_unit_name();
+pub fn wait_ready(
+    name: &UnitName,
+    kind: &str,
+    container: &str,
+    port: Option<u16>,
+) -> Result<(), DeployError> {
     let phase_name = format!("waiting for {kind} '{name}'");
     log::phase(format!(
         "{phase_name} (container {container}): {} - up to {}",
         health::criterion(port),
         log::fmt_duration(health::BUDGET),
     ));
-    health::check(name, port).map_err(|e| DeployError::step_startup(phase_name, e))
+    health::check(container, port).map_err(|e| DeployError::step_startup(phase_name, e))
 }
 
 /// The version `dpl start` runs: the active one, else the last deployed.
@@ -212,14 +216,15 @@ pub fn deployed_version(ctx: &MainContext, name: &UnitName, kind: &str) -> Resul
     Ok(version)
 }
 
-/// `podman run` for the unit's container with that version's encrypted runtime
-/// env loaded into the podman process env (`--env=NAME`), never onto argv.
+/// `podman run` for `container` with the unit's encrypted runtime env of that
+/// version loaded into the podman process env (`--env=NAME`), never onto argv.
 pub fn podman_run_with_env(
     ctx: &MainContext,
     name: &UnitName,
+    container: &str,
     version: u32,
 ) -> Result<PodmanRun, RunError> {
-    let mut cmd = PodmanRun::new(&name.scoped_unit_name())
+    let mut cmd = PodmanRun::new(container)
         .map_err(|e| RunError::new(format!("prepare podman to run '{name}'"), e))?;
 
     let env = podman::env::load(ctx, name, version)
@@ -234,7 +239,7 @@ pub fn podman_run_with_env(
 /// Tear down a supervised unit's deployed version: stop the container (serve
 /// sees the unit leave `Ready` and won't restart it) and drop its env file.
 pub fn undeploy_container(ctx: &MainContext, name: &UnitName, version: u32) {
-    if let Err(err) = podman::stop_and_remove(name) {
+    if let Err(err) = podman::stop_and_remove(&name.scoped_unit_name()) {
         log::warn(format!("stop container '{name}': {err}"));
     }
     if let Err(err) = podman::env::remove(ctx, name, version) {
