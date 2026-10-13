@@ -44,6 +44,8 @@ Deploys never start containers. They lock `deploy.lock` (whole process lifetime;
 
 Container names: an app runs as `dpl--{unit}--{version}` (`UnitName::container_name`) with the DNS alias `dpl--{unit}` (`--network-alias`, what `${app:url}` resolves to); every other kind runs as `dpl--{unit}` (`UnitName::scoped_unit_name`). A legacy-named app container (`dpl--{unit}`, started by an older dpl) is adopted as the active version until its next deploy; that fallback lives in `app::container_names` (versioned name first, then legacy), which `app::probe_names` and `app::running_container` consume. Shared network: `dpl`.
 
+App images are retained: `app::KEEP` (= 1) previous ready versions keep their image and `.env-v{N}.json`; the rest are pruned after a successful deploy. A tagged `localhost/{unit}:{N}` is always a version that reached ready (or the one being deployed); `app::discard_unready` removes an unready leftover before the next deploy/rollback. `dpl rollback` retags a retained image as a new version, re-encrypts its env under the new version rather than copying the file, records `source_version` on `deploy.json`, and runs the normal hand-off.
+
 App shapes: `runtime.port` → service; `runtime` without port → worker; no `runtime` → static (build+export only).
 
 cloudflare-tunnel is a supervised image-only unit: the token goes into the encrypted runtime env as `TUNNEL_TOKEN`.

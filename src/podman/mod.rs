@@ -192,6 +192,36 @@ pub fn pull_image(image: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// Add tag `dst` to the image `src` already names.
+pub fn tag_image(src: &str, dst: &str) -> io::Result<()> {
+    run_podman(&["tag", src, dst])?;
+    Ok(())
+}
+
+/// Every tag of `repo` (e.g. `localhost/web`) in local storage, one per entry;
+/// empty for an unknown repository. Raw strings, not parsed.
+pub fn image_tags(repo: &str) -> io::Result<Vec<String>> {
+    let out = run_podman(&["images", "--format", "{{.Tag}}", repo])?;
+    Ok(out
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+/// Remove (untag) an image; its layers stay while another tag names them.
+pub fn remove_image(image: &str) -> io::Result<()> {
+    run_podman(&["rmi", image])?;
+    Ok(())
+}
+
+/// Drop dangling images from local storage. Best-effort.
+pub fn prune_images() {
+    let _ = run_podman(&["image", "prune", "-f"]);
+    let _ = run_podman(&["image", "prune", "-f", "--external"]);
+}
+
 /// Address of podman's embedded DNS.
 pub fn detect_network_dns(image: &str) -> io::Result<String> {
     ensure_network(NETWORK)?;

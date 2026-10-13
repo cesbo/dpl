@@ -35,8 +35,8 @@ per-unit directory:
     deploy; kill the pid it names
   - `timers.json` - timer run state
   - `timers.lock` - advisory `flock(2)` held while a timer runs
-  - `.env-v{N}.json` - encrypted runtime env of the deployed version, written
-    at deploy and decrypted by `dpl start`
+  - `.env-v{N}.json` - encrypted runtime env, one per retained version,
+    written at deploy and decrypted by `dpl start`
   - `conf/` (http-server only) - nginx `conf.d` source, bind-mounted read-only:
     `00-dpl.conf` plus each dependent domain's `<domain>.conf`
   - `www/` (http-server only) - static-export root, bind-mounted read-only at
@@ -73,6 +73,7 @@ DPL_BASE=/opt/dpl dpl <command> [args]
 |---------|---------|
 | `dpl check <name>`   | Validate config and reference graph |
 | `dpl deploy <name> [path]` | Deploy a unit. App: `.tar.gz` (or `-`). Db: optional SQL dump to restore |
+| `dpl rollback <name> [version]` | Roll an app back to a retained earlier version (default: the previous one) |
 | `dpl undeploy <name>` | Remove a unit's active deployment from service |
 | `dpl status` | One line per unit: kind, version, deploy status, container state (`RUN`) |
 | `dpl inspect <name>` | Print deploy and runtime state |
@@ -410,6 +411,25 @@ nudges `dpl serve` to bring the container up (SIGHUP), waits for the health
 check, then marks it ready and prints the elapsed time. Non-zero exit on any
 failure.
 
+### Rollback
+
+```bash
+dpl rollback myapp                                  # back to the previous version
+dpl rollback myapp 6                                # back to retained version 6
+```
+
+An app keeps the image and encrypted env of its previous good version (one by
+default). A rollback retags that image as a new version, re-encrypts the
+retained env under it, then runs the normal stop/start with the usual
+readiness check. Versions only go forward; `dpl inspect` shows the new one as
+`rollback of N`. `dpl undeploy` removes the active version only; older
+retained images stay until the next successful deploy prunes them.
+
+Limits: app units only. The env is the one the source version ran with - a
+secret rotated since is not picked up. The yaml is not versioned: port,
+volumes, timers and the readiness criterion come from the current file, while
+the command is baked into the image.
+
 ### Readiness
 
 Every deploy that hands a container to `dpl serve` then waits for it, and the
@@ -489,8 +509,8 @@ process is blocked elsewhere - almost always podman on the host.
    `readiness probe … failed`, so a wedge shows up as that message rather than
    as an unexplained wait.
 4. Ctrl-C (or `kill <pid>`) aborts a deploy. Aborting releases `deploy.lock`
-   immediately. The unit is left in `check` (run `dpl undeploy <name>`) or in
-   `building`, which the next `dpl deploy` clears automatically.
+   immediately. The unit is left in `check` or `building`; the next
+   `dpl deploy` or `dpl rollback` discards that version.
 
 **`unit busy`.** Another process holds the unit's `deploy.lock`; the message
 names its pid. A killed deploy no longer wedges a unit: the next

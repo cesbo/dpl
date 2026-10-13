@@ -40,7 +40,6 @@ use crate::{
             },
             list_units,
             podman_run_with_env,
-            undeploy_container,
             wait_ready,
         },
     },
@@ -49,12 +48,19 @@ use crate::{
         REPORT_TIMEOUT,
         copy_image_dir_to_host,
     },
-    state::DeployState,
+    state::{
+        DeployState,
+        DeployStatus,
+    },
     timers::TimersState,
 };
 
 /// How long `dpl start` waits for each database dependency before giving up.
 const DB_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Ready versions besides the active one that keep their image and env.
+// ponytail: fixed retention; a yaml field when someone needs more
+const KEEP: usize = 1;
 
 #[derive(Debug)]
 pub struct AppUnit<'a> {
@@ -105,6 +111,64 @@ impl<'a> AppUnit<'a> {
 
         self.start_via_serve(state)?;
         self.redeploy_dependent_domains();
+        Self::prune_versions(self.ctx, self.name, version);
+
+        Ok(())
+    }
+
+    /// Bring the retained `source` back as `version` through the deploy
+    /// hand-off: retag its image, re-encrypt the env it ran with under the
+    /// new version (rather than copying the file), stop the active version
+    /// and start the new one. A startup failure propagates
+    /// like a deploy's; the next deploy or rollback discards the retag and env.
+    pub fn rollback(
+        &self,
+        state: &mut DeployState,
+        version: u32,
+        source: u32,
+    ) -> Result<(), DeployError> {
+        log::phase(format_args!("retagging v{source} as v{version}"));
+        crate::podman::tag_image(
+            &format!("localhost/{}:{source}", self.name),
+            &format!("localhost/{}:{version}", self.name),
+        )
+        .map_err(|e| DeployError::step_prepare(format!("tag v{source} as v{version}"), e))?;
+
+        log::phase("re-encrypting runtime env");
+        if let Err(err) = self.reencrypt_runtime_env(source, version) {
+            // Best effort: the next deploy or rollback discards it anyway.
+            let _ = PodmanContext::new(self.name, version).remove_image();
+            return Err(err);
+        }
+
+        if let Some(old) = state.take_active_version() {
+            log::phase(format_args!("stopping v{old}"));
+            Self::stop_version(self.name, old);
+        }
+
+        // Timers come from the current yaml, as at deploy.
+        if self.config.runtime.is_some() {
+            log::phase("registering timers");
+            self.register_timers();
+        }
+
+        self.start_via_serve(state)?;
+        self.redeploy_dependent_domains();
+        Self::prune_versions(self.ctx, self.name, version);
+
+        Ok(())
+    }
+
+    /// Encrypt the env `source` ran with under `version`. A missing file is an
+    /// empty env (`register_runtime_env` writes none for one), not an error.
+    fn reencrypt_runtime_env(&self, source: u32, version: u32) -> Result<(), DeployError> {
+        let env = crate::podman::env::load(self.ctx, self.name, source)
+            .map_err(|e| DeployError::step_install(format!("load runtime env of v{source}"), e))?;
+
+        if !env.is_empty() {
+            crate::podman::env::save(self.ctx, self.name, version, &env)
+                .map_err(|e| DeployError::step_install("save runtime env", e))?;
+        }
 
         Ok(())
     }
@@ -117,9 +181,10 @@ impl<'a> AppUnit<'a> {
     ) -> Result<(), DeployError> {
         self.build_inner(deploy_dir, version)?;
 
-        if let Some(active_version) = state.take_active_version() {
-            log::phase(format_args!("uninstalling v{active_version}"));
-            Self::undeploy(self.ctx, self.name, active_version);
+        // Only stopped: its image and env are retained for a rollback.
+        if let Some(old) = state.take_active_version() {
+            log::phase(format_args!("stopping v{old}"));
+            Self::stop_version(self.name, old);
         }
 
         if let Err(err) = self.install_inner(deploy_dir, version) {
@@ -302,14 +367,86 @@ impl<'a> AppUnit<'a> {
         timers.reconcile(&configured, Utc::now());
     }
 
+    /// Tear down `version` (what `dpl undeploy` removes): its container, env
+    /// and image. Retained older versions stay until the next successful
+    /// deploy prunes them.
     pub fn undeploy(ctx: &MainContext, name: &UnitName, version: u32) {
-        // Stop the running container before dropping its image: the versioned
-        // one, then a legacy-named one left by an older dpl (plus the env file).
-        if let Err(err) = crate::podman::stop_and_remove(&name.container_name(version)) {
-            log::warn(format!("stop container '{name}' v{version}: {err}"));
+        Self::stop_version(name, version);
+        Self::remove_version(ctx, name, version);
+        crate::podman::prune_images();
+    }
+
+    /// Stop and remove the containers `version` may run under: the versioned
+    /// one, then the legacy `dpl--{unit}` of an older dpl. Env and image stay.
+    fn stop_version(name: &UnitName, version: u32) {
+        for container in container_names(name, version) {
+            stop_container(&container);
         }
-        undeploy_container(ctx, name, version);
-        PodmanContext::new(name, version).remove();
+    }
+
+    /// Drop a version's image tag, then its env file. A tag podman did not
+    /// drop keeps its env, so the version stays a whole rollback source.
+    /// Layers another tag shares stay; the caller prunes once per pass.
+    fn remove_version(ctx: &MainContext, name: &UnitName, version: u32) {
+        match PodmanContext::new(name, version).remove_image() {
+            Ok(()) => remove_env(ctx, name, version),
+            Err(err) => log::warn(format!("remove image of '{name} v{version}': {err}")),
+        }
+    }
+
+    /// Drop every retained version [`keep_versions`] does not keep next to
+    /// `new`, then prune dangling layers once. Runs after `new` is ready.
+    fn prune_versions(ctx: &MainContext, name: &UnitName, new: u32) {
+        let tags = match crate::podman::image_tags(&format!("localhost/{name}")) {
+            Ok(tags) => numeric_tags(&tags),
+            Err(err) => {
+                log::warn(format!("list images of '{name}': {err}"));
+                return;
+            }
+        };
+
+        let keep = keep_versions(&tags, new);
+        for version in tags.into_iter().filter(|v| !keep.contains(v)) {
+            log::phase(format_args!("removing v{version}"));
+            Self::remove_version(ctx, name, version);
+        }
+        crate::podman::prune_images();
+    }
+
+    /// Discard the last version when it never reached ready: a startup
+    /// failure, a deploy interrupted in its readiness wait or its build. Keeps
+    /// the invariant that a tagged `localhost/{unit}:{N}` is a ready version
+    /// (or the one being deployed). Warn-only; a no-op after `dpl undeploy`.
+    pub fn discard_unready(ctx: &MainContext, name: &UnitName, state: &mut DeployState) {
+        let version = state.last_version;
+        if version == 0 || state.last_status == DeployStatus::Ready {
+            return;
+        }
+
+        let tagged = crate::podman::image_exists(&format!("localhost/{name}:{version}"));
+        if tagged || state.active_version == Some(version) {
+            log::warn(format!("discarding unready v{version}"));
+        }
+
+        // The legacy `dpl--{unit}` is the live version's when that is another
+        // one (a failure before the hand-off never took it over).
+        if state.active_version.is_some_and(|active| active != version) {
+            stop_container(&name.container_name(version));
+        } else {
+            Self::stop_version(name, version);
+        }
+        // Untag first, env only once the tag is gone (as `remove_version`);
+        // untagging a version that is already gone is a harmless error.
+        match PodmanContext::new(name, version).remove_image() {
+            Ok(()) => remove_env(ctx, name, version),
+            Err(err) if tagged => {
+                log::warn(format!("remove image of '{name} v{version}': {err}"));
+            }
+            Err(_) => {}
+        }
+        if state.active_version == Some(version) {
+            state.take_active_version();
+        }
     }
 
     /// `active` is the version in service: its container is reported, or a
@@ -378,6 +515,68 @@ fn save_archive<R: Read>(archive: R, dst: &Path) -> io::Result<()> {
     let mut archive_file = fs::File::create(dst)?;
     io::copy(&mut reader, &mut archive_file)?;
     Ok(())
+}
+
+fn stop_container(container: &str) {
+    if let Err(err) = crate::podman::stop_and_remove(container) {
+        log::warn(format!("stop container '{container}': {err}"));
+    }
+}
+
+fn remove_env(ctx: &MainContext, name: &UnitName, version: u32) {
+    if let Err(err) = crate::podman::env::remove(ctx, name, version) {
+        log::warn(format!(
+            "remove runtime env file for '{name} v{version}': {err}"
+        ));
+    }
+}
+
+/// The versions among an image repository's tags, highest first. Anything
+/// else tagged there is skipped.
+pub fn numeric_tags(tags: &[String]) -> Vec<u32> {
+    let mut versions: Vec<u32> = tags
+        .iter()
+        .filter(|t| t.bytes().all(|b| b.is_ascii_digit()))
+        .filter_map(|t| t.parse().ok())
+        .collect();
+    versions.sort_unstable_by(|a, b| b.cmp(a));
+    versions
+}
+
+/// The versions to keep once `new` is ready: `new` itself and the [`KEEP`]
+/// highest others.
+pub fn keep_versions(tags: &[u32], new: u32) -> Vec<u32> {
+    let mut keep: Vec<u32> = tags.iter().copied().filter(|&t| t != new).collect();
+    keep.sort_unstable_by(|a, b| b.cmp(a));
+    keep.truncate(KEEP);
+    keep.insert(0, new);
+    keep
+}
+
+/// The retained version a rollback goes to: `wanted` when it is retained and
+/// not active, else the highest retained one other than the active.
+pub fn rollback_target(
+    tags: &[u32],
+    active: Option<u32>,
+    wanted: Option<u32>,
+) -> Result<u32, String> {
+    match wanted {
+        Some(v) if !tags.contains(&v) => {
+            let retained: Vec<String> = tags.iter().map(u32::to_string).collect();
+            Err(format!(
+                "version {v} is not retained (retained: {})",
+                retained.join(", ")
+            ))
+        }
+        Some(v) if active == Some(v) => Err(format!("version {v} is already active")),
+        Some(v) => Ok(v),
+        None => tags
+            .iter()
+            .copied()
+            .filter(|&t| active != Some(t))
+            .max()
+            .ok_or_else(|| "no earlier version retained".to_string()),
+    }
 }
 
 /// Whether deploy state's `kind` names an app. A missing kind (a state file
@@ -605,6 +804,48 @@ mod tests {
         assert_eq!(
             stray_containers(&app, "dpl--web--3", ps),
             ["dpl--web--1", "dpl--web"]
+        );
+    }
+
+    #[test]
+    fn numeric_tags_are_the_versions_highest_first() {
+        let tags: Vec<String> = ["2", "latest", "10", "", "3", "v4", "+5"]
+            .iter()
+            .map(|t| t.to_string())
+            .collect();
+        assert_eq!(numeric_tags(&tags), [10, 3, 2]);
+        assert!(numeric_tags(&[]).is_empty());
+    }
+
+    #[test]
+    fn keep_versions_is_new_plus_the_highest_others() {
+        assert_eq!(keep_versions(&[], 5), [5]); // no other tags
+        assert_eq!(keep_versions(&[4], 5), [5, 4]); // one other
+        assert_eq!(keep_versions(&[5, 4, 3, 2], 5), [5, 4]); // only KEEP highest
+        assert_eq!(keep_versions(&[2, 9, 4], 5), [5, 9]); // unsorted; new never dropped
+    }
+
+    #[test]
+    fn rollback_target_is_a_retained_non_active_version() {
+        let tags = [3, 2];
+        assert_eq!(rollback_target(&tags, Some(3), None), Ok(2));
+        assert_eq!(rollback_target(&tags, None, None), Ok(3));
+        assert_eq!(rollback_target(&tags, Some(3), Some(2)), Ok(2));
+        assert_eq!(
+            rollback_target(&tags, Some(3), Some(3)).unwrap_err(),
+            "version 3 is already active"
+        );
+        assert_eq!(
+            rollback_target(&tags, Some(3), Some(7)).unwrap_err(),
+            "version 7 is not retained (retained: 3, 2)"
+        );
+        assert_eq!(
+            rollback_target(&[3], Some(3), None).unwrap_err(),
+            "no earlier version retained"
+        );
+        assert_eq!(
+            rollback_target(&[], None, None).unwrap_err(),
+            "no earlier version retained"
         );
     }
 

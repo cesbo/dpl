@@ -158,6 +158,10 @@ pub struct DeployState {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub start_after: Vec<UnitName>,
 
+    /// The retained version a rollback deploy was made from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_version: Option<u32>,
+
     #[serde(skip)]
     path: PathBuf,
 }
@@ -203,6 +207,7 @@ impl DeployState {
                     failure: None,
                     supervised: false,
                     start_after: Vec::new(),
+                    source_version: None,
                     path,
                 });
             }
@@ -296,6 +301,21 @@ impl DeployState {
         self.last_status = DeployStatus::Building;
         self.updated_at = Utc::now();
         self.failure = None;
+        self.source_version = None;
+        self.save()?;
+
+        Ok(next_version)
+    }
+
+    /// Begin a rollback attempt: a normal deploy attempt that also records the
+    /// retained version it is made from.
+    pub fn begin_rollback(
+        &mut self,
+        kind: impl Into<String>,
+        source: u32,
+    ) -> Result<u32, DeployStateError> {
+        let next_version = self.begin_deploy(kind)?;
+        self.source_version = Some(source);
         self.save()?;
 
         Ok(next_version)
@@ -475,6 +495,7 @@ mod tests {
             failure: None,
             supervised: false,
             start_after: Vec::new(),
+            source_version: None,
             path: dir.join(".deploy.state"),
         }
     }
@@ -613,6 +634,55 @@ mod tests {
         assert!(
             content.contains("\"kind\": \"http-server\""),
             "state file did not persist kind:\n{content}"
+        );
+    }
+
+    #[test]
+    fn source_version_round_trips_through_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ctx_at(dir.path());
+        let name = UnitName::new("web").unwrap();
+
+        let (_guard, mut state) = DeployState::acquire(&ctx, &name).unwrap();
+        state.begin_rollback("app", 3).unwrap();
+
+        let reloaded = DeployState::load(&ctx, &name).unwrap();
+        assert_eq!(reloaded.source_version, Some(3));
+        assert_eq!(reloaded.last_version, 1);
+    }
+
+    #[test]
+    fn begin_rollback_records_the_source_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = state_at(dir.path());
+
+        let version = state.begin_rollback("app", 6).unwrap();
+
+        assert_eq!(version, 1);
+        assert_eq!(state.last_version, 1);
+        assert_eq!(state.last_status, DeployStatus::Building);
+        assert_eq!(state.source_version, Some(6));
+        let content = std::fs::read_to_string(dir.path().join(".deploy.state")).unwrap();
+        assert!(
+            content.contains("\"source_version\": 6"),
+            "source not persisted:\n{content}"
+        );
+    }
+
+    #[test]
+    fn begin_deploy_clears_the_source_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = state_at(dir.path());
+        state.begin_rollback("app", 6).unwrap();
+
+        state.begin_deploy("app").unwrap();
+
+        assert_eq!(state.source_version, None);
+        // Absent (skip_serializing_if) rather than `null`.
+        let content = std::fs::read_to_string(dir.path().join(".deploy.state")).unwrap();
+        assert!(
+            !content.contains("source_version"),
+            "cleared source should be omitted:\n{content}"
         );
     }
 

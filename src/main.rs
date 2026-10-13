@@ -59,6 +59,14 @@ enum Command {
         path: Option<PathBuf>,
     },
 
+    /// Roll an app back to a retained earlier version (default: the previous one)
+    Rollback {
+        /// Unit name
+        name: config::UnitName,
+        /// Retained version to bring back
+        version: Option<u32>,
+    },
+
     /// Show runtime state of a unit
     Inspect {
         /// Unit name
@@ -131,6 +139,7 @@ fn run() -> Result<()> {
         Command::Check { name } => cmd::unit::check(&ctx, &name),
         Command::Db(args) => cmd::db::run(&ctx, args),
         Command::Deploy { name, path } => cmd::unit::deploy(&ctx, &name, path.as_deref()),
+        Command::Rollback { name, version } => cmd::unit::rollback(&ctx, &name, version),
         Command::Inspect { name } => cmd::unit::inspect(&ctx, &name),
         Command::Status => cmd::unit::status(&ctx),
         Command::Upgrade => cmd::upgrade::run(),

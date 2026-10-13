@@ -8,6 +8,11 @@ archive to a temp file and runs `dpl deploy <unit> <file>`. The response is the
 dpl output: status 200 on success, 500 on failure. On failure the `Log: <path>`
 line is replaced with the tail of that log: the client cannot read server files.
 
+    curl --fail-with-body -X POST 'http://<server>:8099/<unit>/rollback?version=N'
+
+POST to /<unit>/rollback runs `dpl rollback <unit> [N]` (no body; `version`
+optional) and answers like a deploy.
+
     curl --fail-with-body 'http://<server>:8099/<unit>/build.log?lines=1000'
 
 GET returns the last `lines` (default 1000) of {DPL_BASE}/state/<unit>/log/<name>
@@ -28,7 +33,8 @@ PORT = int(os.environ.get('DEPLOY_PORT', '8099'))
 BASE = os.environ.get('DPL_BASE') or '/opt/dpl'
 LOGS = {'build.log', 'runtime.log', 'timers.log', 'access.log'}  # files in {base}/state/{unit}/log/
 UNIT = re.compile(r'[a-z0-9]+(-[a-z0-9]+)*')  # dpl unit names
-LOG_LINE = re.compile(r'^ *Log: (\S+)\s*\Z', re.M)  # last line of a failed `dpl deploy`
+VERSION = re.compile(r'[1-9][0-9]*')  # ASCII only: int() would take digits clap rejects
+LOG_LINE = re.compile(r'^ *Log: (\S+)\s*\Z', re.M)  # last line of a failed `dpl deploy`/`dpl rollback`
 
 
 def tail(path, lines):
@@ -49,9 +55,15 @@ class Handler(BaseHTTPRequestHandler):
     timeout = 60  # a stalled upload must not block the next deploy
 
     def do_POST(self):
-        unit = self.path.strip('/')
-        if not UNIT.fullmatch(unit):
-            return self.reply(404, 'not a unit name\n')
+        url = urlsplit(self.path)
+        unit, _, action = url.path.strip('/').partition('/')
+        if not UNIT.fullmatch(unit) or action not in ('', 'rollback'):
+            return self.reply(404, 'POST /<unit> with the archive, or /<unit>/rollback?version=N\n')
+        if action == 'rollback':  # no body: the version comes from the query
+            version = parse_qs(url.query, keep_blank_values=True).get('version', [None])[0]
+            if version is not None and not VERSION.fullmatch(version):
+                return self.reply(400, 'version must be a positive number\n')
+            return self.run('rollback', unit, *([version] if version else []))
         length = int(self.headers.get('Content-Length') or 0)
         if length <= 0:
             return self.reply(411, 'send the archive with --data-binary @-\n')
@@ -63,8 +75,11 @@ class Handler(BaseHTTPRequestHandler):
                 f.write(chunk)
                 length -= len(chunk)
             f.flush()
-            r = subprocess.run(['dpl', 'deploy', unit, f.name], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        self.log_message('deploy %s: exit %d', unit, r.returncode)
+            self.run('deploy', unit, f.name)
+
+    def run(self, command, unit, *args):
+        r = subprocess.run(['dpl', command, unit, *args], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.log_message('%s %s: exit %d', command, unit, r.returncode)
         out = r.stdout
         if m := LOG_LINE.search(out):
             name = os.path.basename(m[1])

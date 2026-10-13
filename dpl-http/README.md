@@ -97,6 +97,17 @@ The response is the `dpl deploy` output. The status is `200` on success and
 `500` on failure. On failure the response also has the last 100 lines of the
 build log (or the runtime log, if the app did not start).
 
+Roll back a unit:
+
+```sh
+curl --fail-with-body -X POST http://<server>:8099/<unit>/rollback
+curl --fail-with-body -X POST 'http://<server>:8099/<unit>/rollback?version=N'
+```
+
+Runs `dpl rollback <unit> [N]`: the previous retained version (or version `N`)
+is deployed again as a new version. No body is sent. The response is handled
+like a deploy.
+
 Read a unit log:
 
 ```sh

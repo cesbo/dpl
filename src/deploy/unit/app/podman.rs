@@ -73,12 +73,10 @@ impl PodmanContext {
         Ok(())
     }
 
-    pub fn remove(&self) {
-        let _ = run_podman(&["rmi", &self.image_tag]);
-
-        // Remove dangling images from local storage
-        let _ = run_podman(&["image", "prune", "-f"]);
-        let _ = run_podman(&["image", "prune", "-f", "--external"]);
+    /// Untag this version's image. The caller prunes once per pass, after
+    /// every version it drops, via `crate::podman::prune_images`.
+    pub fn remove_image(&self) -> io::Result<()> {
+        crate::podman::remove_image(&self.image_tag)
     }
 }
 

@@ -31,7 +31,9 @@ use crate::{
         app::{
             AppConfig,
             AppUnit,
+            numeric_tags,
             probe_names,
+            rollback_target,
         },
         cloudflare_tunnel::{
             CloudflareTunnelConfig,
@@ -105,14 +107,16 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
 
     let (_guard, mut state) =
         DeployState::acquire(ctx, name).with_context(|| format!("acquire unit '{name}'"))?;
+    if matches!(unit, UnitConfig::App(_)) {
+        AppUnit::discard_unready(ctx, name, &mut state);
+    }
 
     let version = state
         .begin_deploy(unit.kind())
         .map_err(|e| DeployError::step_prepare("begin deploy", e))
         .with_context(|| format!("deploy unit '{name}'"))?;
 
-    let build_log_path = ctx.build_log_path(name);
-    let _ = crate::log::cri_log::remove_all(&build_log_path);
+    let _ = crate::log::cri_log::remove_all(ctx.build_log_path(name));
 
     let console = DeployConsole::open(name, version);
 
@@ -136,15 +140,52 @@ pub fn deploy(ctx: &MainContext, name: &UnitName, path: Option<&Path>) -> Result
         }
     };
 
+    finish_deploy(ctx, name, &mut state, &console, result)
+}
+
+/// Roll an app back to a retained version: `version`, or the previous one.
+/// Runs as a deploy of a new version made from the retained image and env.
+pub fn rollback(ctx: &MainContext, name: &UnitName, version: Option<u32>) -> Result<()> {
+    let UnitConfig::App(app_config) = load_unit(ctx, name)? else {
+        bail!("rollback is only for app units");
+    };
+
+    let (_guard, mut state) =
+        DeployState::acquire(ctx, name).with_context(|| format!("acquire unit '{name}'"))?;
+    AppUnit::discard_unready(ctx, name, &mut state);
+
+    let tags = podman::image_tags(&format!("localhost/{name}"))
+        .with_context(|| format!("list images of '{name}'"))?;
+    let source = rollback_target(&numeric_tags(&tags), state.active_version, version)
+        .map_err(anyhow::Error::msg)?;
+
+    let version = state
+        .begin_rollback(AppConfig::KIND, source)
+        .map_err(|e| DeployError::step_prepare("begin rollback", e))
+        .with_context(|| format!("roll back unit '{name}'"))?;
+
+    let console = DeployConsole::open(name, version);
+    let result = AppUnit::new(ctx, name, app_config).rollback(&mut state, version, source);
+    finish_deploy(ctx, name, &mut state, &console, result)
+}
+
+/// Close a deploy on the console. A failure records its stage and cause in
+/// state, shows the cause once with the relevant log, then turns into
+/// `Reported` (main stays quiet).
+fn finish_deploy(
+    ctx: &MainContext,
+    name: &UnitName,
+    state: &mut DeployState,
+    console: &DeployConsole,
+    result: std::result::Result<(), DeployError>,
+) -> Result<()> {
     match result {
         Ok(()) => {
             console.finish_ok();
             Ok(())
         }
         Err(err) => {
-            // Record the failing stage and cause, then surface the cause once on
-            // the console before converting to Reported (main stays quiet).
-            let mut log_path = build_log_path;
+            let mut log_path = ctx.build_log_path(name);
             let cause = match err.failure() {
                 Some((stage, message)) => {
                     state.set_failed(stage, message.clone());
@@ -291,13 +332,17 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
     print_field("Unit", unit.kind_display());
     match state.active_version {
         Some(active) => {
+            let rollback = match state.source_version {
+                Some(source) if state.last_version == active => format!(" (rollback of {source})"),
+                _ => String::new(),
+            };
             let deployed =
                 if state.last_status == DeployStatus::Ready && state.last_version == active {
                     format!(" deployed {}", fmt_ago(&now, &state.updated_at))
                 } else {
                     String::new()
                 };
-            let info = format!("{}{}", console::style(active).green(), deployed);
+            let info = format!("{}{rollback}{deployed}", console::style(active).green());
             print_field(ACTIVE_VERSION, info);
         }
         None => print_field(ACTIVE_VERSION, console::style("-").red()),
