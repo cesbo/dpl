@@ -114,7 +114,9 @@ Read a unit log:
 curl --fail-with-body 'http://<server>:8099/<unit>/build.log?lines=1000'
 ```
 
-- Logs: `build.log`, `runtime.log`, `timers.log`, `access.log`.
+- Logs: `build.log`, `runtime.log`, `timers.log`, `access.log`. For an app,
+  `runtime.log` is the log of the version in service and `runtime-v<N>.log`
+  one version's own (what a failed deploy's `Log:` line names).
 - `lines` is the number of last lines to return. The default is `1000`.
 
 The server handles one request at a time. A second request waits until the

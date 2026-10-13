@@ -131,9 +131,37 @@ impl MainContext {
     }
 
     /// `{base}/state/{unit}/log/runtime.log` - unit's runtime container.
-    /// stdout/stderr captured by `dpl start` in CRI format.
+    /// stdout/stderr captured by `dpl start` in CRI format. For an app it is
+    /// a symlink to the [`runtime_log_version_path`] of the version in
+    /// service; other kinds write it directly.
+    ///
+    /// [`runtime_log_version_path`]: Self::runtime_log_version_path
     pub fn runtime_log_path(&self, unit: &UnitName) -> PathBuf {
         self.unit_log_dir(unit).join("runtime.log")
+    }
+
+    /// `{base}/state/{unit}/log/runtime-v{version}.log` - an app version's
+    /// runtime container log, so two versions of one unit never share a file.
+    pub fn runtime_log_version_path(&self, unit: &UnitName, version: u32) -> PathBuf {
+        self.unit_log_dir(unit)
+            .join(format!("runtime-v{version}.log"))
+    }
+
+    /// Point `runtime.log` at `runtime-v{version}.log`: a relative symlink
+    /// built under a temporary name and renamed over the old one (atomic;
+    /// replaces a legacy regular file or an older link).
+    pub fn link_runtime_log(&self, unit: &UnitName, version: u32) -> std::io::Result<()> {
+        let dir = self.unit_log_dir(unit);
+        std::fs::create_dir_all(&dir)?;
+
+        let tmp = dir.join(".runtime.log.tmp");
+        // A crash between symlink and rename leaves it behind.
+        match std::fs::remove_file(&tmp) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+            _ => {}
+        }
+        std::os::unix::fs::symlink(format!("runtime-v{version}.log"), &tmp)?;
+        std::fs::rename(&tmp, self.runtime_log_path(unit))
     }
 
     /// `{base}/state/{unit}/log/access.log` - http-server access log.
@@ -184,5 +212,67 @@ impl MainContext {
         let path = self.config_path(&UnitName::new(name).unwrap());
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, yaml).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    fn fixture() -> (tempfile::TempDir, MainContext, UnitName) {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = MainContext {
+            base: dir.path().to_path_buf(),
+            master_key: None,
+        };
+        (dir, ctx, UnitName::new("web").unwrap())
+    }
+
+    #[test]
+    fn runtime_log_version_path_is_per_version() {
+        let (_dir, ctx, unit) = fixture();
+        assert_eq!(
+            ctx.runtime_log_version_path(&unit, 3),
+            ctx.unit_log_dir(&unit).join("runtime-v3.log")
+        );
+    }
+
+    #[test]
+    fn link_runtime_log_creates_relative_symlink() {
+        let (_dir, ctx, unit) = fixture();
+        ctx.link_runtime_log(&unit, 3).unwrap();
+
+        let link = ctx.runtime_log_path(&unit);
+        assert!(link.is_symlink());
+        assert_eq!(
+            fs::read_link(&link).unwrap(),
+            PathBuf::from("runtime-v3.log")
+        );
+    }
+
+    #[test]
+    fn link_runtime_log_replaces_symlink_and_regular_file() {
+        let (_dir, ctx, unit) = fixture();
+        let link = ctx.runtime_log_path(&unit);
+
+        ctx.link_runtime_log(&unit, 3).unwrap();
+        ctx.link_runtime_log(&unit, 4).unwrap();
+        assert_eq!(
+            fs::read_link(&link).unwrap(),
+            PathBuf::from("runtime-v4.log")
+        );
+
+        fs::remove_file(&link).unwrap();
+        fs::write(&link, "legacy").unwrap();
+        assert!(!link.is_symlink());
+        ctx.link_runtime_log(&unit, 5).unwrap();
+        assert!(link.is_symlink());
+        assert_eq!(
+            fs::read_link(&link).unwrap(),
+            PathBuf::from("runtime-v5.log")
+        );
+        assert!(!ctx.unit_log_dir(&unit).join(".runtime.log.tmp").exists());
     }
 }

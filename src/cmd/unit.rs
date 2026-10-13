@@ -8,7 +8,10 @@ use std::{
         self,
         Read,
     },
-    path::Path,
+    path::{
+        Path,
+        PathBuf,
+    },
     time::Duration,
 };
 
@@ -190,7 +193,7 @@ fn finish_deploy(
                 Some((stage, message)) => {
                     state.set_failed(stage, message.clone());
                     if stage == DeployStage::Startup {
-                        log_path = ctx.runtime_log_path(name);
+                        log_path = runtime_log_of(ctx, name, state);
                     }
                     message
                 }
@@ -347,6 +350,9 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
         }
         None => print_field(ACTIVE_VERSION, console::style("-").red()),
     }
+    if let Some(candidate) = state.candidate_version {
+        print_field("Candidate", format!("{candidate} (checking)"));
+    }
 
     match state.last_status {
         DeployStatus::Idle => {
@@ -393,7 +399,7 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
                     ),
                 },
             );
-            print_field("Runtime log", ctx.runtime_log_path(name).display());
+            print_field("Runtime log", runtime_log_of(ctx, name, &state).display());
         }
         DeployStatus::Failed => {
             let stage = match &state.failure {
@@ -409,7 +415,7 @@ pub fn inspect(ctx: &MainContext, name: &UnitName) -> Result<()> {
             print_field(LATEST_DEPLOY, info);
 
             if let Some(failure) = &state.failure {
-                print_failure(ctx, name, failure);
+                print_failure(ctx, name, &state, failure);
             }
         }
         DeployStatus::Ready => {}
@@ -559,6 +565,9 @@ pub fn undeploy(ctx: &MainContext, name: &UnitName) -> Result<()> {
             if let Some(active_version) = outcome.active_version {
                 AppUnit::undeploy(ctx, name, active_version);
             }
+            if let Some(candidate) = outcome.candidate_version {
+                AppUnit::undeploy(ctx, name, candidate);
+            }
         }
         Some(DbServerConfig::KIND | CloudflareTunnelConfig::KIND)
             if outcome.active_version.is_some() =>
@@ -632,15 +641,25 @@ fn holder_pid(pid: Option<u32>) -> String {
     }
 }
 
+/// The runtime log the last version writes: an app's per-version file,
+/// `runtime.log` itself for every other kind.
+fn runtime_log_of(ctx: &MainContext, name: &UnitName, state: &DeployState) -> PathBuf {
+    if state.kind.as_deref() == Some(AppConfig::KIND) {
+        ctx.runtime_log_version_path(name, state.last_version)
+    } else {
+        ctx.runtime_log_path(name)
+    }
+}
+
 /// Print the failure line for a `Failed` build and point at the relevant log.
-fn print_failure(ctx: &MainContext, name: &UnitName, failure: &DeployFailure) {
+fn print_failure(ctx: &MainContext, name: &UnitName, state: &DeployState, failure: &DeployFailure) {
     print_field("Error", &failure.error);
 
     // A runtime failure (the health check) lives in the container's runtime
     // log; every earlier stage is in the build log.
     println!();
     if failure.stage == DeployStage::Startup {
-        print_field("Runtime log", ctx.runtime_log_path(name).display());
+        print_field("Runtime log", runtime_log_of(ctx, name, state).display());
     } else {
         print_field("Build log", ctx.build_log_path(name).display());
     }

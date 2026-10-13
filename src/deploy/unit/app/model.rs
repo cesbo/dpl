@@ -36,6 +36,22 @@ pub struct AppConfig {
     pub exports: Vec<ExportConfig>,
     #[serde(default)]
     pub timers: Vec<TimerConfig>,
+    /// How a new version replaces the running one. Only meaningful with
+    /// `runtime`: a static unit always behaves as `replace`.
+    #[serde(default)]
+    pub strategy: DeployStrategy,
+}
+
+/// How a new version replaces the running one.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum DeployStrategy {
+    /// Stop the old version, then start the new one (default).
+    #[default]
+    Replace,
+    /// Start the new version next to the old one, switch once it is ready,
+    /// then stop the old one.
+    Parallel,
 }
 
 /// Configuration for a build layer of the application
@@ -231,22 +247,39 @@ impl AppConfig {
         Ok(())
     }
 
+    /// The unpinned form of [`AppConfig::resolve_export_with`].
+    #[cfg(test)]
     pub fn resolve_export(
         &self,
         ctx: &MainContext,
         unit_name: &UnitName,
         key: &str,
     ) -> Result<String, ReferenceError> {
+        self.resolve_export_with(ctx, unit_name, key, false)
+    }
+
+    /// Resolve `${unit:key}`. With `pinned`, `url`/`socket` of a
+    /// `strategy: parallel` app name the version in service instead of the
+    /// alias, so a domain switch is an nginx re-render with no DNS window.
+    pub fn resolve_export_with(
+        &self,
+        ctx: &MainContext,
+        unit_name: &UnitName,
+        key: &str,
+        pinned: bool,
+    ) -> Result<String, ReferenceError> {
         match key {
             // `http://host:port` for `proxy_pass`.
             "url" => {
                 let port = self.runtime_port(key)?;
-                Ok(format!("http://{}:{}", unit_name.scoped_unit_name(), port))
+                let host = self.upstream_host(ctx, unit_name, pinned);
+                Ok(format!("http://{host}:{port}"))
             }
             // `host:port` for `uwsgi_pass`, `fastcgi_pass`.
             "socket" => {
                 let port = self.runtime_port(key)?;
-                Ok(format!("{}:{}", unit_name.scoped_unit_name(), port))
+                let host = self.upstream_host(ctx, unit_name, pinned);
+                Ok(format!("{host}:{port}"))
             }
             // Absolute path of this app's static export inside the nginx container.
             "export" => {
@@ -256,6 +289,22 @@ impl AppConfig {
             }
             _ => Err(ReferenceError::unknown_export(key)),
         }
+    }
+
+    /// The host `url`/`socket` are built from: the alias `dpl--<unit>`, or for
+    /// a pinned parallel app the active version's container. Falls back to
+    /// the alias while nothing is active (a domain may be deployed before
+    /// its app).
+    fn upstream_host(&self, ctx: &MainContext, unit_name: &UnitName, pinned: bool) -> String {
+        if pinned
+            && self.strategy == DeployStrategy::Parallel
+            && let Some(version) = DeployState::load(ctx, unit_name)
+                .ok()
+                .and_then(|state| state.active_version)
+        {
+            return unit_name.container_name(version);
+        }
+        unit_name.scoped_unit_name()
     }
 
     /// The port `url`/`socket` are built from. Absent for a static unit and for
@@ -285,6 +334,7 @@ mod tests {
             volumes: Vec::new(),
             exports: Vec::new(),
             timers: Vec::new(),
+            strategy: DeployStrategy::Replace,
         }
     }
 
@@ -297,7 +347,36 @@ mod tests {
             volumes: Vec::new(),
             exports: Vec::new(),
             timers: Vec::new(),
+            strategy: DeployStrategy::Replace,
         }
+    }
+
+    #[test]
+    fn parse_strategy_defaults_to_replace() {
+        let config: AppConfig = serde_yaml::from_str(
+            "image: alpine\nbuilds: []\nruntime:\n  port: 8080\n  cmd: ./run\n",
+        )
+        .unwrap();
+        assert_eq!(config.strategy, DeployStrategy::Replace);
+    }
+
+    #[test]
+    fn parse_strategy_parallel() {
+        let config: AppConfig = serde_yaml::from_str(
+            "image: alpine\nbuilds: []\nruntime:\n  port: 8080\n  cmd: ./run\nstrategy: parallel\n",
+        )
+        .unwrap();
+        assert_eq!(config.strategy, DeployStrategy::Parallel);
+    }
+
+    #[test]
+    fn parse_strategy_rejects_unknown() {
+        assert!(
+            serde_yaml::from_str::<AppConfig>(
+                "image: alpine\nbuilds: []\nruntime:\n  port: 8080\n  cmd: ./run\nstrategy: blue\n",
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -426,6 +505,99 @@ mod tests {
                 .resolve_export(&ctx, &UnitName::new("web").unwrap(), "socket")
                 .unwrap(),
             "dpl--web:8080"
+        );
+    }
+
+    /// A `web` app at port 3000 with the given strategy; `active` versions
+    /// deployed and the last one ready (`None` leaves no state on disk).
+    fn pinned_fixture(
+        strategy: DeployStrategy,
+        active: Option<u32>,
+    ) -> (tempfile::TempDir, MainContext, AppConfig, UnitName) {
+        let base = tempfile::TempDir::new().unwrap();
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: None,
+        };
+        let name = UnitName::new("web").unwrap();
+        if let Some(active) = active {
+            let (_guard, mut state) = DeployState::acquire(&ctx, &name).unwrap();
+            for _ in 0 .. active {
+                state.begin_deploy(AppConfig::KIND).unwrap();
+            }
+            state.set_ready();
+            assert_eq!(state.active_version, Some(active));
+        }
+        let mut config = sample_config();
+        config.strategy = strategy;
+        config.runtime.as_mut().unwrap().port = Some(3000);
+        (base, ctx, config, name)
+    }
+
+    #[test]
+    fn app_resolve_export_pinned_parallel_names_active_version() {
+        let (_base, ctx, config, name) = pinned_fixture(DeployStrategy::Parallel, Some(5));
+        assert_eq!(
+            config
+                .resolve_export_with(&ctx, &name, "url", true)
+                .unwrap(),
+            "http://dpl--web--5:3000"
+        );
+        assert_eq!(
+            config
+                .resolve_export_with(&ctx, &name, "socket", true)
+                .unwrap(),
+            "dpl--web--5:3000"
+        );
+    }
+
+    #[test]
+    fn app_resolve_export_pinned_parallel_without_state_uses_alias() {
+        // A domain may be deployed before its app: nothing to pin to yet.
+        let (_base, ctx, config, name) = pinned_fixture(DeployStrategy::Parallel, None);
+        assert_eq!(
+            config
+                .resolve_export_with(&ctx, &name, "url", true)
+                .unwrap(),
+            "http://dpl--web:3000"
+        );
+        assert_eq!(
+            config
+                .resolve_export_with(&ctx, &name, "socket", true)
+                .unwrap(),
+            "dpl--web:3000"
+        );
+    }
+
+    #[test]
+    fn app_resolve_export_pinned_replace_uses_alias() {
+        // A replace app is never pinned: stop-old to re-render would 502.
+        let (_base, ctx, config, name) = pinned_fixture(DeployStrategy::Replace, Some(5));
+        assert_eq!(
+            config
+                .resolve_export_with(&ctx, &name, "url", true)
+                .unwrap(),
+            "http://dpl--web:3000"
+        );
+        assert_eq!(
+            config
+                .resolve_export_with(&ctx, &name, "socket", true)
+                .unwrap(),
+            "dpl--web:3000"
+        );
+    }
+
+    #[test]
+    fn app_resolve_export_unpinned_parallel_uses_alias() {
+        // Env refs in other units always get the alias.
+        let (_base, ctx, config, name) = pinned_fixture(DeployStrategy::Parallel, Some(5));
+        assert_eq!(
+            config.resolve_export(&ctx, &name, "url").unwrap(),
+            "http://dpl--web:3000"
+        );
+        assert_eq!(
+            config.resolve_export(&ctx, &name, "socket").unwrap(),
+            "dpl--web:3000"
         );
     }
 

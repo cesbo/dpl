@@ -161,6 +161,19 @@ pub fn ensure_network(name: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// Detach a container from `network` (it keeps running).
+pub fn network_disconnect(network: &str, container: &str) -> io::Result<()> {
+    run_podman(&["network", "disconnect", network, container])?;
+    Ok(())
+}
+
+/// Attach a container to `network` under `alias` as well as its own name.
+/// A container still connected must be disconnected first.
+pub fn network_connect_alias(network: &str, container: &str, alias: &str) -> io::Result<()> {
+    run_podman(&["network", "connect", "--alias", alias, network, container])?;
+    Ok(())
+}
+
 /// Stop and remove a container by name.
 pub fn stop_and_remove(container: &str) -> io::Result<()> {
     if container_exists(container) {

@@ -20,6 +20,7 @@ use tempfile::TempDir;
 pub use self::model::AppConfig;
 use self::{
     artifacts::ArtifactsContext,
+    model::DeployStrategy,
     podman::{
         PodmanContext,
         export_destination,
@@ -33,7 +34,7 @@ use crate::{
         RunError,
         UnitConfig,
         unit::{
-            deployed_version,
+            deployed_version_of,
             domain::{
                 DomainConfig,
                 DomainUnit,
@@ -107,20 +108,15 @@ impl<'a> AppUnit<'a> {
         archive: R,
     ) -> Result<(), DeployError> {
         let temp_dir = self.prepare(archive)?;
-        self.deploy_worker(version, temp_dir.path(), state)?;
-
-        self.start_via_serve(state)?;
-        self.redeploy_dependent_domains();
-        Self::prune_versions(self.ctx, self.name, version);
-
-        Ok(())
+        self.deploy_worker(version, temp_dir.path())?;
+        self.hand_off(state, version)
     }
 
     /// Bring the retained `source` back as `version` through the deploy
     /// hand-off: retag its image, re-encrypt the env it ran with under the
-    /// new version (rather than copying the file), stop the active version
-    /// and start the new one. A startup failure propagates
-    /// like a deploy's; the next deploy or rollback discards the retag and env.
+    /// new version (rather than copying the file), then hand it off per the
+    /// strategy. A startup failure propagates like a deploy's; the next
+    /// deploy or rollback discards the retag and env.
     pub fn rollback(
         &self,
         state: &mut DeployState,
@@ -141,22 +137,13 @@ impl<'a> AppUnit<'a> {
             return Err(err);
         }
 
-        if let Some(old) = state.take_active_version() {
-            log::phase(format_args!("stopping v{old}"));
-            Self::stop_version(self.name, old);
-        }
-
         // Timers come from the current yaml, as at deploy.
         if self.config.runtime.is_some() {
             log::phase("registering timers");
             self.register_timers();
         }
 
-        self.start_via_serve(state)?;
-        self.redeploy_dependent_domains();
-        Self::prune_versions(self.ctx, self.name, version);
-
-        Ok(())
+        self.hand_off(state, version)
     }
 
     /// Encrypt the env `source` ran with under `version`. A missing file is an
@@ -173,26 +160,131 @@ impl<'a> AppUnit<'a> {
         Ok(())
     }
 
-    fn deploy_worker(
-        &self,
-        version: u32,
-        deploy_dir: &Path,
-        state: &mut DeployState,
-    ) -> Result<(), DeployError> {
+    fn deploy_worker(&self, version: u32, deploy_dir: &Path) -> Result<(), DeployError> {
         self.build_inner(deploy_dir, version)?;
 
+        if let Err(err) = self.install_inner(deploy_dir, version) {
+            // No container of `version` exists before the hand-off, and the
+            // legacy `dpl--{unit}` may be the still-running active version:
+            // only the image and env go.
+            Self::remove_version(self.ctx, self.name, version);
+            crate::podman::prune_images();
+            return Err(err);
+        }
+
+        Ok(())
+    }
+
+    /// Bring `version` into service: stop the active version first
+    /// (`replace`), or start it next to the active one and switch once it is
+    /// ready (`parallel`, runtime units only).
+    fn hand_off(&self, state: &mut DeployState, version: u32) -> Result<(), DeployError> {
+        match (self.config.strategy, &self.config.runtime) {
+            (DeployStrategy::Parallel, Some(runtime)) => {
+                self.hand_off_parallel(state, version, runtime.port)
+            }
+            _ => self.hand_off_replace(state, version),
+        }
+    }
+
+    fn hand_off_replace(&self, state: &mut DeployState, version: u32) -> Result<(), DeployError> {
         // Only stopped: its image and env are retained for a rollback.
         if let Some(old) = state.take_active_version() {
             log::phase(format_args!("stopping v{old}"));
             Self::stop_version(self.name, old);
         }
 
-        if let Err(err) = self.install_inner(deploy_dir, version) {
-            Self::undeploy(self.ctx, self.name, version);
+        self.start_via_serve(state)?;
+        self.redeploy_dependent_domains();
+        Self::prune_versions(self.ctx, self.name, version);
+
+        Ok(())
+    }
+
+    /// The new version runs as a candidate (no DNS alias, no `${app:url}`
+    /// traffic) next to the active one until it is ready. The switch attaches
+    /// the alias, promotes it in state and re-renders the dependent domains
+    /// (pinned to the container); only then is the old version stopped. A
+    /// readiness or alias failure drops the candidate and leaves the old
+    /// version in service; a domain failure reverts to it.
+    fn hand_off_parallel(
+        &self,
+        state: &mut DeployState,
+        version: u32,
+        port: Option<u16>,
+    ) -> Result<(), DeployError> {
+        let name = self.name;
+        let container = name.container_name(version);
+        evict_strays(name, &parallel_keep(name, state.active_version, version));
+
+        let db_servers = self
+            .config
+            .db_server_deps(self.ctx)
+            .map_err(|e| DeployError::step_prepare("resolve db-server dependencies", e))?;
+        state.set_start_after(db_servers);
+        state.set_candidate();
+
+        crate::serve::notify_or_warn(self.ctx, &container);
+
+        if let Err(err) = wait_ready(name, AppConfig::KIND, &container, port) {
+            self.fail_candidate(state, version);
             return Err(err);
         }
 
+        log::phase(format_args!("attaching alias to v{version}"));
+        let alias = name.scoped_unit_name();
+        if let Err(err) = crate::podman::network_disconnect(crate::podman::NETWORK, &container)
+            .and_then(|()| {
+                crate::podman::network_connect_alias(crate::podman::NETWORK, &container, &alias)
+            })
+        {
+            self.fail_candidate(state, version);
+            return Err(DeployError::step_startup(
+                format!("attach alias to v{version}"),
+                err,
+            ));
+        }
+
+        log::phase(format_args!("switching to v{version}"));
+        let old = state.promote_candidate();
+        if let Err(err) = self.ctx.link_runtime_log(name, version) {
+            log::warn(format!("link runtime log of '{name}': {err}"));
+        }
+
+        if !self.redeploy_dependent_domains() {
+            // nginx must point back at the old container before the
+            // candidate stops.
+            state.revert_candidate(old);
+            self.redeploy_dependent_domains();
+            if let Some(old) = old
+                && let Err(err) = self.ctx.link_runtime_log(name, old)
+            {
+                log::warn(format!("link runtime log of '{name}': {err}"));
+            }
+            stop_container(&container);
+            return Err(DeployError::step_startup(
+                "switch dependent domains",
+                io::Error::other("a dependent domain failed to redeploy"),
+            ));
+        }
+
+        if let Some(old) = old {
+            log::phase(format_args!("stopping v{old}"));
+            Self::stop_version(name, old);
+        }
+
+        state.set_ready();
+        Self::prune_versions(self.ctx, name, version);
+
         Ok(())
+    }
+
+    /// Drop a candidate that never reached its switch: its container only
+    /// (the legacy `dpl--{unit}` belongs to the active version). The CLI
+    /// marks the deploy failed; the next one discards its image and env.
+    fn fail_candidate(&self, state: &mut DeployState, version: u32) {
+        stop_container(&self.name.container_name(version));
+        state.clear_candidate();
     }
 
     /// Domain units whose routes reference this app via `${<app>:export|url}`.
@@ -207,25 +299,28 @@ impl<'a> AppUnit<'a> {
     }
 
     /// Re-render and reload every domain that depends on this app.
-    /// Should be called after state saved.
-    fn redeploy_dependent_domains(&self) {
+    /// Should be called after state saved. True when every one deployed.
+    fn redeploy_dependent_domains(&self) -> bool {
         let domains = self.dependent_domains();
         if domains.is_empty() {
-            return;
+            return true;
         }
 
         log::phase("updating dependent domains");
+        let mut all = true;
         for (name, config) in domains {
             let (_guard, mut state) = match DeployState::acquire(self.ctx, &name) {
                 Ok(v) => v,
                 Err(err) => {
                     log::error(format!("skip domain '{name}': {err}"));
+                    all = false;
                     continue;
                 }
             };
 
             if let Err(err) = state.begin_deploy(DomainConfig::KIND) {
                 log::error(format!("skip domain '{name}': {err}"));
+                all = false;
                 continue;
             }
 
@@ -238,8 +333,10 @@ impl<'a> AppUnit<'a> {
                     "domain '{name}' redeploy failed: {:#}",
                     anyhow::Error::new(err)
                 ));
+                all = false;
             }
         }
+        all
     }
 
     fn build_inner(&self, deploy_dir: &Path, version: u32) -> Result<(), DeployError> {
@@ -329,7 +426,7 @@ impl<'a> AppUnit<'a> {
         // Anything else of this unit still around (a stop an earlier deploy
         // missed) would share the DNS alias with the container about to start.
         let container = self.name.container_name(state.last_version);
-        evict_strays(self.name, &container);
+        evict_strays(self.name, std::slice::from_ref(&container));
 
         let db_servers = self
             .config
@@ -342,6 +439,10 @@ impl<'a> AppUnit<'a> {
 
         wait_ready(self.name, AppConfig::KIND, &container, runtime.port)?;
         state.set_ready();
+
+        if let Err(err) = self.ctx.link_runtime_log(self.name, state.last_version) {
+            log::warn(format!("link runtime log of '{}': {err}", self.name));
+        }
         Ok(())
     }
 
@@ -409,14 +510,16 @@ impl<'a> AppUnit<'a> {
         for version in tags.into_iter().filter(|v| !keep.contains(v)) {
             log::phase(format_args!("removing v{version}"));
             Self::remove_version(ctx, name, version);
+            remove_runtime_log(ctx, name, version);
         }
         crate::podman::prune_images();
     }
 
     /// Discard the last version when it never reached ready: a startup
-    /// failure, a deploy interrupted in its readiness wait or its build. Keeps
-    /// the invariant that a tagged `localhost/{unit}:{N}` is a ready version
-    /// (or the one being deployed). Warn-only; a no-op after `dpl undeploy`.
+    /// failure, a deploy interrupted in its readiness wait or its build, a
+    /// candidate that never reached its switch. Keeps the invariant that a
+    /// tagged `localhost/{unit}:{N}` is a ready version (or the one being
+    /// deployed). Warn-only; a no-op after `dpl undeploy`.
     pub fn discard_unready(ctx: &MainContext, name: &UnitName, state: &mut DeployState) {
         let version = state.last_version;
         if version == 0 || state.last_status == DeployStatus::Ready {
@@ -429,11 +532,15 @@ impl<'a> AppUnit<'a> {
         }
 
         // The legacy `dpl--{unit}` is the live version's when that is another
-        // one (a failure before the hand-off never took it over).
+        // one (a failure before the hand-off never took it over). Otherwise
+        // nothing of the unit may run once its active version is taken: a
+        // parallel switch interrupted before "stopping v{old}" left the
+        // previous container up, alias attached, and state no longer names it.
         if state.active_version.is_some_and(|active| active != version) {
             stop_container(&name.container_name(version));
         } else {
             Self::stop_version(name, version);
+            evict_strays(name, &[]);
         }
         // Untag first, env only once the tag is gone (as `remove_version`);
         // untagging a version that is already gone is a harmless error.
@@ -444,8 +551,12 @@ impl<'a> AppUnit<'a> {
             }
             Err(_) => {}
         }
+        remove_runtime_log(ctx, name, version);
         if state.active_version == Some(version) {
             state.take_active_version();
+        }
+        if state.candidate_version == Some(version) {
+            state.clear_candidate();
         }
     }
 
@@ -481,14 +592,22 @@ impl<'a> AppUnit<'a> {
             ));
         }
 
+        let state = DeployState::load(self.ctx, self.name)
+            .map_err(|e| RunError::new(format!("load state for '{}'", self.name), e))?;
         let version = match version {
             Some(version) => version,
-            None => deployed_version(self.ctx, self.name, AppConfig::KIND)?,
+            None => deployed_version_of(&state, self.name, AppConfig::KIND)?,
         };
+        // A candidate (a parallel deploy before its switch) runs next to the
+        // active version: no `${app:url}` traffic and no `runtime.log` until
+        // the switch, which attaches the alias and moves the link.
+        let candidate = state.candidate_version == Some(version);
         let container = self.name.container_name(version);
         let mut cmd = podman_run_with_env(self.ctx, self.name, &container, version)?;
-        // Stable DNS name across versions: `${app:url}` resolves to it.
-        cmd.network_alias(&self.name.scoped_unit_name());
+        if !candidate {
+            // Stable DNS name across versions: `${app:url}` resolves to it.
+            cmd.network_alias(&self.name.scoped_unit_name());
+        }
 
         let databases = self
             .config
@@ -504,9 +623,15 @@ impl<'a> AppUnit<'a> {
             cmd.volume(&volume.source, &volume.path, &[]);
         }
 
+        if !candidate {
+            adopt_runtime_log(self.ctx, self.name, version);
+        }
         let image = format!("localhost/{}:{}", self.name, version);
-        cmd.run_foreground(image, &self.ctx.runtime_log_path(self.name))
-            .map_err(|e| RunError::new("run podman foreground", e))
+        cmd.run_foreground(
+            image,
+            &self.ctx.runtime_log_version_path(self.name, version),
+        )
+        .map_err(|e| RunError::new("run podman foreground", e))
     }
 }
 
@@ -528,6 +653,37 @@ fn remove_env(ctx: &MainContext, name: &UnitName, version: u32) {
         log::warn(format!(
             "remove runtime env file for '{name} v{version}': {err}"
         ));
+    }
+}
+
+/// Point `runtime.log` at this version's file before its first byte, so a
+/// restart by the new serve keeps it live. A live link is the deploy's: it
+/// moves once a version is in service. A dangling one (its version was
+/// discarded) is re-pointed. A regular file is an older dpl's log: it becomes
+/// this version's, rotation ring included. Warn-only.
+fn adopt_runtime_log(ctx: &MainContext, name: &UnitName, version: u32) {
+    let link = ctx.runtime_log_path(name);
+    if link.is_symlink() && link.exists() {
+        return;
+    }
+    if link.is_file()
+        && let Err(err) =
+            log::cri_log::rename_all(&link, ctx.runtime_log_version_path(name, version))
+    {
+        // The bytes stay where they are; the next start tries again.
+        log::warn(format!("adopt runtime log of '{name}': {err}"));
+        return;
+    }
+    if let Err(err) = ctx.link_runtime_log(name, version) {
+        log::warn(format!("link runtime log of '{name}': {err}"));
+    }
+}
+
+/// Drop a version's runtime log with its rotation ring (a missing one is
+/// fine). Not for `undeploy`, which keeps logs.
+fn remove_runtime_log(ctx: &MainContext, name: &UnitName, version: u32) {
+    if let Err(err) = log::cri_log::remove_all(ctx.runtime_log_version_path(name, version)) {
+        log::warn(format!("remove runtime log of '{name} v{version}': {err}"));
     }
 }
 
@@ -594,6 +750,16 @@ pub fn container_names(name: &UnitName, version: u32) -> [String; 2] {
     [name.container_name(version), name.scoped_unit_name()]
 }
 
+/// What a parallel hand-off leaves alone: the active version's names (none
+/// without one) and the candidate's container.
+fn parallel_keep(name: &UnitName, active: Option<u32>, candidate: u32) -> Vec<String> {
+    let mut keep: Vec<String> = active
+        .map(|v| container_names(name, v).to_vec())
+        .unwrap_or_default();
+    keep.push(name.container_name(candidate));
+    keep
+}
+
 /// The names a supervised unit's container may run under, as deploy state
 /// describes the unit: [`container_names`] for an app with an active version,
 /// the legacy `dpl--{unit}` alone for everything else.
@@ -604,12 +770,12 @@ pub fn probe_names(name: &UnitName, kind: Option<&str>, active: Option<u32>) -> 
     }
 }
 
-/// Stop and remove every container of `name` other than `keep`. A stop an
+/// Stop and remove every container of `name` not in `keep`. A stop an
 /// earlier deploy missed (interrupted, or podman did not answer) leaves a
 /// container that shares the DNS alias with the one about to start, and
 /// nothing else revisits it: `--replace` only evicts the same name. Best
 /// effort - the next deploy runs it again.
-fn evict_strays(name: &UnitName, keep: &str) {
+fn evict_strays(name: &UnitName, keep: &[String]) {
     let filter = format!("name={}", name.scoped_unit_name());
     let args = ["ps", "-a", "--filter", &filter, "--format", "{{.Names}}"];
     let listed = match crate::podman::run_podman(&args) {
@@ -627,17 +793,17 @@ fn evict_strays(name: &UnitName, keep: &str) {
     }
 }
 
-/// The containers of `name` among `ps_names` (one per line) other than `keep`:
+/// The containers of `name` among `ps_names` (one per line) not in `keep`:
 /// the legacy `dpl--{unit}` or any `dpl--{unit}--{version}`. Exact, since the
 /// `podman ps` name filter is a substring match that also returns other units
 /// sharing the prefix.
-fn stray_containers<'a>(name: &UnitName, keep: &str, ps_names: &'a str) -> Vec<&'a str> {
+fn stray_containers<'a>(name: &UnitName, keep: &[String], ps_names: &'a str) -> Vec<&'a str> {
     let legacy = name.scoped_unit_name();
     let prefix = format!("{legacy}--");
     ps_names
         .lines()
         .map(str::trim)
-        .filter(|n| *n != keep)
+        .filter(|n| !keep.iter().any(|k| k == n))
         .filter(|n| {
             *n == legacy
                 || n.strip_prefix(&prefix)
@@ -719,9 +885,54 @@ fn is_app_export_dir(name: &str, app: &UnitName) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use tempfile::TempDir;
 
     use super::*;
+
+    #[test]
+    fn adopt_runtime_log_moves_a_legacy_file_and_keeps_a_live_link() {
+        let base = TempDir::new().unwrap();
+        let ctx = MainContext {
+            base: base.path().to_path_buf(),
+            master_key: None,
+        };
+        let name = UnitName::new("web").unwrap();
+        let link = ctx.runtime_log_path(&name);
+        let log_dir = ctx.unit_log_dir(&name);
+
+        // A unit deployed by an older dpl: a regular file with its ring.
+        fs::create_dir_all(&log_dir).unwrap();
+        fs::write(&link, "legacy").unwrap();
+        fs::write(log_dir.join("runtime.log.1"), "older").unwrap();
+        adopt_runtime_log(&ctx, &name, 3);
+        assert_eq!(
+            fs::read_link(&link).unwrap(),
+            PathBuf::from("runtime-v3.log")
+        );
+        assert_eq!(fs::read_to_string(&link).unwrap(), "legacy");
+        assert_eq!(
+            fs::read_to_string(log_dir.join("runtime-v3.log.1")).unwrap(),
+            "older"
+        );
+        assert!(!log_dir.join("runtime.log.1").exists());
+
+        // Already a live link: the deploy owns where it points.
+        adopt_runtime_log(&ctx, &name, 4);
+        assert_eq!(
+            fs::read_link(&link).unwrap(),
+            PathBuf::from("runtime-v3.log")
+        );
+
+        // Dangling (v3 discarded): re-pointed at the version starting.
+        fs::remove_file(log_dir.join("runtime-v3.log")).unwrap();
+        adopt_runtime_log(&ctx, &name, 5);
+        assert_eq!(
+            fs::read_link(&link).unwrap(),
+            PathBuf::from("runtime-v5.log")
+        );
+    }
 
     fn write_unit(base: &Path, name: &str, config: &str) {
         MainContext {
@@ -795,15 +1006,39 @@ mod tests {
     }
 
     #[test]
+    fn parallel_keep_is_the_active_names_plus_the_candidate() {
+        let app = UnitName::new("web").unwrap();
+        assert_eq!(
+            parallel_keep(&app, Some(1), 3),
+            ["dpl--web--1", "dpl--web", "dpl--web--3"]
+        );
+        assert_eq!(parallel_keep(&app, None, 3), ["dpl--web--3"]);
+    }
+
+    #[test]
     fn stray_containers_are_the_units_other_names_only() {
         let app = UnitName::new("web").unwrap();
         // What `podman ps --filter name=dpl--web` returns: every name
         // containing the substring, other units included.
         let ps = "dpl--web--3\ndpl--web--1\ndpl--web\ndpl--web-api\n\
                   dpl--web-api--2\ndpl--webapp--2\ndpl--web--x\n";
+        let keep =
+            |names: &[&str]| -> Vec<String> { names.iter().map(|n| n.to_string()).collect() };
         assert_eq!(
-            stray_containers(&app, "dpl--web--3", ps),
+            stray_containers(&app, &keep(&["dpl--web--3"]), ps),
             ["dpl--web--1", "dpl--web"]
+        );
+        assert_eq!(
+            stray_containers(&app, &keep(&["dpl--web--1", "dpl--web--3"]), ps),
+            ["dpl--web"]
+        );
+        // A parallel hand-off keeps the old version (versioned + legacy) too.
+        let both = keep(&["dpl--web--1", "dpl--web", "dpl--web--3"]);
+        assert_eq!(stray_containers(&app, &both, ps), Vec::<&str>::new());
+        // Nothing kept: everything of the unit, other units untouched.
+        assert_eq!(
+            stray_containers(&app, &[], ps),
+            ["dpl--web--3", "dpl--web--1", "dpl--web"]
         );
     }
 

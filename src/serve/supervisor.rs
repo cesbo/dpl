@@ -59,7 +59,7 @@ const GATE_RECHECK: Duration = Duration::from_secs(1);
 /// clamped to [`RESTART_BACKOFF_CAP`] long before this bites.
 const MAX_BACKOFF_SHIFT: u32 = 16;
 
-/// Cap on each container probe reconcile makes per unit (one, or two for an
+/// Cap on each container probe reconcile makes per slot (one, or two for an
 /// app whose versioned name is not up; a probe error ends the search). A
 /// reconcile pass runs on serve's main loop, so a wedged podman must cost this
 /// much and no more - otherwise one unit stalls supervision and timers for
@@ -70,6 +70,42 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 enum RestartPolicy {
     Never,
     Always,
+}
+
+/// How reconcile acts on a slot, from its unit's deploy status.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Policy {
+    /// Keep the container up: restart with backoff on death.
+    Restart,
+    /// Start once for the deploy health-check; a death is the deploy's to
+    /// report, never restarted.
+    StartOnce,
+    /// Watch only: forget a run that ended.
+    Observe,
+}
+
+/// Tracking key: one slot per supervised container, so an app can have two
+/// (active + candidate) and a redeploy (new version) is a fresh slot.
+type SlotKey = (UnitName, Option<u32>);
+
+/// One supervised container as deploy state describes it.
+struct Slot {
+    name: UnitName,
+    /// The deploy-state version this slot runs; `dpl start` gets it for an
+    /// app only (see [`ManagedUnit::start_version`]).
+    version: Option<u32>,
+    policy: Policy,
+    /// Names its container may run under, most specific first.
+    containers: Vec<String>,
+    /// db-server units that must be up before its `dpl start` is spawned.
+    start_after: Vec<UnitName>,
+    is_app: bool,
+}
+
+impl Slot {
+    fn key(&self) -> SlotKey {
+        (self.name.clone(), self.version)
+    }
 }
 
 /// One supervised container across ticks.
@@ -85,18 +121,18 @@ struct ManagedUnit {
     backoff_until: Option<Instant>,
     /// Consecutive crashes without a stable run; drives the exponential backoff.
     consecutive_failures: u32,
-    /// active_version observed when adopted; a redeploy bumps it and re-adopts.
-    active_version: Option<u32>,
-    /// Whether this active version has already been started/adopted while in
-    /// `Check`. Reset on redeploy; ignored once the unit is `Ready`.
+    /// The slot's version (part of its key): a redeploy is a fresh slot.
+    version: Option<u32>,
+    /// Whether this slot has already been started/adopted while in `Check`.
+    /// Ignored once the unit is `Ready`.
     start_attempted: bool,
-    /// An app: `dpl start` gets the active version, so it runs the versioned
+    /// An app: `dpl start` gets the version, so it runs the versioned
     /// container. Refreshed from deploy state every pass.
     is_app: bool,
 }
 
 impl ManagedUnit {
-    fn new(name: UnitName, active_version: Option<u32>) -> Self {
+    fn new(name: UnitName, version: Option<u32>) -> Self {
         ManagedUnit {
             name,
             running: false,
@@ -104,7 +140,7 @@ impl ManagedUnit {
             observed_up: false,
             backoff_until: None,
             consecutive_failures: 0,
-            active_version,
+            version,
             start_attempted: false,
             is_app: false,
         }
@@ -126,10 +162,10 @@ impl ManagedUnit {
         self.backoff_until = Some(now + backoff_delay(self.consecutive_failures));
     }
 
-    /// The version argv for `dpl start`: the active one for an app (it names
+    /// The version argv for `dpl start`: the slot's one for an app (it names
     /// the versioned container), nothing for every other kind.
     fn start_version(&self) -> Option<u32> {
-        self.active_version.filter(|_| self.is_app)
+        self.version.filter(|_| self.is_app)
     }
 
     fn note_exit_without_restart(&mut self) {
@@ -164,7 +200,7 @@ fn backoff_delay(failures: u32) -> Duration {
 /// state files; an app's `dpl start` is held until its db-server containers are
 /// up. Shutdown leaves containers running so serve can restart without downtime.
 pub struct Supervisor {
-    managed: HashMap<UnitName, ManagedUnit>,
+    managed: HashMap<SlotKey, ManagedUnit>,
     /// Cached `dpl` binary path; `None` disables spawning (non-fatal).
     self_exe: Option<PathBuf>,
 }
@@ -184,76 +220,79 @@ impl Supervisor {
         }
     }
 
-    /// One reconcile pass: drop containers no longer wanted from tracking, then
-    /// act on each runtime unit per its deploy status.
+    /// One reconcile pass: drop slots no longer wanted from tracking, then act
+    /// on each slot per its policy.
     /// Returns the earliest pending respawn deadline so the caller can wake
     /// exactly then instead of polling blindly.
     pub fn reconcile(&mut self, ctx: &MainContext) -> Option<Instant> {
         let exe = self.self_exe.clone()?;
 
-        // Every unit handed off to serve (the `supervised` flag), straight from
-        // deploy state - the configs are never read.
-        let desired = desired_units(ctx);
-        let desired_names: HashSet<&UnitName> = desired.iter().map(|(name, ..)| name).collect();
+        // Every container handed off to serve (the `supervised` flag), straight
+        // from deploy state - the configs are never read.
+        let desired = desired_slots(ctx);
+        let keys: HashSet<SlotKey> = desired.iter().map(Slot::key).collect();
 
-        // Stop tracking units no longer supervised.
-        self.managed.retain(|name, _| desired_names.contains(name));
+        // Stop tracking slots no longer wanted - before any probe or spawn, so
+        // a version a failed deploy (or a switch) retired is never respawned
+        // from a pending backoff.
+        self.managed.retain(|key, _| keys.contains(key));
 
-        // One podman read per unit, shared by each unit's own gate check.
-        // `None` means podman did not answer in time: no decision this pass.
-        let running: HashMap<&UnitName, Option<bool>> = desired
+        // One podman read per slot. `None` means podman did not answer in
+        // time: no decision for that slot this pass.
+        let probed: Vec<Option<bool>> = desired
             .iter()
-            .map(|(name, _, active, _, kind)| {
-                let state = match probe_up(name, kind.as_deref(), *active) {
-                    Ok(up) => Some(up),
-                    Err(err) => {
-                        log::warn(format!("probe container '{name}': {err}"));
-                        None
-                    }
-                };
-                (name, state)
+            .map(|slot| match probe_up(&slot.containers) {
+                Ok(up) => Some(up),
+                Err(err) => {
+                    let what = slot_label(&slot.name, slot.version, slot.is_app);
+                    log::warn(format!("probe container {what}: {err}"));
+                    None
+                }
             })
             .collect();
 
-        // True if a unit that wants to spawn (Check/Ready) is held back by its
+        // Per unit, for the `start_after` gates: up if any of its slots is.
+        let mut running: HashMap<&UnitName, Option<bool>> = HashMap::new();
+        for (slot, up) in desired.iter().zip(&probed) {
+            let unit = running.entry(&slot.name).or_insert(Some(false));
+            *unit = match (*unit, *up) {
+                (Some(true), _) | (_, Some(true)) => Some(true),
+                (None, _) | (_, None) => None,
+                _ => Some(false),
+            };
+        }
+
+        // True if a slot that wants to spawn (Check/Ready) is held back by its
         // gate; only then do we re-poll early so the gate can advance.
         let mut gated = false;
-        for (name, status, active, start_after, kind) in &desired {
-            // Unknown state: skip this unit entirely rather than read it as
+        for (slot, up) in desired.iter().zip(&probed) {
+            // Unknown state: skip this slot entirely rather than read it as
             // down, which would spawn a second `dpl start`. The next ordinary
             // poll retries - no early recheck, so a wedged podman is not probed
             // in a tight loop.
-            let Some(is_up) = running.get(name).copied().flatten() else {
+            let Some(is_up) = *up else {
                 continue;
             };
-            let open = can_spawn(start_after, &running);
-            let is_app = is_app_kind(kind.as_deref());
-            match status {
-                DeployStatus::Failed => {
-                    self.managed.remove(name);
-                }
-                DeployStatus::Building | DeployStatus::Idle => {
-                    if let Some(m) = self.managed.get_mut(name) {
+            let key = slot.key();
+            match slot.policy {
+                Policy::Observe => {
+                    if let Some(m) = self.managed.get_mut(&key) {
                         observe(m, is_up);
                     }
                 }
-                DeployStatus::Check => {
+                Policy::StartOnce | Policy::Restart => {
+                    let open = can_spawn(&slot.start_after, &running);
                     gated |= !open && !is_up;
-                    let unit = self
+                    let m = self
                         .managed
-                        .entry(name.clone())
-                        .or_insert_with(|| ManagedUnit::new(name.clone(), *active));
-                    unit.is_app = is_app;
-                    drive_start_once(ctx, &exe, unit, *active, is_up, open);
-                }
-                DeployStatus::Ready => {
-                    gated |= !open && !is_up;
-                    let unit = self
-                        .managed
-                        .entry(name.clone())
-                        .or_insert_with(|| ManagedUnit::new(name.clone(), *active));
-                    unit.is_app = is_app;
-                    drive(ctx, &exe, unit, *active, is_up, open);
+                        .entry(key)
+                        .or_insert_with(|| ManagedUnit::new(slot.name.clone(), slot.version));
+                    m.is_app = slot.is_app;
+                    if slot.policy == Policy::StartOnce {
+                        drive_start_once(ctx, &exe, m, is_up, open);
+                    } else {
+                        drive(ctx, &exe, m, is_up, open);
+                    }
                 }
             }
         }
@@ -273,9 +312,9 @@ impl Supervisor {
     }
 }
 
-/// Earliest pending respawn: the soonest backoff among managed units that are
+/// Earliest pending respawn: the soonest backoff among managed slots that are
 /// not currently running (those awaiting a respawn). `None` = nothing pending.
-fn next_wake(managed: &HashMap<UnitName, ManagedUnit>) -> Option<Instant> {
+fn next_wake(managed: &HashMap<SlotKey, ManagedUnit>) -> Option<Instant> {
     managed
         .values()
         .filter(|m| !m.running)
@@ -283,40 +322,74 @@ fn next_wake(managed: &HashMap<UnitName, ManagedUnit>) -> Option<Instant> {
         .min()
 }
 
-/// One supervised unit as deploy state describes it: name, status, active
-/// version, `start_after` gate (db-server names it must see up first), kind.
-type Desired = (
-    UnitName,
-    DeployStatus,
-    Option<u32>,
-    Vec<UnitName>,
-    Option<String>,
-);
-
-/// Supervised units to reconcile, straight from deploy state.
-fn desired_units(ctx: &MainContext) -> Vec<Desired> {
-    DeployState::list(ctx)
-        .into_iter()
-        .filter(|(_, state)| state.supervised)
-        .map(|(name, state)| {
-            (
-                name,
-                state.last_status,
-                state.active_version,
-                state.start_after,
-                state.kind,
-            )
-        })
-        .collect()
+/// Supervised slots to reconcile, straight from deploy state: per unit its
+/// active container and, during a parallel deploy, the candidate.
+///
+/// | status                               | active slot | candidate slot            |
+/// |--------------------------------------|-------------|---------------------------|
+/// | Ready                                | Restart     | none (a stray is ignored) |
+/// | Check, candidate Some                | Restart     | StartOnce                 |
+/// | Check, candidate None                | StartOnce   | none (the replace flow)   |
+/// | Failed, active != Some(last_version) | Restart     | none                      |
+/// | Failed, active == Some(last_version) | none        | none                      |
+/// | Building / Idle                      | Observe     | none                      |
+///
+/// The active slot exists only while `active_version` is Some (Check/Ready
+/// always set it; a replace deploy clears it between stopping the old version
+/// and the hand-off, so the unit has no slot there); its key carries that
+/// version, so a redeploy is a fresh slot. A candidate slot exists for an app
+/// only.
+fn desired_slots(ctx: &MainContext) -> Vec<Slot> {
+    let mut slots = Vec::new();
+    for (name, state) in DeployState::list(ctx) {
+        if !state.supervised {
+            continue;
+        }
+        let is_app = is_app_kind(state.kind.as_deref());
+        let candidate = state.candidate_version.filter(|_| is_app);
+        let (active_policy, candidate_policy) = match state.last_status {
+            DeployStatus::Ready => (Some(Policy::Restart), None),
+            DeployStatus::Check if candidate.is_some() => {
+                (Some(Policy::Restart), Some(Policy::StartOnce))
+            }
+            DeployStatus::Check => (Some(Policy::StartOnce), None),
+            DeployStatus::Failed if state.active_version == Some(state.last_version) => {
+                (None, None)
+            }
+            DeployStatus::Failed => (Some(Policy::Restart), None),
+            DeployStatus::Building | DeployStatus::Idle => (Some(Policy::Observe), None),
+        };
+        if let (Some(policy), Some(active)) = (active_policy, state.active_version) {
+            slots.push(Slot {
+                name: name.clone(),
+                version: Some(active),
+                policy,
+                containers: probe_names(&name, state.kind.as_deref(), Some(active)),
+                start_after: state.start_after.clone(),
+                is_app,
+            });
+        }
+        if let (Some(policy), Some(candidate)) = (candidate_policy, candidate) {
+            slots.push(Slot {
+                name: name.clone(),
+                version: Some(candidate),
+                policy,
+                containers: vec![name.container_name(candidate)],
+                start_after: state.start_after,
+                is_app,
+            });
+        }
+    }
+    slots
 }
 
-/// Whether a unit's container is up under any of its [`probe_names`].
+/// Whether a slot's container is up under any of its names.
 /// `Err` means podman did not answer - the caller must not read that as down.
 /// The first probe to fail ends the search, so a wedged podman costs one
 /// [`PROBE_TIMEOUT`], not one per name.
-fn probe_up(name: &UnitName, kind: Option<&str>, active: Option<u32>) -> io::Result<bool> {
-    for container in probe_names(name, kind, active) {
-        if podman::is_running_within(&container, PROBE_TIMEOUT)? {
+fn probe_up(containers: &[String]) -> io::Result<bool> {
+    for container in containers {
+        if podman::is_running_within(container, PROBE_TIMEOUT)? {
             return Ok(true);
         }
     }
@@ -324,41 +397,27 @@ fn probe_up(name: &UnitName, kind: Option<&str>, active: Option<u32>) -> io::Res
 }
 
 /// Whether a unit's start gate is open: every db-server in `start_after` is up.
-/// A dep absent from `running` (e.g. unsupervised or undeployed) is queried
-/// directly, so a vanished dependency keeps the gate shut - and so does a dep
-/// whose probe did not answer, since a shut gate is the conservative direction.
+/// A dep absent from `running` (unsupervised, undeployed, or supervised with
+/// no slot to probe) is queried directly within [`PROBE_TIMEOUT`], so a
+/// vanished dependency keeps the gate shut - and so does a dep whose probe did
+/// not answer, since a shut gate is the conservative direction.
 fn can_spawn(start_after: &[UnitName], running: &HashMap<&UnitName, Option<bool>>) -> bool {
     start_after.iter().all(|dep| match running.get(dep) {
         Some(state) => *state == Some(true),
-        None => podman::is_running(&dep.scoped_unit_name()),
+        None => podman::is_running_within(&dep.scoped_unit_name(), PROBE_TIMEOUT).unwrap_or(false),
     })
 }
 
-fn reset_for_active_version(m: &mut ManagedUnit, active: Option<u32>) {
-    if m.active_version != active {
-        m.running = false;
-        m.started_at = None;
-        m.observed_up = false;
-        m.active_version = active;
-        m.backoff_until = None;
-        m.consecutive_failures = 0;
-        m.start_attempted = false;
-    }
-}
-
-/// Start a `Check` unit's container once for the deploy health-check. If it
+/// Start a `Check` slot's container once for the deploy health-check. If it
 /// exits while still in `Check`, do not schedule a restart.
 /// The deploy attempt will fail and move the state to `Failed`.
 fn drive_start_once(
     ctx: &MainContext,
     exe: &Path,
     m: &mut ManagedUnit,
-    active: Option<u32>,
     is_up: bool,
     can_spawn: bool,
 ) {
-    reset_for_active_version(m, active);
-
     if is_up {
         m.running = true;
         m.observed_up = true;
@@ -374,18 +433,9 @@ fn drive_start_once(
     }
 }
 
-/// Ensure a `Ready` unit's container is running: on a death arm a backoff
+/// Ensure a `Ready` slot's container is running: on a death arm a backoff
 /// restart, or spawn once the backoff elapses.
-fn drive(
-    ctx: &MainContext,
-    exe: &Path,
-    m: &mut ManagedUnit,
-    active: Option<u32>,
-    is_up: bool,
-    can_spawn: bool,
-) {
-    reset_for_active_version(m, active);
-
+fn drive(ctx: &MainContext, exe: &Path, m: &mut ManagedUnit, is_up: bool, can_spawn: bool) {
     let now = Instant::now();
     if is_up {
         m.running = true;
@@ -403,21 +453,25 @@ fn drive(
 
 /// Note a running->not-running transition and apply the restart policy.
 fn observe_death(m: &mut ManagedUnit, restart: RestartPolicy) {
+    let what = slot_label(&m.name, m.version, m.is_app);
     match restart {
         RestartPolicy::Always => {
-            log::warn(format!(
-                "supervisor: '{}' exited; restarting",
-                m.name.as_str()
-            ));
+            log::warn(format!("supervisor: {what} exited; restarting"));
             m.note_crash(Instant::now());
         }
         RestartPolicy::Never => {
-            log::warn(format!(
-                "supervisor: '{}' exited during startup check",
-                m.name.as_str()
-            ));
+            log::warn(format!("supervisor: {what} exited during startup check"));
             m.note_exit_without_restart();
         }
+    }
+}
+
+/// A slot in log lines: `'web' v7` for an app (two of its versions may run
+/// side by side), the bare `'pg-main'` for every other kind.
+fn slot_label(name: &UnitName, version: Option<u32>, is_app: bool) -> String {
+    match version {
+        Some(version) if is_app => format!("'{name}' v{version}"),
+        _ => format!("'{name}'"),
     }
 }
 
@@ -518,11 +572,11 @@ mod tests {
         (dir, ctx)
     }
 
-    fn managed_with(name: &str, backoff_until: Option<Instant>) -> (UnitName, ManagedUnit) {
+    fn managed_with(name: &str, backoff_until: Option<Instant>) -> (SlotKey, ManagedUnit) {
         let name = UnitName::new(name).unwrap();
         let mut m = ManagedUnit::new(name.clone(), None);
         m.backoff_until = backoff_until;
-        (name, m)
+        ((name, None), m)
     }
 
     #[test]
@@ -549,9 +603,9 @@ mod tests {
     #[test]
     fn next_wake_ignores_running_units() {
         let now = Instant::now();
-        let (name, mut m) = managed_with("up", Some(now + Duration::from_secs(5)));
+        let (key, mut m) = managed_with("up", Some(now + Duration::from_secs(5)));
         m.running = true;
-        let managed = HashMap::from([(name, m)]);
+        let managed = HashMap::from([(key, m)]);
         assert!(next_wake(&managed).is_none());
     }
 
@@ -669,7 +723,7 @@ mod tests {
         m.running = true;
 
         let mut supervisor = Supervisor {
-            managed: HashMap::from([(name, m)]),
+            managed: HashMap::from([((name, Some(1)), m)]),
             self_exe: None,
         };
 
@@ -729,18 +783,18 @@ mod tests {
     }
 
     #[test]
-    fn desired_units_lists_supervised_in_name_order() {
+    fn desired_slots_lists_supervised_in_name_order() {
         let (_dir, ctx) = ctx();
 
-        // desired_units carries no kind ordering - it is just DeployState::list
+        // desired_slots carries no kind ordering - it is just DeployState::list
         // order. Start gating happens per-unit in reconcile via `start_after`.
         deploy_supervised_as(&ctx, "nginx", "http-server");
         deploy_supervised_as(&ctx, "web", "app");
         deploy_supervised_as(&ctx, "pg", "db-server");
 
-        let names: Vec<UnitName> = desired_units(&ctx)
+        let names: Vec<UnitName> = desired_slots(&ctx)
             .into_iter()
-            .map(|(name, ..)| name)
+            .map(|slot| slot.name)
             .collect();
 
         assert_eq!(
@@ -785,7 +839,7 @@ mod tests {
         m.running = true;
 
         let mut supervisor = Supervisor {
-            managed: HashMap::from([(name.clone(), m)]),
+            managed: HashMap::from([((name.clone(), Some(1)), m)]),
             self_exe: None,
         };
 
@@ -793,7 +847,29 @@ mod tests {
         // reconcile early-return, so emulate the retain step it performs.
         let desired = supervised_set(&ctx);
         let desired_names: HashSet<&UnitName> = desired.iter().collect();
-        supervisor.managed.retain(|n, _| desired_names.contains(n));
+        supervisor
+            .managed
+            .retain(|(n, _), _| desired_names.contains(n));
+        assert!(supervisor.managed.is_empty());
+    }
+
+    #[test]
+    fn reconcile_drops_retired_slot_despite_pending_backoff() {
+        // A slot absent from deploy state (its version was retired by a
+        // failed deploy or a switch) is dropped before anything else, backoff
+        // or not - serve must never resurrect it. No supervised unit on disk,
+        // so reconcile neither probes nor spawns.
+        let (_dir, ctx) = ctx();
+        let name = UnitName::new("web").unwrap();
+        let mut m = ManagedUnit::new(name.clone(), Some(1));
+        m.backoff_until = Some(Instant::now() + Duration::from_secs(30));
+
+        let mut supervisor = Supervisor {
+            managed: HashMap::from([((name, Some(1)), m)]),
+            self_exe: Some(PathBuf::from("/nonexistent/dpl")),
+        };
+
+        assert!(supervisor.reconcile(&ctx).is_none());
         assert!(supervisor.managed.is_empty());
     }
 
@@ -850,7 +926,7 @@ mod tests {
         let name = UnitName::new("web").unwrap();
         let mut m = ManagedUnit::new(name, Some(1));
 
-        drive(&ctx, exe, &mut m, Some(1), false, false);
+        drive(&ctx, exe, &mut m, false, false);
         assert!(!m.running);
         assert!(m.started_at.is_none());
         assert!(m.backoff_until.is_none());
@@ -858,7 +934,7 @@ mod tests {
 
         // db-server came up and the app launched: adopt it even though the gate
         // value is still false this tick.
-        drive(&ctx, exe, &mut m, Some(1), true, false);
+        drive(&ctx, exe, &mut m, true, false);
         assert!(m.running);
         assert!(m.observed_up);
     }
@@ -870,24 +946,55 @@ mod tests {
         let name = UnitName::new("web").unwrap();
         let mut m = ManagedUnit::new(name, Some(1));
 
-        drive_start_once(&ctx, exe, &mut m, Some(1), false, false);
+        drive_start_once(&ctx, exe, &mut m, false, false);
         assert!(!m.running);
         assert!(!m.start_attempted);
     }
 
+    /// The slots of one unit, in `desired_slots` order.
+    fn slots_of(ctx: &MainContext, unit: &str) -> Vec<Slot> {
+        let name = UnitName::new(unit).unwrap();
+        desired_slots(ctx)
+            .into_iter()
+            .filter(|slot| slot.name == name)
+            .collect()
+    }
+
     #[test]
-    fn desired_units_carries_kind() {
+    fn desired_slots_carries_is_app_and_probe_names() {
         let (_dir, ctx) = ctx();
         deploy_supervised_as(&ctx, "web", "app");
         deploy_supervised_as(&ctx, "pg", "db-server");
 
-        let found = desired_units(&ctx);
-        let kind = |unit: &str| {
-            let name = UnitName::new(unit).unwrap();
-            found.iter().find(|(n, ..)| n == &name).unwrap().4.clone()
-        };
-        assert_eq!(kind("web").as_deref(), Some("app"));
-        assert_eq!(kind("pg").as_deref(), Some("db-server"));
+        let web = slots_of(&ctx, "web");
+        assert_eq!(web.len(), 1);
+        assert!(web[0].is_app);
+        assert_eq!(web[0].containers, vec!["dpl--web--1", "dpl--web"]);
+
+        let pg = slots_of(&ctx, "pg");
+        assert_eq!(pg.len(), 1);
+        assert!(!pg[0].is_app);
+        assert_eq!(pg[0].containers, vec!["dpl--pg"]);
+    }
+
+    #[test]
+    fn redeploy_is_a_fresh_slot_for_every_kind() {
+        // The key carries the active version for every kind, so a redeploy
+        // drops the old slot (and its `start_attempted`) and starts clean.
+        let (_dir, ctx) = ctx();
+        let pg = UnitName::new("pg").unwrap();
+        let (_guard, mut state) = DeployState::acquire(&ctx, &pg).unwrap();
+        state.begin_deploy("db-server").unwrap();
+        state.set_check();
+        state.set_ready();
+        assert_eq!(slots_of(&ctx, "pg")[0].key(), (pg.clone(), Some(1)));
+
+        state.begin_deploy("db-server").unwrap();
+        state.set_check();
+        let slots = slots_of(&ctx, "pg");
+        assert_eq!(slots.len(), 1);
+        assert_eq!(slots[0].key(), (pg, Some(2)));
+        assert_eq!(slots[0].policy, Policy::StartOnce);
     }
 
     #[test]
@@ -897,12 +1004,12 @@ mod tests {
         assert_eq!(m.start_version(), None);
         m.is_app = true;
         assert_eq!(m.start_version(), Some(3));
-        m.active_version = None;
+        m.version = None;
         assert_eq!(m.start_version(), None);
     }
 
     #[test]
-    fn desired_units_carries_start_after() {
+    fn desired_slots_carries_start_after() {
         let (_dir, ctx) = ctx();
         let app = UnitName::new("web").unwrap();
         let pg = UnitName::new("pg").unwrap();
@@ -913,8 +1020,85 @@ mod tests {
         state.set_check();
         drop((_guard, state));
 
-        let found = desired_units(&ctx);
-        let entry = found.iter().find(|(n, ..)| n == &app).unwrap();
-        assert_eq!(entry.3, vec![pg]);
+        let slots = slots_of(&ctx, "web");
+        assert_eq!(slots[0].start_after, vec![pg]);
+    }
+
+    #[test]
+    fn check_with_candidate_yields_active_restart_and_candidate_start_once() {
+        // v1 live, v2 handed off next to it: the active keeps its restart
+        // supervision while the candidate gets the one-shot startup check.
+        let (_dir, ctx) = ctx();
+        let web = UnitName::new("web").unwrap();
+        let (_guard, mut state) = DeployState::acquire(&ctx, &web).unwrap();
+        state.begin_deploy("app").unwrap();
+        state.set_ready();
+        state.begin_deploy("app").unwrap();
+        state.set_candidate();
+        drop((_guard, state));
+
+        let slots = slots_of(&ctx, "web");
+        assert_eq!(slots.len(), 2);
+        assert_eq!(slots[0].key(), (web.clone(), Some(1)));
+        assert_eq!(slots[0].policy, Policy::Restart);
+        assert_eq!(slots[0].containers, vec!["dpl--web--1", "dpl--web"]);
+        assert_eq!(slots[1].key(), (web, Some(2)));
+        assert_eq!(slots[1].policy, Policy::StartOnce);
+        assert_eq!(slots[1].containers, vec!["dpl--web--2"]);
+        assert!(slots[1].is_app);
+    }
+
+    #[test]
+    fn failed_with_live_active_yields_one_restart_slot() {
+        // A build failure leaves the previous version running: keep it
+        // supervised.
+        let (_dir, ctx) = ctx();
+        let web = UnitName::new("web").unwrap();
+        let (_guard, mut state) = DeployState::acquire(&ctx, &web).unwrap();
+        state.begin_deploy("app").unwrap();
+        state.set_check();
+        state.set_ready();
+        state.begin_deploy("app").unwrap();
+        state.set_failed(crate::state::DeployStage::Build, "boom".into());
+        drop((_guard, state));
+
+        let slots = slots_of(&ctx, "web");
+        assert_eq!(slots.len(), 1);
+        assert_eq!(slots[0].key(), (web, Some(1)));
+        assert_eq!(slots[0].policy, Policy::Restart);
+    }
+
+    #[test]
+    fn failed_at_active_version_yields_no_slot() {
+        // The failed version is the active one (handed off, then unready):
+        // nothing to keep up until the next deploy.
+        let (_dir, ctx) = ctx();
+        let web = UnitName::new("web").unwrap();
+        let (_guard, mut state) = DeployState::acquire(&ctx, &web).unwrap();
+        state.begin_deploy("app").unwrap();
+        state.set_check();
+        state.set_failed(crate::state::DeployStage::Startup, "boom".into());
+        drop((_guard, state));
+
+        assert!(slots_of(&ctx, "web").is_empty());
+    }
+
+    #[test]
+    fn ready_ignores_a_stray_candidate() {
+        let (_dir, ctx) = ctx();
+        let web = UnitName::new("web").unwrap();
+        let (_guard, mut state) = DeployState::acquire(&ctx, &web).unwrap();
+        state.begin_deploy("app").unwrap();
+        state.set_ready();
+        state.begin_deploy("app").unwrap();
+        state.set_candidate();
+        state.set_ready();
+        assert_eq!(state.candidate_version, Some(2));
+        drop((_guard, state));
+
+        let slots = slots_of(&ctx, "web");
+        assert_eq!(slots.len(), 1);
+        assert_eq!(slots[0].key(), (web, Some(2)));
+        assert_eq!(slots[0].policy, Policy::Restart);
     }
 }

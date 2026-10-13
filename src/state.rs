@@ -73,6 +73,7 @@ pub enum LockHolder {
 pub struct UndeployOutcome {
     pub kind: Option<String>,
     pub active_version: Option<u32>,
+    pub candidate_version: Option<u32>,
     pub changed: bool,
 }
 
@@ -162,6 +163,11 @@ pub struct DeployState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_version: Option<u32>,
 
+    /// The version started next to the active one by a parallel deploy,
+    /// awaiting its switch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_version: Option<u32>,
+
     #[serde(skip)]
     path: PathBuf,
 }
@@ -208,6 +214,7 @@ impl DeployState {
                     supervised: false,
                     start_after: Vec::new(),
                     source_version: None,
+                    candidate_version: None,
                     path,
                 });
             }
@@ -302,6 +309,7 @@ impl DeployState {
         self.updated_at = Utc::now();
         self.failure = None;
         self.source_version = None;
+        self.candidate_version = None;
         self.save()?;
 
         Ok(next_version)
@@ -350,6 +358,40 @@ impl DeployState {
         let _ = self.save();
     }
 
+    /// Hand the build off next to the active version: a parallel deploy's
+    /// `set_check` that leaves `active_version` alone until the switch.
+    pub fn set_candidate(&mut self) {
+        self.candidate_version = Some(self.last_version);
+        self.last_status = DeployStatus::Check;
+        self.supervised = true;
+        self.updated_at = Utc::now();
+        self.failure = None;
+        let _ = self.save();
+    }
+
+    /// Switch: the candidate becomes active. Returns the previous active.
+    pub fn promote_candidate(&mut self) -> Option<u32> {
+        let previous = self.active_version;
+        self.active_version = self.candidate_version.take();
+        self.updated_at = Utc::now();
+        let _ = self.save();
+        previous
+    }
+
+    /// Undo a switch: `active` is back in service, the candidate is dropped.
+    pub fn revert_candidate(&mut self, active: Option<u32>) {
+        self.active_version = active;
+        self.candidate_version = None;
+        self.updated_at = Utc::now();
+        let _ = self.save();
+    }
+
+    /// Forget a candidate that was discarded before its switch.
+    pub fn clear_candidate(&mut self) {
+        self.candidate_version = None;
+        let _ = self.save();
+    }
+
     /// Sets build status to ready, sets build version as active version
     pub fn set_ready(&mut self) {
         self.active_version = Some(self.last_version);
@@ -364,7 +406,9 @@ impl DeployState {
     pub fn undeploy(&mut self) -> Result<UndeployOutcome, DeployStateError> {
         let kind = self.kind.clone();
         let active_version = self.active_version;
+        let candidate_version = self.candidate_version;
         let changed = self.active_version.is_some()
+            || self.candidate_version.is_some()
             || self.supervised
             || !self.start_after.is_empty()
             || self.last_status != DeployStatus::Idle
@@ -372,6 +416,7 @@ impl DeployState {
 
         if changed {
             self.active_version = None;
+            self.candidate_version = None;
             self.last_status = DeployStatus::Idle;
             self.supervised = false;
             self.start_after = Vec::new();
@@ -383,6 +428,7 @@ impl DeployState {
         Ok(UndeployOutcome {
             kind,
             active_version,
+            candidate_version,
             changed,
         })
     }
@@ -496,8 +542,19 @@ mod tests {
             supervised: false,
             start_after: Vec::new(),
             source_version: None,
+            candidate_version: None,
             path: dir.join(".deploy.state"),
         }
+    }
+
+    /// v1 ready and live, v2 handed off next to it as a candidate.
+    fn state_with_candidate(dir: &std::path::Path) -> DeployState {
+        let mut state = state_at(dir);
+        state.begin_deploy("app").unwrap();
+        state.set_ready();
+        state.begin_deploy("app").unwrap();
+        state.set_candidate();
+        state
     }
 
     fn ctx_at(dir: &std::path::Path) -> MainContext {
@@ -683,6 +740,101 @@ mod tests {
         assert!(
             !content.contains("source_version"),
             "cleared source should be omitted:\n{content}"
+        );
+    }
+
+    #[test]
+    fn set_candidate_keeps_the_active_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state_with_candidate(dir.path());
+
+        assert_eq!(state.active_version, Some(1));
+        assert_eq!(state.candidate_version, Some(2));
+        assert_eq!(state.last_status, DeployStatus::Check);
+        assert!(state.supervised);
+        assert!(state.failure.is_none());
+    }
+
+    #[test]
+    fn promote_candidate_returns_the_old_active() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = state_with_candidate(dir.path());
+
+        assert_eq!(state.promote_candidate(), Some(1));
+
+        assert_eq!(state.active_version, Some(2));
+        assert_eq!(state.candidate_version, None);
+        // The switch does not decide readiness.
+        assert_eq!(state.last_status, DeployStatus::Check);
+    }
+
+    #[test]
+    fn revert_candidate_restores_the_active() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = state_with_candidate(dir.path());
+        let previous = state.promote_candidate();
+
+        state.revert_candidate(previous);
+
+        assert_eq!(state.active_version, Some(1));
+        assert_eq!(state.candidate_version, None);
+    }
+
+    #[test]
+    fn begin_deploy_clears_the_candidate() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = state_with_candidate(dir.path());
+
+        state.begin_deploy("app").unwrap();
+
+        assert_eq!(state.candidate_version, None);
+        assert_eq!(state.active_version, Some(1));
+    }
+
+    #[test]
+    fn undeploy_clears_and_reports_the_candidate() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = state_with_candidate(dir.path());
+
+        let outcome = state.undeploy().unwrap();
+
+        assert_eq!(outcome.active_version, Some(1));
+        assert_eq!(outcome.candidate_version, Some(2));
+        assert!(outcome.changed);
+        assert_eq!(state.candidate_version, None);
+        assert_eq!(state.active_version, None);
+    }
+
+    #[test]
+    fn candidate_version_loads_absent_and_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ctx_at(dir.path());
+        let name = UnitName::new("web").unwrap();
+
+        // A deploy.json from before the field existed.
+        let path = ctx.deploy_state_path(&name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"active_version":1,"last_version":1,"last_status":"ready","updated_at":"2026-05-31T07:00:00.000000Z"}"#,
+        )
+        .unwrap();
+        let state = DeployState::load(&ctx, &name).unwrap();
+        assert_eq!(state.candidate_version, None);
+
+        let (_guard, mut state) = DeployState::acquire(&ctx, &name).unwrap();
+        state.begin_deploy("app").unwrap();
+        state.set_candidate();
+
+        let reloaded = DeployState::load(&ctx, &name).unwrap();
+        assert_eq!(reloaded.candidate_version, Some(2));
+        assert_eq!(reloaded.active_version, Some(1));
+
+        state.clear_candidate();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains("candidate_version"),
+            "cleared candidate should be omitted:\n{content}"
         );
     }
 

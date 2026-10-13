@@ -195,6 +195,24 @@ fn rotated_path(path: &Path, i: u32) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// Move a CriLog file and its whole rotation ring to `to` (and `to.<i>`).
+/// A missing member is skipped.
+pub fn rename_all(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<()> {
+    let (from, to) = (from.as_ref(), to.as_ref());
+    let mut pairs = vec![(from.to_path_buf(), to.to_path_buf())];
+    pairs.extend((1 ..= MAX_FILES).map(|i| (rotated_path(from, i), rotated_path(to, i))));
+
+    for (src, dst) in pairs {
+        match std::fs::rename(&src, &dst) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+    }
+
+    Ok(())
+}
+
 /// Delete a CriLog file and its whole rotation ring.
 pub fn remove_all(path: impl AsRef<Path>) -> io::Result<()> {
     let path = path.as_ref();

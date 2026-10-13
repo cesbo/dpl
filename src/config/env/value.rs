@@ -12,7 +12,7 @@ use crate::{
         SecretName,
         UnitName,
     },
-    deploy::resolve_export,
+    deploy::resolve_export_with,
     reference::{
         Location,
         ReferenceError,
@@ -170,6 +170,16 @@ impl Value {
     }
 
     pub fn render(&self, ctx: &MainContext) -> Result<String, ReferenceError> {
+        self.render_with(ctx, false)
+    }
+
+    /// Like [`Value::render`], but a unit ref names the version in service
+    /// where that matters (a domain route to a `strategy: parallel` app).
+    pub fn render_pinned(&self, ctx: &MainContext) -> Result<String, ReferenceError> {
+        self.render_with(ctx, true)
+    }
+
+    fn render_with(&self, ctx: &MainContext, pinned: bool) -> Result<String, ReferenceError> {
         let mut out = String::new();
         for seg in &self.0 {
             match seg {
@@ -184,7 +194,7 @@ impl Value {
                                 .map_err(ReferenceError::from)
                                 .map_err(|e| e.at(Location::token(&token)))?
                         }
-                        Ns::Unit(unit_name) => resolve_export(ctx, unit_name, name)
+                        Ns::Unit(unit_name) => resolve_export_with(ctx, unit_name, name, pinned)
                             .map_err(|e| e.at(Location::token(&token)))?,
                     };
                     out.push_str(&value);

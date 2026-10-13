@@ -45,8 +45,10 @@ per-unit directory:
   - `log/build.log` - last build: captured podman build/restore output, CRI
     `k8s-file` format; cleared at the start of each deploy
   - `log/runtime.log` - container stdout/stderr, captured by `dpl start`, CRI
-    `k8s-file` format; rotated at 20mb. For `http-server`, only stderr is
-    written here.
+    `k8s-file` format; rotated at 20mb. For an app it is a symlink to
+    `log/runtime-v{N}.log` of the version in service (one file per retained
+    version, dropped with the version); other kinds write it directly. For
+    `http-server`, only stderr is written here.
   - `log/access.log` (http-server only) - nginx access log captured from stdout
     as JSONL without a CRI prefix; non-object stdout lines are dropped; rotated
     at 200mb by default
@@ -137,6 +139,10 @@ timers:
   Domain units can serve them via `${<unit>:export}`. `source` must be an
   absolute path inside the image and cannot be `/`
 - `timers` - periodic in-container scripts
+- `strategy` - how a new version takes over: `replace` (default) stops the
+  running version, then starts the new one; `parallel` starts the new one
+  next to it and switches once it is ready (see
+  [Parallel deploys](#parallel-deploys))
 
 ### Static sites (no runtime)
 
@@ -196,7 +202,10 @@ runtime:
   dependency automatically (no separate `databases:` list)
 - `${<app-unit>:<key>}` - export from an `app` unit. Keys: `url`
   (`http://dpl--<name>:<port>`, the container's stable DNS alias), `socket`
-  (without scheme), `export` (static export path inside the nginx container)
+  (without scheme), `export` (static export path inside the nginx container).
+  Env refs always resolve to the alias; a domain route to a
+  `strategy: parallel` app is instead pinned to the version in service
+  (`http://dpl--<name>--<version>:<port>`) and re-rendered at the switch
 
 References are validated by `dpl check`.
 
@@ -420,15 +429,49 @@ dpl rollback myapp 6                                # back to retained version 6
 
 An app keeps the image and encrypted env of its previous good version (one by
 default). A rollback retags that image as a new version, re-encrypts the
-retained env under it, then runs the normal stop/start with the usual
-readiness check. Versions only go forward; `dpl inspect` shows the new one as
-`rollback of N`. `dpl undeploy` removes the active version only; older
-retained images stay until the next successful deploy prunes them.
+retained env under it, then runs the normal hand-off (per `strategy`) with
+the usual readiness check. Versions only go forward; `dpl inspect` shows the
+new one as `rollback of N`. `dpl undeploy` removes the active version only;
+older retained images stay until the next successful deploy prunes them.
 
 Limits: app units only. The env is the one the source version ran with - a
 secret rotated since is not picked up. The yaml is not versioned: port,
 volumes, timers and the readiness criterion come from the current file, while
 the command is baked into the image.
+
+### Parallel deploys
+
+With `strategy: parallel` the new version is started next to the running one
+instead of after it. The deploy builds as usual, then hands the new container
+to `dpl serve` without the `dpl--<name>` DNS alias and waits for the usual
+readiness check on it, while the old version keeps serving. Once ready, the
+alias is attached to the new container (a podman network disconnect and
+reconnect, the process is not restarted), the new version becomes active,
+dependent domains are re-rendered against its container and nginx reloaded,
+and only then is the old version stopped and the usual pruning done.
+`dpl inspect` shows `Candidate: N (checking)` during the window, and the
+candidate writes `log/runtime-v<N>.log` while `runtime.log` still points at
+the old version until the switch.
+
+A candidate that fails readiness (or whose alias cannot be attached) is
+stopped and the old version is untouched: still active, still supervised.
+`dpl inspect` shows the failure; the next deploy or rollback discards the
+candidate's image and env. A domain that fails to re-render after the switch
+reverts it: the old version is active again, the domains are re-rendered
+against it, then the candidate is stopped. `dpl rollback` follows the strategy
+too.
+
+Limits: app units with a `runtime` only (a static unit always behaves as
+`replace`). Both versions run until the old one is stopped, so named `volumes`
+are mounted by both, timers run in the active one, and two versions need twice
+the resources for up to the 90s readiness budget. Env refs `${<app>:url}` from
+other apps follow the alias, so both versions answer them between the alias
+attach and the stop of the old one; domain routes are pinned to the version in
+service and switch exactly at the nginx reload (see
+[Env templates](#env-templates)). An app whose container is still named
+`dpl--<name>` by an older dpl must be deployed once by this dpl before it is
+switched to `parallel`: the pin names `dpl--<name>--<version>`, which does not
+exist yet.
 
 ### Readiness
 
@@ -482,7 +525,8 @@ systemd and should have exactly one instance per `<base>`; it holds
 Deploys do not start containers directly. They mark the unit `check`, then
 SIGHUP the running `dpl serve` process. Serve reconciles deploy state, starts
 `check` runtime units once via child `dpl start <unit>` processes for startup
-verification, restarts only `ready` units with backoff if they exit, and stops
+verification, restarts the version in service with backoff if it exits (also
+while a parallel candidate is checking, or after one failed), and stops
 supervised containers on shutdown.
 Use `dpl undeploy <unit>` to remove a unit from service; it clears the active
 deployment state so serve and timers stop treating the unit as desired.

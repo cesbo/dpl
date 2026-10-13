@@ -131,7 +131,7 @@ impl<'a> RenderRoute<'a> {
             } => {
                 let render_route = RenderRoute::ReverseProxy {
                     location: location.as_str(),
-                    target: target.render(ctx)?,
+                    target: target.render_pinned(ctx)?,
                     websocket: *websocket,
                     custom_config,
                 };
@@ -144,7 +144,7 @@ impl<'a> RenderRoute<'a> {
             } => {
                 let render_route = RenderRoute::Uwsgi {
                     location: location.as_str(),
-                    target: target.render(ctx)?,
+                    target: target.render_pinned(ctx)?,
                     custom_config,
                 };
                 Ok(render_route)
@@ -156,7 +156,7 @@ impl<'a> RenderRoute<'a> {
             } => {
                 let render_route = RenderRoute::Fastcgi {
                     location: location.as_str(),
-                    target: target.render(ctx)?,
+                    target: target.render_pinned(ctx)?,
                     custom_config,
                 };
                 Ok(render_route)
@@ -169,7 +169,7 @@ impl<'a> RenderRoute<'a> {
             } => {
                 let render_route = RenderRoute::ServeFiles {
                     location: location.as_str(),
-                    root: root.render(ctx)?,
+                    root: root.render_pinned(ctx)?,
                     spa: *spa,
                     custom_config,
                 };

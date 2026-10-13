@@ -60,13 +60,17 @@ pub fn run(ctx: &MainContext) -> Result<()> {
 
 /// Every supervised unit with the container names it may run under: an app
 /// with an active version under its versioned name or a legacy one (started by
-/// an older dpl), everything else under the legacy name only.
+/// an older dpl) plus its candidate's, everything else under the legacy name
+/// only.
 fn supervised_targets(ctx: &MainContext) -> Vec<(UnitName, Vec<String>)> {
     DeployState::list(ctx)
         .into_iter()
         .filter(|(_, state)| state.supervised)
         .map(|(name, state)| {
-            let containers = probe_names(&name, state.kind.as_deref(), state.active_version);
+            let mut containers = probe_names(&name, state.kind.as_deref(), state.active_version);
+            if let Some(candidate) = state.candidate_version {
+                containers.push(name.container_name(candidate));
+            }
             (name, containers)
         })
         .collect()
@@ -161,11 +165,22 @@ mod tests {
         state.set_ready();
     }
 
+    /// An app with v1 live and v2 handed off next to it as a candidate.
+    fn deploy_candidate(ctx: &MainContext, name: &str) {
+        let name = UnitName::new(name).unwrap();
+        let (_guard, mut state) = DeployState::acquire(ctx, &name).unwrap();
+        state.begin_deploy("app").unwrap();
+        state.set_ready();
+        state.begin_deploy("app").unwrap();
+        state.set_candidate();
+    }
+
     #[test]
     fn targets_only_the_supervised_set() {
         let (_dir, ctx) = ctx();
 
         deploy_supervised(&ctx, "web", "app");
+        deploy_candidate(&ctx, "api");
         deploy_supervised(&ctx, "pg", "db-server");
         deploy_plain(&ctx, "dbx");
         deploy_plain(&ctx, "site-com");
@@ -177,6 +192,14 @@ mod tests {
         assert_eq!(
             targets,
             vec![
+                (
+                    UnitName::new("api").unwrap(),
+                    vec![
+                        "dpl--api--1".to_string(),
+                        "dpl--api".to_string(),
+                        "dpl--api--2".to_string(),
+                    ],
+                ),
                 (UnitName::new("pg").unwrap(), vec!["dpl--pg".to_string()]),
                 (
                     UnitName::new("web").unwrap(),

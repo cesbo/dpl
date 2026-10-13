@@ -34,6 +34,7 @@ BASE = os.environ.get('DPL_BASE') or '/opt/dpl'
 LOGS = {'build.log', 'runtime.log', 'timers.log', 'access.log'}  # files in {base}/state/{unit}/log/
 UNIT = re.compile(r'[a-z0-9]+(-[a-z0-9]+)*')  # dpl unit names
 VERSION = re.compile(r'[1-9][0-9]*')  # ASCII only: int() would take digits clap rejects
+RUNTIME_V = re.compile(rf'runtime-v{VERSION.pattern}\.log')  # an app version's own log, as `Log:` names it
 LOG_LINE = re.compile(r'^ *Log: (\S+)\s*\Z', re.M)  # last line of a failed `dpl deploy`/`dpl rollback`
 
 
@@ -93,7 +94,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         url = urlsplit(self.path)
         unit, _, name = url.path.strip('/').partition('/')
-        if not UNIT.fullmatch(unit) or name not in LOGS:
+        if not UNIT.fullmatch(unit) or (name not in LOGS and not RUNTIME_V.fullmatch(name)):
             return self.reply(404, 'GET /<unit>/{build,runtime,timers,access}.log?lines=N\n')
         try:
             lines = int(parse_qs(url.query).get('lines', ['1000'])[0])

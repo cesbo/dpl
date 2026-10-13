@@ -192,6 +192,7 @@ mod tests {
                     disabled: true,
                 },
             ],
+            strategy: DeployStrategy::Replace,
         };
 
         let name = UnitName::new("my-app").unwrap();
@@ -250,6 +251,7 @@ mod tests {
             volumes: Vec::new(),
             exports: Vec::new(),
             timers: Vec::new(),
+            strategy: DeployStrategy::Replace,
         };
 
         let temp_dir = tempdir().unwrap();
@@ -300,6 +302,7 @@ mod tests {
                 script: "echo cleanup".into(),
                 disabled: false,
             }],
+            strategy: DeployStrategy::Replace,
         };
 
         let name = UnitName::new("site").unwrap();

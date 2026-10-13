@@ -110,29 +110,43 @@ impl UnitConfig {
         }
     }
 
-    pub fn resolve_export(
+    /// Resolve `${unit:key}`. `pinned` asks an app for the version in
+    /// service instead of its alias (domain routes); other kinds ignore it.
+    pub fn resolve_export_with(
         &self,
         ctx: &MainContext,
         unit_name: &UnitName,
         key: &str,
+        pinned: bool,
     ) -> Result<String, ReferenceError> {
         match self {
-            UnitConfig::App(config) => config.resolve_export(ctx, unit_name, key),
+            UnitConfig::App(config) => config.resolve_export_with(ctx, unit_name, key, pinned),
             UnitConfig::Db(config) => config.resolve_export(ctx, unit_name, key),
             _ => Err(ReferenceError::unknown_export(key)),
         }
     }
 }
 
+pub fn resolve_export_with(
+    ctx: &MainContext,
+    unit_name: &UnitName,
+    key: &str,
+    pinned: bool,
+) -> Result<String, ReferenceError> {
+    UnitConfig::load(ctx, unit_name)
+        .map_err(ReferenceError::from)
+        .and_then(|cfg| cfg.resolve_export_with(ctx, unit_name, key, pinned))
+        .map_err(|err| err.at(Location::unit(unit_name.as_str())))
+}
+
+/// The unpinned form of [`resolve_export_with`].
+#[cfg(test)]
 pub fn resolve_export(
     ctx: &MainContext,
     unit_name: &UnitName,
     key: &str,
 ) -> Result<String, ReferenceError> {
-    UnitConfig::load(ctx, unit_name)
-        .map_err(ReferenceError::from)
-        .and_then(|cfg| cfg.resolve_export(ctx, unit_name, key))
-        .map_err(|err| err.at(Location::unit(unit_name.as_str())))
+    resolve_export_with(ctx, unit_name, key, false)
 }
 
 /// Return all units satisfies `predicate`, sorted by name.
@@ -204,6 +218,15 @@ pub fn wait_ready(
 pub fn deployed_version(ctx: &MainContext, name: &UnitName, kind: &str) -> Result<u32, RunError> {
     let state = DeployState::load(ctx, name)
         .map_err(|e| RunError::new(format!("load state for '{name}'"), e))?;
+    deployed_version_of(&state, name, kind)
+}
+
+/// [`deployed_version`] on a loaded state.
+pub fn deployed_version_of(
+    state: &DeployState,
+    name: &UnitName,
+    kind: &str,
+) -> Result<u32, RunError> {
     let version = state.active_version.unwrap_or(state.last_version);
 
     if version == 0 {
