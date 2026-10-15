@@ -21,7 +21,8 @@ curl -fsSL -o /opt/dpl/dpl-http.py "$R/dpl-http.py"
 curl -fsSL -o /etc/systemd/system/dpl-http.service "$R/dpl-http.service"
 ```
 
-Set the allowed IP addresses (see the next section), then start the service:
+Set the allowed IP addresses and, if you want one, a deploy token (see the
+next sections), then start the service:
 
 ```sh
 systemctl daemon-reload
@@ -59,7 +60,11 @@ Add these lines and save:
 ```ini
 [Service]
 Environment="DEPLOY_ALLOW=203.0.113.10 198.51.100.7"
+Environment="DEPLOY_TOKEN=replace-with-a-long-random-string"
 ```
+
+`DEPLOY_TOKEN` is optional. Several tokens go in the same variable, separated
+by spaces (`token-for-ci token-for-laptop`). See [Token](#token).
 
 Then restart the service:
 
@@ -76,22 +81,50 @@ Rules:
 
 Other settings go in the same override:
 
-| Variable       | Default    | Meaning                                  |
-|----------------|------------|------------------------------------------|
-| `DEPLOY_ALLOW` | (required) | Allowed client IP addresses              |
-| `DEPLOY_PORT`  | `8099`     | Port to listen on                        |
-| `DPL_BASE`     | `/opt/dpl` | dpl base directory, if you changed it    |
+| Variable       | Default    | Meaning                                      |
+|----------------|------------|----------------------------------------------|
+| `DEPLOY_ALLOW` | (required) | Allowed client IP addresses                  |
+| `DEPLOY_TOKEN` | (none)     | If set, every request must send one of these |
+| `DEPLOY_PORT`  | `8099`     | Port to listen on                            |
+| `DPL_BASE`     | `/opt/dpl` | dpl base directory, if you changed it        |
 
-The IP list is the only access control, and the traffic is plain HTTP.
-Allow only hosts you trust.
+The IP list always applies. A token is a second check, not a replacement
+(see [Token](#token)). The traffic is plain HTTP. Allow only hosts you trust.
+
+## Token
+
+If `DEPLOY_TOKEN` is set, a request from an allowed IP must also send one of
+those tokens:
+
+```
+Authorization: Bearer <token>
+```
+
+Leave the variable unset to keep IP checks only. An update of the script does
+not start requiring a token until you set one.
+
+Rules:
+
+- Separate tokens with spaces. A token itself cannot contain spaces.
+- Printable ASCII only. Generate one with `openssl rand -hex 32`.
+- Any one of the tokens is accepted. Use more than one so a CI job and a
+  laptop can have different tokens, and you can drop one without locking the
+  other out.
+- The token is not written to the journal. It is still visible on the wire:
+  this is plain HTTP.
+
+A missing or wrong token is rejected with `401` before the archive is read, so
+it does not block the next deploy.
 
 ## Usage
 
 Deploy a unit:
 
 ```sh
-git archive --format tar.gz HEAD | curl -N --data-binary @- http://<server>:8099/<unit>
+git archive --format tar.gz HEAD | curl -N -H "Authorization: Bearer $TOKEN" --data-binary @- http://<server>:8099/<unit>
 ```
+
+Omit `-H` if you did not set `DEPLOY_TOKEN`.
 
 The response is the `dpl deploy` output, sent as each step is written rather
 than after the deploy finishes. `-N` keeps curl from buffering that stream
@@ -106,8 +139,8 @@ success. On failure the response also has the last 100 lines of the build log
 Roll back a unit:
 
 ```sh
-curl -N -X POST http://<server>:8099/<unit>/rollback
-curl -N -X POST 'http://<server>:8099/<unit>/rollback?version=N'
+curl -N -H "Authorization: Bearer $TOKEN" -X POST http://<server>:8099/<unit>/rollback
+curl -N -H "Authorization: Bearer $TOKEN" -X POST 'http://<server>:8099/<unit>/rollback?version=N'
 ```
 
 Runs `dpl rollback <unit> [N]`: the previous retained version (or version `N`)
@@ -117,7 +150,7 @@ like a deploy.
 Read a unit log:
 
 ```sh
-curl 'http://<server>:8099/<unit>/build.log?lines=1000'
+curl -H "Authorization: Bearer $TOKEN" 'http://<server>:8099/<unit>/build.log?lines=1000'
 ```
 
 - Logs: `build.log`, `runtime.log`, `timers.log`, `access.log`. For an app,

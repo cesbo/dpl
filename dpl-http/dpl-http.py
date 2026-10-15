@@ -1,26 +1,30 @@
 #!/usr/bin/env python3
 """Deploy a dpl unit over HTTP.
 
-    git archive --format tar.gz HEAD | curl -N --data-binary @- http://<server>:8099/<unit>
+    git archive --format tar.gz HEAD | curl -N -H "Authorization: Bearer $TOKEN" --data-binary @- http://<server>:8099/<unit>
 
-Accepts requests only from the IPs in DEPLOY_ALLOW (space-separated), saves the
-archive to a temp file and runs `dpl deploy <unit> <file>`. dpl's step lines are
-forwarded as they are written, so the client is not waiting on a silent
-connection. The status is 200 once dpl has started: it has to be sent before the
-deploy finishes, so a failed deploy is not an HTTP error. The last line is
-`dpl-http: exit N` (dpl's exit code; 0 is success). On failure the `Log: <path>`
-line is replaced with the tail of that log: the client cannot read server files.
+Accepts requests only from the IPs in DEPLOY_ALLOW (space-separated). If
+DEPLOY_TOKEN is set (space-separated), the request must also send one of those
+tokens as `Authorization: Bearer`. Saves the archive to a temp file and runs
+`dpl deploy <unit> <file>`. dpl's step lines are forwarded as they are written,
+so the client is not waiting on a silent connection. The status is 200 once dpl
+has started: it has to be sent before the deploy finishes, so a failed deploy is
+not an HTTP error. The last line is `dpl-http: exit N` (dpl's exit code; 0 is
+success). On failure the `Log: <path>` line is replaced with the tail of that
+log: the client cannot read server files.
 
-    curl -N -X POST 'http://<server>:8099/<unit>/rollback?version=N'
+    curl -N -H "Authorization: Bearer $TOKEN" -X POST 'http://<server>:8099/<unit>/rollback?version=N'
 
 POST to /<unit>/rollback runs `dpl rollback <unit> [N]` (no body; `version`
 optional) and answers like a deploy.
 
-    curl 'http://<server>:8099/<unit>/build.log?lines=1000'
+    curl -H "Authorization: Bearer $TOKEN" 'http://<server>:8099/<unit>/build.log?lines=1000'
 
 GET returns the last `lines` (default 1000) of {DPL_BASE}/state/<unit>/log/<name>
 for build, runtime, timers and access logs.
 """
+import hashlib
+import hmac
 import os
 import re
 import select
@@ -40,6 +44,41 @@ UNIT = re.compile(r'[a-z0-9]+(-[a-z0-9]+)*')  # dpl unit names
 VERSION = re.compile(r'[1-9][0-9]*')  # ASCII only: int() would take digits clap rejects
 RUNTIME_V = re.compile(rf'runtime-v{VERSION.pattern}\.log')  # an app version's own log, as `Log:` names it
 LOG_LINE = re.compile(r'^ *Log: (\S+)\s*\Z', re.M)  # last line of a failed `dpl deploy`/`dpl rollback`
+
+
+def token_digests(raw):
+    """SHA-256 of each space-separated DEPLOY_TOKEN. Empty if the variable is unset."""
+    digests = []
+    for token in raw.split():
+        if not token.isascii() or not token.isprintable():
+            sys.exit('DEPLOY_TOKEN must be printable ASCII without spaces')
+        digests.append(hashlib.sha256(token.encode()).digest())
+    return tuple(digests)
+
+
+# Empty unless DEPLOY_TOKEN is set. Any one match is enough; the raw tokens are not kept.
+TOKEN_DIGESTS = token_digests(os.environ.get('DEPLOY_TOKEN', ''))
+
+
+def bearer(header):
+    """Token from `Authorization: Bearer <token>`, or None."""
+    scheme, sep, token = header.strip().partition(' ')
+    if sep != ' ' or scheme.lower() != 'bearer':
+        return None
+    token = token.strip()
+    if not token or any(c.isspace() for c in token):
+        return None
+    return token
+
+
+def authorized(header):
+    if not TOKEN_DIGESTS:
+        return True
+    presented = bearer(header)
+    if presented is None:
+        return False
+    digest = hashlib.sha256(presented.encode()).digest()
+    return any(hmac.compare_digest(digest, stored) for stored in TOKEN_DIGESTS)
 
 
 def tail(path, lines):
@@ -127,6 +166,16 @@ class Server(HTTPServer):
 class Handler(BaseHTTPRequestHandler):
     timeout = 60  # a stalled upload must not block the next deploy
     disable_nagle_algorithm = True  # a phase line is a few bytes; Nagle would sit on it
+
+    def parse_request(self):
+        # Before the body is read, so a bad token cannot hold the slot with an upload.
+        if not super().parse_request():
+            return False
+        if authorized(self.headers.get('Authorization', '')):
+            return True
+        sys.stderr.write(f'rejected {self.client_address[0]}: unauthorized\n')
+        self.reply(401, 'send Authorization: Bearer <token>\n')
+        return False
 
     def do_POST(self):
         url = urlsplit(self.path)
