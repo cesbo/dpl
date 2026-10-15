@@ -90,18 +90,24 @@ Allow only hosts you trust.
 Deploy a unit:
 
 ```sh
-git archive --format tar.gz HEAD | curl --fail-with-body --data-binary @- http://<server>:8099/<unit>
+git archive --format tar.gz HEAD | curl -N --data-binary @- http://<server>:8099/<unit>
 ```
 
-The response is the `dpl deploy` output. The status is `200` on success and
-`500` on failure. On failure the response also has the last 100 lines of the
-build log (or the runtime log, if the app did not start).
+The response is the `dpl deploy` output, sent as each step is written rather
+than after the deploy finishes. `-N` keeps curl from buffering that stream
+when its output is not a terminal.
+
+The status is `200` once `dpl` has started. It is sent before the result is
+known, so a failed deploy is not an HTTP error.
+The last line is `dpl-http: exit N` — `N` is `dpl`'s exit code, and `0` is
+success. On failure the response also has the last 100 lines of the build log
+(or the runtime log, if the app did not start).
 
 Roll back a unit:
 
 ```sh
-curl --fail-with-body -X POST http://<server>:8099/<unit>/rollback
-curl --fail-with-body -X POST 'http://<server>:8099/<unit>/rollback?version=N'
+curl -N -X POST http://<server>:8099/<unit>/rollback
+curl -N -X POST 'http://<server>:8099/<unit>/rollback?version=N'
 ```
 
 Runs `dpl rollback <unit> [N]`: the previous retained version (or version `N`)
@@ -111,7 +117,7 @@ like a deploy.
 Read a unit log:
 
 ```sh
-curl --fail-with-body 'http://<server>:8099/<unit>/build.log?lines=1000'
+curl 'http://<server>:8099/<unit>/build.log?lines=1000'
 ```
 
 - Logs: `build.log`, `runtime.log`, `timers.log`, `access.log`. For an app,
