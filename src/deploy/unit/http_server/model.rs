@@ -26,9 +26,6 @@ pub struct HttpServerConfig {
     pub http_port: HttpPort,
 
     #[serde(default)]
-    pub https_port: HttpPort,
-
-    #[serde(default)]
     pub access_log: HttpAccessLogConfig,
 }
 
@@ -132,7 +129,6 @@ mod tests {
         let config: HttpServerConfig = serde_yaml::from_str("{}").unwrap();
         assert_eq!(config.image, DEFAULT_IMAGE);
         assert_eq!(config.http_port, HttpPort::Port(DEFAULT_HTTP_PORT));
-        assert_eq!(config.https_port, HttpPort::Disabled);
         assert_eq!(
             config.access_log.max_size_mb,
             DEFAULT_ACCESS_LOG_MAX_SIZE_MB
@@ -147,7 +143,6 @@ mod tests {
             r#"
 image: docker.io/library/nginx:1.27
 http_port: 8080
-https_port: 8443
 access_log:
   max_size_mb: 512
   max_files: 3
@@ -156,29 +151,16 @@ access_log:
         .unwrap();
         assert_eq!(config.image, "docker.io/library/nginx:1.27");
         assert_eq!(config.http_port, HttpPort::Port(8080));
-        assert_eq!(config.https_port, HttpPort::Port(8443));
         assert_eq!(config.access_log.max_size_mb, 512);
         assert_eq!(config.access_log.max_files, 3);
         assert_eq!(config.access_log.max_size_bytes(), 512 * 1024 * 1024);
     }
 
     #[test]
-    fn parse_https_port_false_as_disabled() {
-        let config: HttpServerConfig = serde_yaml::from_str("https_port: false\n").unwrap();
-        assert_eq!(config.https_port, HttpPort::Disabled);
-    }
-
-    #[test]
-    fn parse_https_port_null_as_disabled() {
-        let config: HttpServerConfig = serde_yaml::from_str("https_port: null\n").unwrap();
-        assert_eq!(config.https_port, HttpPort::Disabled);
-    }
-
-    #[test]
-    fn reject_https_port_true() {
-        let err = serde_yaml::from_str::<HttpServerConfig>("https_port: true\n").unwrap_err();
+    fn reject_https_port() {
+        let err = serde_yaml::from_str::<HttpServerConfig>("https_port: 443\n").unwrap_err();
         assert!(
-            err.to_string().contains("must be a port number or false"),
+            err.to_string().contains("unknown field"),
             "unexpected error: {err}"
         );
     }

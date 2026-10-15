@@ -62,14 +62,11 @@ impl<'a> DomainUnit<'a> {
         // delivers host-side traffic from inside that subnet (rootlessport, or
         // masqueraded loopback); such a client could then spoof the client IP.
         if self.config.proxy == Some(ProxyConfig::CloudflareTunnel)
-            && (server_config.http_port != HttpPort::Disabled
-                || server_config.https_port != HttpPort::Disabled)
+            && server_config.http_port != HttpPort::Disabled
         {
             return Err(DeployError::step_prepare(
                 format!("check http-server '{}'", self.config.server),
-                std::io::Error::other(
-                    "proxy cloudflare-tunnel requires http_port: false and https_port: false",
-                ),
+                std::io::Error::other("proxy cloudflare-tunnel requires http_port: false"),
             ));
         }
 
@@ -276,16 +273,6 @@ routes:
 
         // Default http_port (80) is published: the subnet allowlist would be spoofable.
         ctx.write_test_unit("web", "type: http-server\n");
-        let err = DomainUnit::new(&ctx, &name, domain(yaml))
-            .install_inner()
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("check http-server 'web'"),
-            "unexpected error: {err}"
-        );
-
-        // https_port alone is published: still rejected.
-        ctx.write_test_unit("web", "type: http-server\nhttp_port: false\nhttps_port: 443\n");
         let err = DomainUnit::new(&ctx, &name, domain(yaml))
             .install_inner()
             .unwrap_err();

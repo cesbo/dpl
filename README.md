@@ -245,10 +245,10 @@ Use `cloudflare-tunnel` when the domain is served through a
 [`cloudflare-tunnel`](#cloudflare-tunnel) unit: the peer nginx sees is the
 `cloudflared` container on the `dpl` network, not Cloudflare's public ranges.
 The allowlist is the whole container subnet, so the `http-server` must have
-`http_port: false` and `https_port: false` - the domain deploy refuses
-otherwise. A published port would deliver host-side traffic from inside that
-subnet (rootless podman proxies every connection; rootful masquerades
-loopback), letting such a client spoof `CF-Connecting-IP`.
+`http_port: false` - the domain deploy refuses otherwise. A published port
+would deliver host-side traffic from inside that subnet (rootless podman
+proxies every connection; rootful masquerades loopback), letting such a
+client spoof `CF-Connecting-IP`.
 A list fetch failure aborts the deploy rather than rendering an empty
 allowlist.
 
@@ -260,13 +260,15 @@ Without `proxy`, or from any other peer, it is always nginx's `$scheme`.
 
 ## HTTP server units
 
-An `http-server` unit runs nginx and publishes HTTP on the host.
+An `http-server` unit runs nginx and publishes HTTP on the host. nginx listens
+on container port 80 only and does not terminate TLS. For security the server
+must sit behind a proxy (Cloudflare, Fastly, or another); providing HTTPS is
+the proxy's job. An `https_port` field is rejected.
 
 ```yaml
 type: http-server
 image: docker.io/library/nginx:stable
 http_port: 8080
-https_port: false
 access_log:
   max_size_mb: 200
   max_files: 1
@@ -277,8 +279,6 @@ access_log:
   that when a `cloudflare-tunnel` unit is the only ingress: nginx stays
   reachable on the `dpl` network as `http://dpl--<name>:80`, with no inbound
   port on the host
-- `https_port` - host HTTPS port to publish to nginx's container port 443;
-  omit it or set `false` to disable HTTPS publishing
 - `access_log.max_size_mb` - access log rotation threshold in MiB
   (default: `200`)
 - `access_log.max_files` - number of archived access log files to keep

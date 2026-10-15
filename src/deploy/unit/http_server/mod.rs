@@ -159,9 +159,6 @@ impl<'a> HttpServerUnit<'a> {
         if let HttpPort::Port(http_port) = self.config.http_port {
             cmd.publish(http_port, HTTP_PORT);
         }
-        if let HttpPort::Port(https_port) = self.config.https_port {
-            cmd.publish(https_port, 443);
-        }
 
         cmd.volume(
             self.ctx.http_www_dir(self.name).to_string_lossy(),
