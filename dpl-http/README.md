@@ -132,8 +132,8 @@ when its output is not a terminal.
 
 The status is `200` once `dpl` has started. It is sent before the result is
 known, so a failed deploy is not an HTTP error.
-The last line is `dpl-http: exit N` — `N` is `dpl`'s exit code, and `0` is
-success. On failure the response also has the last 100 lines of the build log
+The last line is `dpl-http: ok` or `dpl-http: failed`. On failure the response
+also has the last 100 lines of the build log
 (or the runtime log, if the app did not start).
 
 Roll back a unit:

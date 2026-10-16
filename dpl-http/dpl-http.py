@@ -9,8 +9,8 @@ tokens as `Authorization: Bearer`. Saves the archive to a temp file and runs
 `dpl deploy <unit> <file>`. dpl's step lines are forwarded as they are written,
 so the client is not waiting on a silent connection. The status is 200 once dpl
 has started: it has to be sent before the deploy finishes, so a failed deploy is
-not an HTTP error. The last line is `dpl-http: exit N` (dpl's exit code; 0 is
-success). On failure the `Log: <path>` line is replaced with the tail of that
+not an HTTP error. The last line is `dpl-http: ok` or `dpl-http: failed`.
+On failure the `Log: <path>` line is replaced with the tail of that
 log: the client cannot read server files.
 
     curl -N -H "Authorization: Bearer $TOKEN" -X POST 'http://<server>:8099/<unit>/rollback?version=N'
@@ -227,7 +227,7 @@ class Handler(BaseHTTPRequestHandler):
             self.write_stream(self.log_note(unit, out.log_path))
         if not self.at_nl:
             self.write_stream(b'\n')
-        self.write_stream(f'dpl-http: exit {rc}\n'.encode())
+        self.write_stream(b'dpl-http: ok\n' if rc == 0 else b'dpl-http: failed\n')
 
     def drain(self, proc, out):
         fd = proc.stdout.fileno()
