@@ -41,7 +41,8 @@ pub struct Spinner {
 
 impl Spinner {
     /// Create a styled spinner showing `msg` on stderr, steady-ticking on a
-    /// TTY. Hidden when stderr is not a TTY (no spam in logs / piped output).
+    /// TTY. Hidden when stderr is not a TTY (no spinner frames in a pipe); the
+    /// deploy console repeats the open phase line instead.
     pub fn with_style(msg: impl Into<String>, style: ProgressStyle) -> Self {
         let is_tty = io::stderr().is_terminal();
         let target = if is_tty {
