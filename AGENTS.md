@@ -36,7 +36,7 @@ Configs: `{base}/conf/{name}.yaml` (`type:` selects `UnitConfig`). Runtime: `{ba
 
 ## Architecture
 
-Deploys never start containers. They lock `deploy.lock` (whole process lifetime; pid inside), bump version, render MiniJinja artifacts, `podman build`, mark status `check`, SIGHUP `dpl serve`, wait for readiness, then `ready`.
+Deploys never start containers. They lock `deploy.lock` (whole process lifetime; pid inside), bump version, render MiniJinja artifacts, `podman build`, mark status `check`, SIGHUP `dpl serve`, wait for readiness, then `ready`. An app `expect` rule, if set, is checked after extract and before `podman build`; rollback does not re-check.
 
 `dpl serve` holds `{base}/state/serve.pid` (exclusive flock). Liveness is from podman (`events` + poll), not child processes — serve can restart without stopping containers. It starts `check` units once via detached `dpl start` (under `systemd-run --scope` when systemd is the parent). `ready` units restart with backoff. `dpl down` stops serve then tears down supervised containers; deploy state stays.
 

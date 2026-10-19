@@ -193,6 +193,7 @@ mod tests {
                 },
             ],
             strategy: DeployStrategy::Replace,
+            expect: None,
         };
 
         let name = UnitName::new("my-app").unwrap();
@@ -252,6 +253,7 @@ mod tests {
             exports: Vec::new(),
             timers: Vec::new(),
             strategy: DeployStrategy::Replace,
+            expect: None,
         };
 
         let temp_dir = tempdir().unwrap();
@@ -303,6 +305,7 @@ mod tests {
                 disabled: false,
             }],
             strategy: DeployStrategy::Replace,
+            expect: None,
         };
 
         let name = UnitName::new("site").unwrap();

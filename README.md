@@ -143,6 +143,21 @@ timers:
   running version, then starts the new one; `parallel` starts the new one
   next to it and switches once it is ready (see
   [Parallel deploys](#parallel-deploys))
+- `expect` - optional check that the archive is the intended project, run after
+  extract and before the image build. `path` is an exact relative path in the
+  extracted tree (not a glob; a single wrapping folder is already flattened).
+  `contains` is a required literal substring, matched as bytes, not as a regex
+  or JSON. Point it at a file the project already has (`package.json`,
+  `Cargo.toml`, `go.mod`). A missing file, a directory, a symlink, a file over
+  1 MiB, or a missing needle fails the deploy and leaves the running version
+  untouched. Rollback does not re-check. Include enough context that the needle
+  is not a prefix of a different name (`"name": "foo-app"`, not `foo`)
+
+```yaml
+expect:
+  path: package.json
+  contains: '"name": "foo-app"'
+```
 
 ### Static sites (no runtime)
 

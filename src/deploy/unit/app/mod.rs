@@ -1,4 +1,5 @@
 mod artifacts;
+mod expect;
 mod model;
 mod podman;
 
@@ -340,12 +341,19 @@ impl<'a> AppUnit<'a> {
     }
 
     fn build_inner(&self, deploy_dir: &Path, version: u32) -> Result<(), DeployError> {
-        {
-            log::phase("extracting app archive");
-            let archive_path = deploy_dir.join("app.tar.gz");
-            let app_dir = deploy_dir.join("app");
-            crate::archive::extract(&archive_path, &app_dir)
-                .map_err(|e| DeployError::step_build("extract app archive", e))?;
+        let app_dir = deploy_dir.join("app");
+        log::phase("extracting app archive");
+        let archive_path = deploy_dir.join("app.tar.gz");
+        crate::archive::extract(&archive_path, &app_dir)
+            .map_err(|e| DeployError::step_build("extract app archive", e))?;
+
+        // Before the image build, so a miss fails the deploy and leaves the
+        // running version untouched. Rollback does not come through here.
+        if let Some(expect) = &self.config.expect {
+            log::phase(format_args!("checking {}", expect.path));
+            expect
+                .check(&app_dir)
+                .map_err(|e| DeployError::step_build("check archive", e))?;
         }
 
         log::phase("building app image");

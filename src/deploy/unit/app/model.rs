@@ -8,6 +8,7 @@ use serde::{
     de,
 };
 
+use super::expect::ExpectConfig;
 use crate::{
     MainContext,
     config::{
@@ -40,6 +41,11 @@ pub struct AppConfig {
     /// `runtime`: a static unit always behaves as `replace`.
     #[serde(default)]
     pub strategy: DeployStrategy,
+    /// Reject the archive unless this file contains `contains`. Checked after
+    /// extract and before the image build, so a mismatch leaves the running
+    /// version untouched. Absent means no check. Rollback does not re-check.
+    #[serde(default)]
+    pub expect: Option<ExpectConfig>,
 }
 
 /// How a new version replaces the running one.
@@ -335,6 +341,7 @@ mod tests {
             exports: Vec::new(),
             timers: Vec::new(),
             strategy: DeployStrategy::Replace,
+            expect: None,
         }
     }
 
@@ -348,6 +355,7 @@ mod tests {
             exports: Vec::new(),
             timers: Vec::new(),
             strategy: DeployStrategy::Replace,
+            expect: None,
         }
     }
 
@@ -844,5 +852,19 @@ mod tests {
         let deps = config.unit_deps();
         let names: Vec<&str> = deps.iter().map(UnitName::as_str).collect();
         assert_eq!(names, vec!["db-x"]);
+    }
+
+    #[test]
+    fn parse_expect_and_default_absent() {
+        let absent: AppConfig = serde_yaml::from_str("image: alpine\nbuilds: []\n").unwrap();
+        assert!(absent.expect.is_none());
+
+        let config: AppConfig = serde_yaml::from_str(
+            "image: alpine\nbuilds: []\nexpect:\n  path: package.json\n  contains: '\"name\": \"foo-app\"'\n",
+        )
+        .unwrap();
+        let expect = config.expect.expect("expect set");
+        assert_eq!(expect.path, "package.json");
+        assert_eq!(expect.contains, "\"name\": \"foo-app\"");
     }
 }
