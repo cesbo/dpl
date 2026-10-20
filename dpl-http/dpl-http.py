@@ -3,9 +3,11 @@
 
     git archive --format tar.gz HEAD | curl -N -H "Authorization: Bearer $TOKEN" --data-binary @- http://<server>:8099/<unit>
 
-Accepts requests only from the IPs in DEPLOY_ALLOW (space-separated). If
-DEPLOY_TOKEN is set (space-separated), the request must also send one of those
-tokens as `Authorization: Bearer`. Saves the archive to a temp file and runs
+A request is accepted when the client IP is in DEPLOY_ALLOW (space-separated)
+or it sends one of the DEPLOY_TOKEN values (space-separated) as
+`Authorization: Bearer`. Either check is enough. At least one of the two must
+be set, or the service does not start. With no token, other connections are
+closed before the request is read. Saves the archive to a temp file and runs
 `dpl deploy <unit> <file>`. dpl's step lines are forwarded as they are written,
 so the client is not waiting on a silent connection. The status is 200 once dpl
 has started: it has to be sent before the deploy finishes, so a failed deploy is
@@ -23,8 +25,6 @@ optional) and answers like a deploy.
 GET returns the last `lines` (default 1000) of {DPL_BASE}/state/<unit>/log/<name>
 for build, runtime, timers and access logs.
 """
-import hashlib
-import hmac
 import os
 import re
 import select
@@ -36,7 +36,7 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-ALLOW = set(os.environ['DEPLOY_ALLOW'].split())
+ALLOW = set(os.environ.get('DEPLOY_ALLOW', '').split())
 PORT = int(os.environ.get('DEPLOY_PORT', '8099'))
 BASE = os.environ.get('DPL_BASE') or '/opt/dpl'
 LOGS = {'build.log', 'runtime.log', 'timers.log', 'access.log'}  # files in {base}/state/{unit}/log/
@@ -46,18 +46,20 @@ RUNTIME_V = re.compile(rf'runtime-v{VERSION.pattern}\.log')  # an app version's 
 LOG_LINE = re.compile(r'^ *Log: (\S+)\s*\Z', re.M)  # last line of a failed `dpl deploy`/`dpl rollback`
 
 
-def token_digests(raw):
-    """SHA-256 of each space-separated DEPLOY_TOKEN. Empty if the variable is unset."""
-    digests = []
+def parse_tokens(raw):
+    """Space-separated DEPLOY_TOKEN values. Empty if the variable is unset."""
+    tokens = []
     for token in raw.split():
         if not token.isascii() or not token.isprintable():
             sys.exit('DEPLOY_TOKEN must be printable ASCII without spaces')
-        digests.append(hashlib.sha256(token.encode()).digest())
-    return tuple(digests)
+        tokens.append(token)
+    return tuple(tokens)
 
 
-# Empty unless DEPLOY_TOKEN is set. Any one match is enough; the raw tokens are not kept.
-TOKEN_DIGESTS = token_digests(os.environ.get('DEPLOY_TOKEN', ''))
+# Either match accepts a request.
+TOKENS = parse_tokens(os.environ.get('DEPLOY_TOKEN', ''))
+if not ALLOW and not TOKENS:
+    sys.exit('set DEPLOY_ALLOW or DEPLOY_TOKEN')
 
 
 def bearer(header):
@@ -71,14 +73,17 @@ def bearer(header):
     return token
 
 
-def authorized(header):
-    if not TOKEN_DIGESTS:
-        return True
-    presented = bearer(header)
-    if presented is None:
+def token_ok(header):
+    """True if `header` carries one configured token. False when none are set."""
+    if not TOKENS:
         return False
-    digest = hashlib.sha256(presented.encode()).digest()
-    return any(hmac.compare_digest(digest, stored) for stored in TOKEN_DIGESTS)
+    presented = bearer(header)
+    return presented is not None and presented in TOKENS
+
+
+def permitted(client_ip, header):
+    """IP allow list or bearer token. Either match is enough; they are not combined."""
+    return client_ip in ALLOW or token_ok(header)
 
 
 def tail(path, lines):
@@ -155,9 +160,10 @@ class DeployOutput:
 
 
 class Server(HTTPServer):
-    # Checked on accept, before the request is read: another host cannot hold the one connection slot.
     def verify_request(self, request, client_address):
-        if client_address[0] in ALLOW:
+        # IP-only: close before the request is read, so another host cannot hold the one slot.
+        # A configured token can admit any IP, so that connection is read far enough to see the header.
+        if client_address[0] in ALLOW or TOKENS:
             return True
         sys.stderr.write(f'rejected {client_address[0]}\n')
         return False
@@ -168,12 +174,13 @@ class Handler(BaseHTTPRequestHandler):
     disable_nagle_algorithm = True  # a phase line is a few bytes; Nagle would sit on it
 
     def parse_request(self):
-        # Before the body is read, so a bad token cannot hold the slot with an upload.
+        # Before the body is read, so a failed check cannot hold the slot with an upload.
         if not super().parse_request():
             return False
-        if authorized(self.headers.get('Authorization', '')):
+        if permitted(self.client_address[0], self.headers.get('Authorization', '')):
             return True
         sys.stderr.write(f'rejected {self.client_address[0]}: unauthorized\n')
+        self.close_connection = True
         self.reply(401, 'send Authorization: Bearer <token>\n')
         return False
 

@@ -21,8 +21,8 @@ curl -fsSL -o /opt/dpl/dpl-http.py "$R/dpl-http.py"
 curl -fsSL -o /etc/systemd/system/dpl-http.service "$R/dpl-http.service"
 ```
 
-Set the allowed IP addresses and, if you want one, a deploy token (see the
-next sections), then start the service:
+Set an IP allow list, a deploy token, or both (see the next sections), then
+start the service:
 
 ```sh
 systemctl daemon-reload
@@ -36,17 +36,25 @@ systemctl status dpl-http
 journalctl -u dpl-http
 ```
 
-If a firewall is on, open the port for the allowed addresses, for example:
+If a firewall is on, open the port for the clients that should connect, for
+example an allow-listed address:
 
 ```sh
 ufw allow from 203.0.113.10 to any port 8099 proto tcp
 ```
 
+A token does not open the port. If the client is not in `DEPLOY_ALLOW`, the
+firewall has to allow it too.
+
 ## Allowed IP addresses
 
-Only clients from `DEPLOY_ALLOW` can connect. Other connections are closed
-before the request is read. The setting is required: without it the service
+A client whose IP is in `DEPLOY_ALLOW` is accepted with no token. The variable
+may be left unset when `DEPLOY_TOKEN` is set. If neither is set the service
 does not start.
+
+When no token is set, other connections are closed before the request is read.
+When a token is set, a client that is not listed can still connect: the token
+is checked instead (see [Token](#token)).
 
 Do not edit `dpl-http.service` for this. Use a systemd override, so an update
 of the service file does not remove your settings:
@@ -63,8 +71,9 @@ Environment="DEPLOY_ALLOW=203.0.113.10 198.51.100.7"
 Environment="DEPLOY_TOKEN=replace-with-a-long-random-string"
 ```
 
-`DEPLOY_TOKEN` is optional. Several tokens go in the same variable, separated
-by spaces (`token-for-ci token-for-laptop`). See [Token](#token).
+Set at least one of `DEPLOY_ALLOW` and `DEPLOY_TOKEN`. Several tokens go in
+the same variable, separated by spaces (`token-for-ci token-for-laptop`). See
+[Token](#token).
 
 Then restart the service:
 
@@ -83,38 +92,42 @@ Other settings go in the same override:
 
 | Variable       | Default    | Meaning                                      |
 |----------------|------------|----------------------------------------------|
-| `DEPLOY_ALLOW` | (required) | Allowed client IP addresses                  |
-| `DEPLOY_TOKEN` | (none)     | If set, every request must send one of these |
+| `DEPLOY_ALLOW` | (none)     | Client IPs accepted with no token            |
+| `DEPLOY_TOKEN` | (none)     | Bearer tokens accepted from any IP           |
 | `DEPLOY_PORT`  | `8099`     | Port to listen on                            |
 | `DPL_BASE`     | `/opt/dpl` | dpl base directory, if you changed it        |
 
-The IP list always applies. A token is a second check, not a replacement
-(see [Token](#token)). The traffic is plain HTTP. Allow only hosts you trust.
+A request is accepted when the IP is listed or the token matches. One is
+enough; they are not combined. The traffic is plain HTTP, so a token is
+visible on the wire. Allow only hosts you trust, or treat the token as the
+only secret.
 
 ## Token
 
-If `DEPLOY_TOKEN` is set, a request from an allowed IP must also send one of
-those tokens:
+A request that sends one of the `DEPLOY_TOKEN` values is accepted from any IP:
 
 ```
 Authorization: Bearer <token>
 ```
 
-Leave the variable unset to keep IP checks only. An update of the script does
-not start requiring a token until you set one.
+A listed IP is accepted even without this header, and even if the token is
+wrong. Leave the variable unset to keep IP checks only. An update of the
+script does not start requiring a token, and does not accept one, until you
+set it.
 
 Rules:
 
 - Separate tokens with spaces. A token itself cannot contain spaces.
-- Printable ASCII only. Generate one with `openssl rand -hex 32`.
+- Printable ASCII only. Generate one with `uuidgen`.
 - Any one of the tokens is accepted. Use more than one so a CI job and a
   laptop can have different tokens, and you can drop one without locking the
   other out.
 - The token is not written to the journal. It is still visible on the wire:
   this is plain HTTP.
 
-A missing or wrong token is rejected with `401` before the archive is read, so
-it does not block the next deploy.
+A client that is not listed, and that sends a missing or wrong token, is
+rejected with `401` before the archive is read, so it does not block the next
+deploy.
 
 ## Usage
 
@@ -124,7 +137,7 @@ Deploy a unit:
 git archive --format tar.gz HEAD | curl -N -H "Authorization: Bearer $TOKEN" --data-binary @- http://<server>:8099/<unit>
 ```
 
-Omit `-H` if you did not set `DEPLOY_TOKEN`.
+Omit `-H` when the client IP is in `DEPLOY_ALLOW`.
 
 The response is the `dpl deploy` output, sent as each step is written rather
 than after the deploy finishes. `-N` keeps curl from buffering that stream
