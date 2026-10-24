@@ -125,7 +125,9 @@ timers:
 ```
 
 - `builds` - ordered build layers. `files` lists archive paths copied into
-  `/app` (`"*"` = all). `script` is optional
+  `/app` (`"*"` = all). `script` is optional. Unchanged layers are reused on
+  the next deploy; a changed file, script, or build env rebuilds that layer
+  and everything after it
 - `runtime` - the long-running service: `cmd`, optional `port` (listened on,
   also used for the readiness check and `${app:url}`/`${app:socket}` refs),
   optional `init` pre-start script, and `env`. The process must bind a wildcard

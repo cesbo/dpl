@@ -87,10 +87,12 @@ struct PodmanBuild {
 impl PodmanBuild {
     fn new() -> Self {
         let mut cmd = Command::new("podman");
+        // `--layers` keeps intermediate images so the next deploy reuses an
+        // unchanged prefix. `--no-cache` would rebuild every layer.
         cmd.arg("build")
             .arg("--rm")
             .arg("--force-rm")
-            .arg("--no-cache");
+            .arg("--layers");
         Self { cmd }
     }
 
@@ -150,6 +152,17 @@ mod tests {
             .and_then(|(_, value)| value)
             .map(|value| value.to_string_lossy().into_owned());
         assert_eq!(value.as_deref(), Some("secret-value"));
+    }
+
+    #[test]
+    fn build_reuses_layer_cache() {
+        let args: Vec<_> = PodmanBuild::new()
+            .cmd
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.contains(&"--layers".to_owned()), "{args:?}");
+        assert!(!args.iter().any(|arg| arg == "--no-cache"), "{args:?}");
     }
 
     #[test]

@@ -14,14 +14,13 @@ COPY app/{{ file }} /app/{{ file }}
 {% for env_name in layer.env_names %}
 ARG {{ env_name }}
 {% endfor -%}
-{% set heredoc = "DPL_BUILD_" ~ cuid() %}
-RUN <<'{{ heredoc }}'
+RUN <<'{{ layer.heredoc }}'
 set -eu
 {% for env_name in layer.env_names -%}
 export {{ env_name }}
 {% endfor -%}
 {{ layer.script }}
-{{ heredoc }}
+{{ layer.heredoc }}
 {% endif %}
 {% endfor -%}
 {% if runtime %}

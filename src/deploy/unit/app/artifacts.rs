@@ -28,8 +28,6 @@ static TEMPLATES: LazyLock<Environment<'static>> = LazyLock::new(|| {
     env.set_trim_blocks(true);
     env.set_lstrip_blocks(true);
 
-    env.add_function("cuid", || -> String { cuid::cuid1().unwrap() });
-
     env.add_template(
         CONTAINERFILE_TEMPLATE,
         include_str!("templates/containerfile.jinja"),
@@ -56,18 +54,28 @@ impl<'a> ArtifactsContext<'a> {
             files: &'a Vec<String>,
             env_names: Vec<String>,
             script: Option<&'a str>,
+            heredoc: String,
         }
 
-        let layers = self
-            .config
-            .builds
-            .iter()
-            .map(|b| BuildContext {
-                files: &b.files,
-                env_names: b.env.names().map(ToString::to_string).collect(),
-                script: b.script.as_deref(),
-            })
-            .collect::<Vec<BuildContext>>();
+        // 1-based, and only layers that actually emit a RUN. A files-only
+        // layer must not shift the next script's delimiter.
+        let mut script_index = 0u32;
+        let mut layers = Vec::with_capacity(self.config.builds.len());
+        for layer in &self.config.builds {
+            let heredoc = match layer.script.as_deref() {
+                Some(script) if !script.is_empty() => {
+                    script_index += 1;
+                    format!("DPL_BUILD_{script_index}")
+                }
+                _ => String::new(),
+            };
+            layers.push(BuildContext {
+                files: &layer.files,
+                env_names: layer.env.names().map(ToString::to_string).collect(),
+                script: layer.script.as_deref(),
+                heredoc,
+            });
+        }
 
         let path = artifacts_dir.join("containerfile");
         write_artifact(
@@ -336,6 +344,66 @@ mod tests {
         assert!(
             !containerfile.contains("run.sh"),
             "static image must not copy run.sh:\n{containerfile}"
+        );
+    }
+
+    #[test]
+    fn containerfile_heredoc_is_numbered_per_script() {
+        let config = AppConfig {
+            image: "alpine".into(),
+            builds: vec![
+                BuildConfig {
+                    description: None,
+                    files: Vec::new(),
+                    env: EnvList::default(),
+                    script: Some("echo first".to_owned()),
+                },
+                // No script: not numbered, and must not shift the next one.
+                BuildConfig {
+                    description: None,
+                    files: vec!["README".to_owned()],
+                    env: EnvList::default(),
+                    script: None,
+                },
+                BuildConfig {
+                    description: None,
+                    files: Vec::new(),
+                    env: EnvList::default(),
+                    script: Some("echo second".to_owned()),
+                },
+            ],
+            runtime: None,
+            volumes: Vec::new(),
+            exports: Vec::new(),
+            timers: Vec::new(),
+            strategy: DeployStrategy::Replace,
+            expect: None,
+        };
+
+        let temp_dir = tempdir().unwrap();
+        let deploy_dir = temp_dir.path().join("app");
+        fs::create_dir_all(&deploy_dir).unwrap();
+        ArtifactsContext { config: &config }
+            .save(&deploy_dir)
+            .unwrap();
+
+        let containerfile =
+            fs::read_to_string(deploy_dir.join("artifacts").join("containerfile")).unwrap();
+        let first = "\
+RUN <<'DPL_BUILD_1'
+set -eu
+echo first
+DPL_BUILD_1
+";
+        let second = "\
+RUN <<'DPL_BUILD_2'
+set -eu
+echo second
+DPL_BUILD_2
+";
+        assert!(
+            containerfile.contains(first) && containerfile.contains(second),
+            "heredoc must be numbered per script:\n{containerfile}"
         );
     }
 }
