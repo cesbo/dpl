@@ -89,19 +89,21 @@ systemctl restart dpl-http
 same tree. It must be an absolute path.
 
 `tokens` is a map of names, not a list of strings. The name (`ci`, `laptop`)
-is a label in this file. The client sends `token`, not the name. A later
-version will read an optional `projects` list on a token — unit names, as in
-the URL — and limit that token to those units. Leave the key out until then:
-it is rejected, so a limit cannot be set and silently ignored. Once it is
-read, omitting it will mean every unit.
+is a label in this file. The client sends `token`, not the name.
+
+Omit `units` to let that token deploy, roll back, and read logs of every
+unit. Set it to limit the token to those unit names (the `<unit>` in the
+URL). A request for another unit is `403` before the archive is read.
 
 ```yaml
 tokens:
   ci:
     token: replace-with-a-long-random-string
-    # projects:        # not accepted yet
-    #   - myapp
-    #   - api
+    units:
+      - myapp
+      - api
+  laptop:
+    token: another-long-random-string
 ```
 
 Write lists as lines under the key, not `[a, b]`. A tab is an error. An
@@ -130,7 +132,9 @@ Rules:
   this is plain HTTP.
 
 A missing or wrong token is rejected with `401` before the archive is read,
-so it does not block the next deploy.
+so it does not block the next deploy. A token that may not touch the unit in
+the URL is rejected with `403` the same way. The reply names the token label,
+not the secret.
 
 ## Usage
 

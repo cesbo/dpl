@@ -13,14 +13,12 @@
 # base: /opt/dpl
 
 # Bearer tokens. The name (ci, laptop) is a label in this file; the client
-# sends `token`, not the name.
-#
-# Each entry is a map so a later version can add `projects` (unit names, as in
-# the URL) and limit that token to those units. Leave the key out until then:
-# it is rejected, so a limit cannot be set and silently ignored. Once it is
-# read, omitting it will mean every unit.
+# sends `token`, not the name. Omit `units` to allow every unit. Set it to
+# limit that token to those unit names (the `<unit>` in the URL).
 # tokens:
 #   ci:
 #     token: replace-with-a-long-random-string
+#     units:
+#       - myapp
 #   laptop:
 #     token: another-long-random-string

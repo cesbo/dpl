@@ -6,7 +6,9 @@
 Settings are read from dpl-http.yaml in the same directory as this script.
 A request is accepted when it sends one of the `tokens` values as
 `Authorization: Bearer`. At least one token must be set, or the service does
-not start. A missing or wrong token is rejected before the body is read.
+not start. A token may list `units`; without that list it may touch every
+unit. A missing or wrong token, or a unit that token may not touch, is
+rejected before the body is read.
 Saves the archive to a temp file and runs `dpl deploy <unit> <file>`. dpl's
 step lines are forwarded as they are written, so the client is not waiting on
 a silent connection. The status is 200 once dpl has started: it has to be sent
@@ -44,8 +46,8 @@ VERSION = re.compile(r'[1-9][0-9]*')  # ASCII only: int() would take digits clap
 RUNTIME_V = re.compile(rf'runtime-v{VERSION.pattern}\.log')  # an app version's own log, as `Log:` names it
 LOG_LINE = re.compile(r'^ *Log: (\S+)\s*\Z', re.M)  # last line of a failed `dpl deploy`/`dpl rollback`
 TOKEN_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]*')
-# Filled from dpl-http.yaml before serve. A request needs one of these.
-TOKENS = ()
+# value -> Token. Filled from dpl-http.yaml before serve.
+TOKENS = {}
 IGNORED_ENV = ('DEPLOY_ALLOW', 'DEPLOY_TOKEN', 'DEPLOY_PORT', 'DPL_BASE')
 
 
@@ -262,16 +264,33 @@ def parse_base(value, path):
     return value
 
 
-def parse_token_map(value, path):
-    """Named token entries. `projects` is the later per-unit limit; not read yet.
+class Token:
+    """Bearer entry. `units` is None when this token may touch every unit."""
 
-    A token is a map, not a string, so that key can be added without a new shape.
-    Reject it now: a limit that is parsed and ignored would look enforced.
-    """
+    def __init__(self, name, units):
+        self.name = name
+        self.units = units
+
+    def allows(self, unit):
+        return self.units is None or unit in self.units
+
+
+def parse_units(name, value, path):
+    if not isinstance(value, list) or not value:
+        fail(path, 0, f'tokens.{name}: units must list at least one unit')
+    units = set()
+    for item in value:
+        if not isinstance(item, str) or not UNIT.fullmatch(item):
+            fail(path, 0, f'tokens.{name}: {item!r} is not a unit name')
+        units.add(item)
+    return units
+
+
+def parse_token_map(value, path):
+    """Named token entries, keyed by the secret. Omit `units` to allow every unit."""
     if not isinstance(value, dict):
         fail(path, 0, 'tokens must be a map of name: {token: ...}')
-    found = []
-    seen = {}
+    found = {}
     for name, body in value.items():
         if not TOKEN_NAME.fullmatch(name):
             fail(path, 0, f'tokens: {name!r} is not a valid name')
@@ -279,10 +298,8 @@ def parse_token_map(value, path):
             fail(path, 0, f'tokens.{name} must be a map with a token key')
         for key in body:
             if key == 'projects':
-                # Reserved: a later version limits this token to those units.
-                # Rejected now so a limit cannot be set and silently ignored.
-                fail(path, 0, f'tokens.{name}: projects is not supported yet; omit it')
-            if key != 'token':
+                fail(path, 0, f'tokens.{name}: use units, not projects')
+            if key not in ('token', 'units'):
                 fail(path, 0, f'tokens.{name}: unknown key {key!r}')
         token = body.get('token')
         if (
@@ -293,11 +310,11 @@ def parse_token_map(value, path):
             or any(c.isspace() for c in token)
         ):
             fail(path, 0, f'tokens.{name}: token must be printable ASCII without spaces')
-        if token in seen:
-            fail(path, 0, f'tokens.{name}: same token as {seen[token]}')
-        seen[token] = name
-        found.append(token)
-    return tuple(found)
+        if token in found:
+            fail(path, 0, f'tokens.{name}: same token as {found[token].name}')
+        units = parse_units(name, body['units'], path) if 'units' in body else None
+        found[token] = Token(name, units)
+    return found
 
 
 def interpret(data, path):
@@ -307,7 +324,7 @@ def interpret(data, path):
         if key == 'allow':
             fail(path, 0, 'allow is not supported; use tokens')
         if key == 'projects':
-            fail(path, 0, 'projects belongs under a token, and is not supported yet')
+            fail(path, 0, 'use units, not projects')
         if key not in ('port', 'base', 'tokens'):
             fail(path, 0, f'unknown key {key!r}')
     port = 8099 if 'port' not in data else parse_port(data['port'], path)
@@ -346,12 +363,18 @@ def bearer(header):
     return token
 
 
-def token_ok(header):
-    """True if `header` carries one configured token. False when none are set."""
-    if not TOKENS:
-        return False
+def token_for(header):
+    """Configured token carried by `header`, or None."""
     presented = bearer(header)
-    return presented is not None and presented in TOKENS
+    if not presented or not TOKENS:
+        return None
+    return TOKENS.get(presented)
+
+
+def path_unit(path):
+    """Unit named by the request path, or None if the first segment is not one."""
+    unit, _, _ = urlsplit(path).path.strip('/').partition('/')
+    return unit if UNIT.fullmatch(unit) else None
 
 
 def tail(path, lines):
@@ -435,12 +458,20 @@ class Handler(BaseHTTPRequestHandler):
         # Before the body is read, so a failed check cannot hold the slot with an upload.
         if not super().parse_request():
             return False
-        if token_ok(self.headers.get('Authorization', '')):
-            return True
-        sys.stderr.write(f'rejected {self.client_address[0]}: unauthorized\n')
-        self.close_connection = True
-        self.reply(401, 'send Authorization: Bearer <token>\n')
-        return False
+        entry = token_for(self.headers.get('Authorization', ''))
+        if entry is None:
+            sys.stderr.write(f'rejected {self.client_address[0]}: unauthorized\n')
+            self.close_connection = True
+            self.reply(401, 'send Authorization: Bearer <token>\n')
+            return False
+        # Before the body, so a token for other units cannot upload into this slot.
+        unit = path_unit(self.path)
+        if unit is not None and not entry.allows(unit):
+            sys.stderr.write(f'rejected {self.client_address[0]}: {entry.name} cannot access {unit}\n')
+            self.close_connection = True
+            self.reply(403, f'{entry.name} cannot access {unit}\n')
+            return False
+        return True
 
     def do_POST(self):
         url = urlsplit(self.path)
