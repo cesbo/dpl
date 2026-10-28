@@ -2,9 +2,8 @@
 # Edit this copy. An update of the script does not replace it.
 # Restart after a change: systemctl restart dpl-http
 #
-# At least one of allow and tokens is required. A request is accepted when
-# the client IP is listed or the bearer token matches. One is enough.
-# Nothing below is active: uncomment a block and replace the placeholder.
+# A token is required. The client IP is not checked.
+# Nothing below is active: uncomment tokens and replace the placeholder.
 
 # Port to listen on. Default 8099.
 # port: 8099
@@ -13,13 +12,8 @@
 # Passed to `dpl` as DPL_BASE, so log reads and deploys use the same tree.
 # base: /opt/dpl
 
-# Client IPs accepted with no token. Exact IPv4, one per line. No CIDR, no names.
-# allow:
-#   - 203.0.113.10
-#   - 198.51.100.7
-
-# Bearer tokens accepted from any IP. The name (ci, laptop) is a label in this
-# file; the client sends `token`, not the name.
+# Bearer tokens. The name (ci, laptop) is a label in this file; the client
+# sends `token`, not the name.
 #
 # Each entry is a map so a later version can add `projects` (unit names, as in
 # the URL) and limit that token to those units. Leave the key out until then:

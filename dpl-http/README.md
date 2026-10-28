@@ -38,15 +38,14 @@ systemctl status dpl-http
 journalctl -u dpl-http
 ```
 
-If a firewall is on, open the port for the clients that should connect, for
-example an allow-listed address:
+If a firewall is on, open the port. dpl-http does not check the client IP; a
+firewall rule is the only address limit:
 
 ```sh
 ufw allow from 203.0.113.10 to any port 8099 proto tcp
 ```
 
-A token does not open the port. If the client is not in `allow`, the firewall
-has to allow it too.
+A token does not open the port. The firewall has to allow the client too.
 
 ## Config
 
@@ -60,10 +59,6 @@ Do not edit `dpl-http.service` for settings. An update replaces that file and
 does not touch `dpl-http.yaml`.
 
 ```yaml
-allow:
-  - 203.0.113.10
-  - 198.51.100.7
-
 tokens:
   ci:
     token: replace-with-a-long-random-string
@@ -71,13 +66,12 @@ tokens:
     token: another-long-random-string
 ```
 
-Set at least one of `allow` and `tokens`, or the service does not start.
-Replace the token before starting. The example value is not a secret.
+`tokens` is required, or the service does not start. Replace the token before
+starting. The example value is not a secret.
 
-A request is accepted when the IP is listed or the token matches. One is
-enough; they are not combined. The traffic is plain HTTP, so a token is
-visible on the wire. Allow only hosts you trust, or treat the token as the
-only secret.
+A request is accepted only when the token matches. The traffic is plain HTTP,
+so a token is visible on the wire. Allow only hosts you trust, or treat the
+token as the only secret.
 
 Restart after a change:
 
@@ -87,8 +81,7 @@ systemctl restart dpl-http
 
 | Key      | Default    | Meaning                               |
 |----------|------------|---------------------------------------|
-| `allow`  | (none)     | Client IPs accepted with no token     |
-| `tokens` | (none)     | Bearer tokens accepted from any IP    |
+| `tokens` | (required) | Bearer tokens; a request needs one    |
 | `port`   | `8099`     | Port to listen on                     |
 | `base`   | `/opt/dpl` | dpl base directory, if you changed it |
 
@@ -111,33 +104,19 @@ tokens:
     #   - api
 ```
 
-Write lists as lines under the key, not `[a, b]`. A tab is an error.
-
-## Allowed IP addresses
-
-A client whose IP is in `allow` is accepted with no token. `allow` may be
-omitted when `tokens` is set.
-
-When no token is set, other connections are closed before the request is read.
-When a token is set, a client that is not listed can still connect: the token
-is checked instead (see [Token](#token)).
-
-Rules:
-
-- One address per line.
-- Exact IPv4. Ranges (CIDR) and host names do not work.
+Write lists as lines under the key, not `[a, b]`. A tab is an error. An
+`allow` key is rejected: the client IP is not checked.
 
 ## Token
 
-A request that sends one of the `token` values is accepted from any IP:
+A request is accepted only when it sends one of the `token` values:
 
 ```
 Authorization: Bearer <token>
 ```
 
-A listed IP is accepted even without this header, and even if the token is
-wrong. Omit `tokens` to keep IP checks only. An update of the script does not
-start requiring a token, and does not accept one, until you set it.
+The client IP is not checked. An update of the script does not accept a token
+until you set one, and does not start without one.
 
 Rules:
 
@@ -150,9 +129,8 @@ Rules:
 - The token is not written to the journal. It is still visible on the wire:
   this is plain HTTP.
 
-A client that is not listed, and that sends a missing or wrong token, is
-rejected with `401` before the archive is read, so it does not block the next
-deploy.
+A missing or wrong token is rejected with `401` before the archive is read,
+so it does not block the next deploy.
 
 ## Usage
 
@@ -161,8 +139,6 @@ Deploy a unit:
 ```sh
 git archive --format tar.gz HEAD | curl -N -H "Authorization: Bearer $TOKEN" --data-binary @- http://<server>:8099/<unit>
 ```
-
-Omit `-H` when the client IP is in `allow`.
 
 The response is the `dpl deploy` output, sent as each step is written rather
 than after the deploy finishes. `-N` keeps curl from buffering that stream
@@ -203,8 +179,8 @@ current deploy is done.
 
 Download the script and the service file again (see [Install](#install)), not
 `dpl-http.yaml`. If this host still sets `DEPLOY_ALLOW` or `DEPLOY_TOKEN`,
-create the yaml first (see [Config](#config)): the service does not start
-without it. Then:
+create the yaml first (see [Config](#config)). `DEPLOY_ALLOW` is not read:
+set a token. The service does not start without one. Then:
 
 ```sh
 systemctl daemon-reload

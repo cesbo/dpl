@@ -4,16 +4,16 @@
     git archive --format tar.gz HEAD | curl -N -H "Authorization: Bearer $TOKEN" --data-binary @- http://<server>:8099/<unit>
 
 Settings are read from dpl-http.yaml in the same directory as this script.
-A request is accepted when the client IP is in `allow` or it sends one of the
-`tokens` values as `Authorization: Bearer`. Either check is enough. At least
-one of the two must be set, or the service does not start. With no token,
-other connections are closed before the request is read. Saves the archive to
-a temp file and runs `dpl deploy <unit> <file>`. dpl's step lines are forwarded
-as they are written, so the client is not waiting on a silent connection. The
-status is 200 once dpl has started: it has to be sent before the deploy
-finishes, so a failed deploy is not an HTTP error. The last line is
-`dpl-http: ok` or `dpl-http: failed`. On failure the `Log: <path>` line is
-replaced with the tail of that log: the client cannot read server files.
+A request is accepted when it sends one of the `tokens` values as
+`Authorization: Bearer`. At least one token must be set, or the service does
+not start. A missing or wrong token is rejected before the body is read.
+Saves the archive to a temp file and runs `dpl deploy <unit> <file>`. dpl's
+step lines are forwarded as they are written, so the client is not waiting on
+a silent connection. The status is 200 once dpl has started: it has to be sent
+before the deploy finishes, so a failed deploy is not an HTTP error. The last
+line is `dpl-http: ok` or `dpl-http: failed`. On failure the `Log: <path>`
+line is replaced with the tail of that log: the client cannot read server
+files.
 
     curl -N -H "Authorization: Bearer $TOKEN" -X POST 'http://<server>:8099/<unit>/rollback?version=N'
 
@@ -25,7 +25,6 @@ optional) and answers like a deploy.
 GET returns the last `lines` (default 1000) of {base}/state/<unit>/log/<name>
 for build, runtime, timers and access logs.
 """
-import ipaddress
 import os
 import re
 import select
@@ -37,7 +36,6 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-ALLOW = set()
 PORT = 8099
 BASE = '/opt/dpl'
 LOGS = {'build.log', 'runtime.log', 'timers.log', 'access.log'}  # files in {base}/state/{unit}/log/
@@ -46,7 +44,7 @@ VERSION = re.compile(r'[1-9][0-9]*')  # ASCII only: int() would take digits clap
 RUNTIME_V = re.compile(rf'runtime-v{VERSION.pattern}\.log')  # an app version's own log, as `Log:` names it
 LOG_LINE = re.compile(r'^ *Log: (\S+)\s*\Z', re.M)  # last line of a failed `dpl deploy`/`dpl rollback`
 TOKEN_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]*')
-# Either match accepts a request. Filled from dpl-http.yaml before serve.
+# Filled from dpl-http.yaml before serve. A request needs one of these.
 TOKENS = ()
 IGNORED_ENV = ('DEPLOY_ALLOW', 'DEPLOY_TOKEN', 'DEPLOY_PORT', 'DPL_BASE')
 
@@ -264,19 +262,6 @@ def parse_base(value, path):
     return value
 
 
-def parse_allow(value, path):
-    if not isinstance(value, list):
-        fail(path, 0, 'allow must be a list of IPv4 addresses')
-    ips = set()
-    for item in value:
-        try:
-            ip = str(ipaddress.IPv4Address(item))
-        except (TypeError, ValueError):
-            fail(path, 0, f'allow: {item!r} is not an IPv4 address')
-        ips.add(ip)
-    return ips
-
-
 def parse_token_map(value, path):
     """Named token entries. `projects` is the later per-unit limit; not read yet.
 
@@ -319,17 +304,18 @@ def interpret(data, path):
     if not isinstance(data, dict):
         fail(path, 0, 'config must be a map')
     for key in data:
+        if key == 'allow':
+            fail(path, 0, 'allow is not supported; use tokens')
         if key == 'projects':
             fail(path, 0, 'projects belongs under a token, and is not supported yet')
-        if key not in ('port', 'base', 'allow', 'tokens'):
+        if key not in ('port', 'base', 'tokens'):
             fail(path, 0, f'unknown key {key!r}')
     port = 8099 if 'port' not in data else parse_port(data['port'], path)
     base = '/opt/dpl' if 'base' not in data else parse_base(data['base'], path)
-    allow = set() if data.get('allow') is None else parse_allow(data['allow'], path)
     tokens = () if data.get('tokens') is None else parse_token_map(data['tokens'], path)
-    if not allow and not tokens:
-        fail(path, 0, 'set allow or tokens')
-    return allow, port, base, tokens
+    if not tokens:
+        fail(path, 0, 'set tokens')
+    return port, base, tokens
 
 
 def load_config(path):
@@ -337,7 +323,7 @@ def load_config(path):
         with open(path, encoding='utf-8-sig') as f:
             text = f.read()
     except FileNotFoundError:
-        sys.exit(f'{path}: not found\ncopy dpl-http.yaml.example to {path} and set allow or tokens')
+        sys.exit(f'{path}: not found\ncopy dpl-http.yaml.example to {path} and set tokens')
     except UnicodeDecodeError:
         fail(path, 0, 'not utf-8')
     except OSError as e:
@@ -366,11 +352,6 @@ def token_ok(header):
         return False
     presented = bearer(header)
     return presented is not None and presented in TOKENS
-
-
-def permitted(client_ip, header):
-    """IP allow list or bearer token. Either match is enough; they are not combined."""
-    return client_ip in ALLOW or token_ok(header)
 
 
 def tail(path, lines):
@@ -446,16 +427,6 @@ class DeployOutput:
         self.held = b''
 
 
-class Server(HTTPServer):
-    def verify_request(self, request, client_address):
-        # IP-only: close before the request is read, so another host cannot hold the one slot.
-        # A configured token can admit any IP, so that connection is read far enough to see the header.
-        if client_address[0] in ALLOW or TOKENS:
-            return True
-        sys.stderr.write(f'rejected {client_address[0]}\n')
-        return False
-
-
 class Handler(BaseHTTPRequestHandler):
     timeout = 60  # a stalled upload must not block the next deploy
     disable_nagle_algorithm = True  # a phase line is a few bytes; Nagle would sit on it
@@ -464,7 +435,7 @@ class Handler(BaseHTTPRequestHandler):
         # Before the body is read, so a failed check cannot hold the slot with an upload.
         if not super().parse_request():
             return False
-        if permitted(self.client_address[0], self.headers.get('Authorization', '')):
+        if token_ok(self.headers.get('Authorization', '')):
             return True
         sys.stderr.write(f'rejected {self.client_address[0]}: unauthorized\n')
         self.close_connection = True
@@ -597,11 +568,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global ALLOW, PORT, BASE, TOKENS
-    ALLOW, PORT, BASE, TOKENS = load_config(config_path())
+    global PORT, BASE, TOKENS
+    PORT, BASE, TOKENS = load_config(config_path())
     signal.signal(signal.SIGTERM, lambda *_: sys.exit())  # unwind: kill the running deploy, drop its temp archive
     # ponytail: one request at a time, so deploys never overlap; a second curl waits for the build in progress.
-    Server(('', PORT), Handler).serve_forever()
+    HTTPServer(('', PORT), Handler).serve_forever()
 
 
 if __name__ == '__main__':
