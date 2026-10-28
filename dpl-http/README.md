@@ -19,10 +19,12 @@ Run as root on the server:
 R=https://raw.githubusercontent.com/cesbo/dpl/master/dpl-http
 curl -fsSL -o /opt/dpl/dpl-http.py "$R/dpl-http.py"
 curl -fsSL -o /etc/systemd/system/dpl-http.service "$R/dpl-http.service"
+curl -fsSL -o /opt/dpl/dpl-http.yaml.example "$R/dpl-http.yaml.example"
+cp /opt/dpl/dpl-http.yaml.example /opt/dpl/dpl-http.yaml
+chmod 600 /opt/dpl/dpl-http.yaml
 ```
 
-Set an IP allow list, a deploy token, or both (see the next sections), then
-start the service:
+Edit `/opt/dpl/dpl-http.yaml` (see [Config](#config)), then start the service:
 
 ```sh
 systemctl daemon-reload
@@ -43,82 +45,105 @@ example an allow-listed address:
 ufw allow from 203.0.113.10 to any port 8099 proto tcp
 ```
 
-A token does not open the port. If the client is not in `DEPLOY_ALLOW`, the
-firewall has to allow it too.
+A token does not open the port. If the client is not in `allow`, the firewall
+has to allow it too.
 
-## Allowed IP addresses
+## Config
 
-A client whose IP is in `DEPLOY_ALLOW` is accepted with no token. The variable
-may be left unset when `DEPLOY_TOKEN` is set. If neither is set the service
-does not start.
+Settings live in `dpl-http.yaml`, in the same directory as the script
+(`/opt/dpl/dpl-http.yaml`). The service does not read `DEPLOY_ALLOW`,
+`DEPLOY_TOKEN`, `DEPLOY_PORT`, or `DPL_BASE`. If a systemd override still sets
+them, they are ignored and a line is written to the journal. Delete those
+lines (`systemctl edit dpl-http`).
 
-When no token is set, other connections are closed before the request is read.
-When a token is set, a client that is not listed can still connect: the token
-is checked instead (see [Token](#token)).
+Do not edit `dpl-http.service` for settings. An update replaces that file and
+does not touch `dpl-http.yaml`.
 
-Do not edit `dpl-http.service` for this. Use a systemd override, so an update
-of the service file does not remove your settings:
+```yaml
+allow:
+  - 203.0.113.10
+  - 198.51.100.7
 
-```sh
-systemctl edit dpl-http
+tokens:
+  ci:
+    token: replace-with-a-long-random-string
+  laptop:
+    token: another-long-random-string
 ```
 
-Add these lines and save:
-
-```ini
-[Service]
-Environment="DEPLOY_ALLOW=203.0.113.10 198.51.100.7"
-Environment="DEPLOY_TOKEN=replace-with-a-long-random-string"
-```
-
-Set at least one of `DEPLOY_ALLOW` and `DEPLOY_TOKEN`. Several tokens go in
-the same variable, separated by spaces (`token-for-ci token-for-laptop`). See
-[Token](#token).
-
-Then restart the service:
-
-```sh
-systemctl restart dpl-http
-```
-
-Rules:
-
-- Separate addresses with spaces.
-- Use exact IPv4 addresses. Ranges (CIDR) and host names do not work.
-- The override is saved in
-  `/etc/systemd/system/dpl-http.service.d/override.conf`.
-
-Other settings go in the same override:
-
-| Variable       | Default    | Meaning                                      |
-|----------------|------------|----------------------------------------------|
-| `DEPLOY_ALLOW` | (none)     | Client IPs accepted with no token            |
-| `DEPLOY_TOKEN` | (none)     | Bearer tokens accepted from any IP           |
-| `DEPLOY_PORT`  | `8099`     | Port to listen on                            |
-| `DPL_BASE`     | `/opt/dpl` | dpl base directory, if you changed it        |
+Set at least one of `allow` and `tokens`, or the service does not start.
+Replace the token before starting. The example value is not a secret.
 
 A request is accepted when the IP is listed or the token matches. One is
 enough; they are not combined. The traffic is plain HTTP, so a token is
 visible on the wire. Allow only hosts you trust, or treat the token as the
 only secret.
 
+Restart after a change:
+
+```sh
+systemctl restart dpl-http
+```
+
+| Key      | Default    | Meaning                               |
+|----------|------------|---------------------------------------|
+| `allow`  | (none)     | Client IPs accepted with no token     |
+| `tokens` | (none)     | Bearer tokens accepted from any IP    |
+| `port`   | `8099`     | Port to listen on                     |
+| `base`   | `/opt/dpl` | dpl base directory, if you changed it |
+
+`base` is passed to `dpl` as `DPL_BASE`, so a deploy and a log read use the
+same tree. It must be an absolute path.
+
+`tokens` is a map of names, not a list of strings. The name (`ci`, `laptop`)
+is a label in this file. The client sends `token`, not the name. A later
+version will read an optional `projects` list on a token — unit names, as in
+the URL — and limit that token to those units. Leave the key out until then:
+it is rejected, so a limit cannot be set and silently ignored. Once it is
+read, omitting it will mean every unit.
+
+```yaml
+tokens:
+  ci:
+    token: replace-with-a-long-random-string
+    # projects:        # not accepted yet
+    #   - myapp
+    #   - api
+```
+
+Write lists as lines under the key, not `[a, b]`. A tab is an error.
+
+## Allowed IP addresses
+
+A client whose IP is in `allow` is accepted with no token. `allow` may be
+omitted when `tokens` is set.
+
+When no token is set, other connections are closed before the request is read.
+When a token is set, a client that is not listed can still connect: the token
+is checked instead (see [Token](#token)).
+
+Rules:
+
+- One address per line.
+- Exact IPv4. Ranges (CIDR) and host names do not work.
+
 ## Token
 
-A request that sends one of the `DEPLOY_TOKEN` values is accepted from any IP:
+A request that sends one of the `token` values is accepted from any IP:
 
 ```
 Authorization: Bearer <token>
 ```
 
 A listed IP is accepted even without this header, and even if the token is
-wrong. Leave the variable unset to keep IP checks only. An update of the
-script does not start requiring a token, and does not accept one, until you
-set it.
+wrong. Omit `tokens` to keep IP checks only. An update of the script does not
+start requiring a token, and does not accept one, until you set it.
 
 Rules:
 
-- Separate tokens with spaces. A token itself cannot contain spaces.
-- Printable ASCII only. Generate one with `uuidgen`.
+- Printable ASCII only, no spaces. Generate one with `uuidgen`.
+- A `#` starts a comment when a space precedes it. Quote the token if it
+  contains `#`.
 - Any one of the tokens is accepted. Use more than one so a CI job and a
   laptop can have different tokens, and you can drop one without locking the
   other out.
@@ -137,7 +162,7 @@ Deploy a unit:
 git archive --format tar.gz HEAD | curl -N -H "Authorization: Bearer $TOKEN" --data-binary @- http://<server>:8099/<unit>
 ```
 
-Omit `-H` when the client IP is in `DEPLOY_ALLOW`.
+Omit `-H` when the client IP is in `allow`.
 
 The response is the `dpl deploy` output, sent as each step is written rather
 than after the deploy finishes. `-N` keeps curl from buffering that stream
@@ -176,7 +201,10 @@ current deploy is done.
 
 ## Update
 
-Download the files again (see [Install](#install)), then:
+Download the script and the service file again (see [Install](#install)), not
+`dpl-http.yaml`. If this host still sets `DEPLOY_ALLOW` or `DEPLOY_TOKEN`,
+create the yaml first (see [Config](#config)): the service does not start
+without it. Then:
 
 ```sh
 systemctl daemon-reload

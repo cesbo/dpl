@@ -1,15 +1,11 @@
 # /etc/systemd/system/dpl-http.service, script at /opt/dpl/dpl-http.py
+# Config: /opt/dpl/dpl-http.yaml (same directory as the script).
 [Unit]
 Description=dpl deploy over HTTP
 Wants=network-online.target
 After=network-online.target
 
 [Service]
-# Set with `systemctl edit dpl-http`, not in this file:
-#   DEPLOY_ALLOW  space-separated client IPs; a listed IP needs no token
-#   DEPLOY_TOKEN  space-separated; a matching Bearer token needs no listed IP
-# At least one of the two must be set. Either match accepts the request.
-Environment=DEPLOY_PORT=8099
 ExecStart=/usr/bin/python3 /opt/dpl/dpl-http.py
 Restart=always
 RestartSec=5

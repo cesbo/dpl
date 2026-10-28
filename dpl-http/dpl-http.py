@@ -3,17 +3,17 @@
 
     git archive --format tar.gz HEAD | curl -N -H "Authorization: Bearer $TOKEN" --data-binary @- http://<server>:8099/<unit>
 
-A request is accepted when the client IP is in DEPLOY_ALLOW (space-separated)
-or it sends one of the DEPLOY_TOKEN values (space-separated) as
-`Authorization: Bearer`. Either check is enough. At least one of the two must
-be set, or the service does not start. With no token, other connections are
-closed before the request is read. Saves the archive to a temp file and runs
-`dpl deploy <unit> <file>`. dpl's step lines are forwarded as they are written,
-so the client is not waiting on a silent connection. The status is 200 once dpl
-has started: it has to be sent before the deploy finishes, so a failed deploy is
-not an HTTP error. The last line is `dpl-http: ok` or `dpl-http: failed`.
-On failure the `Log: <path>` line is replaced with the tail of that
-log: the client cannot read server files.
+Settings are read from dpl-http.yaml in the same directory as this script.
+A request is accepted when the client IP is in `allow` or it sends one of the
+`tokens` values as `Authorization: Bearer`. Either check is enough. At least
+one of the two must be set, or the service does not start. With no token,
+other connections are closed before the request is read. Saves the archive to
+a temp file and runs `dpl deploy <unit> <file>`. dpl's step lines are forwarded
+as they are written, so the client is not waiting on a silent connection. The
+status is 200 once dpl has started: it has to be sent before the deploy
+finishes, so a failed deploy is not an HTTP error. The last line is
+`dpl-http: ok` or `dpl-http: failed`. On failure the `Log: <path>` line is
+replaced with the tail of that log: the client cannot read server files.
 
     curl -N -H "Authorization: Bearer $TOKEN" -X POST 'http://<server>:8099/<unit>/rollback?version=N'
 
@@ -22,9 +22,10 @@ optional) and answers like a deploy.
 
     curl -H "Authorization: Bearer $TOKEN" 'http://<server>:8099/<unit>/build.log?lines=1000'
 
-GET returns the last `lines` (default 1000) of {DPL_BASE}/state/<unit>/log/<name>
+GET returns the last `lines` (default 1000) of {base}/state/<unit>/log/<name>
 for build, runtime, timers and access logs.
 """
+import ipaddress
 import os
 import re
 import select
@@ -36,30 +37,316 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-ALLOW = set(os.environ.get('DEPLOY_ALLOW', '').split())
-PORT = int(os.environ.get('DEPLOY_PORT', '8099'))
-BASE = os.environ.get('DPL_BASE') or '/opt/dpl'
+ALLOW = set()
+PORT = 8099
+BASE = '/opt/dpl'
 LOGS = {'build.log', 'runtime.log', 'timers.log', 'access.log'}  # files in {base}/state/{unit}/log/
 UNIT = re.compile(r'[a-z0-9]+(-[a-z0-9]+)*')  # dpl unit names
 VERSION = re.compile(r'[1-9][0-9]*')  # ASCII only: int() would take digits clap rejects
 RUNTIME_V = re.compile(rf'runtime-v{VERSION.pattern}\.log')  # an app version's own log, as `Log:` names it
 LOG_LINE = re.compile(r'^ *Log: (\S+)\s*\Z', re.M)  # last line of a failed `dpl deploy`/`dpl rollback`
+TOKEN_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]*')
+# Either match accepts a request. Filled from dpl-http.yaml before serve.
+TOKENS = ()
+IGNORED_ENV = ('DEPLOY_ALLOW', 'DEPLOY_TOKEN', 'DEPLOY_PORT', 'DPL_BASE')
 
 
-def parse_tokens(raw):
-    """Space-separated DEPLOY_TOKEN values. Empty if the variable is unset."""
-    tokens = []
-    for token in raw.split():
-        if not token.isascii() or not token.isprintable():
-            sys.exit('DEPLOY_TOKEN must be printable ASCII without spaces')
-        tokens.append(token)
-    return tuple(tokens)
+def config_path():
+    """dpl-http.yaml next to this script, not the process cwd."""
+    return os.path.join(os.path.dirname(os.path.realpath(__file__)), 'dpl-http.yaml')
 
 
-# Either match accepts a request.
-TOKENS = parse_tokens(os.environ.get('DEPLOY_TOKEN', ''))
-if not ALLOW and not TOKENS:
-    sys.exit('set DEPLOY_ALLOW or DEPLOY_TOKEN')
+def fail(path, line, message):
+    where = f'{path}:{line}' if line else path
+    sys.exit(f'{where}: {message}')
+
+
+def cut_unquoted(line, pred):
+    """Index of the first unquoted char where pred(line, i) holds.
+
+    None if a quote is unclosed. -1 if pred never matches.
+    """
+    quote = None
+    i = 0
+    while i < len(line):
+        c = line[i]
+        if quote:
+            if quote == "'" and line.startswith("''", i):
+                i += 2
+                continue
+            if quote == '"' and c == '\\':
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            i += 1
+            continue
+        if c in '"\'':
+            quote = c
+            i += 1
+            continue
+        if pred(line, i):
+            return i
+        i += 1
+    if quote:
+        return None
+    return -1
+
+
+def strip_comment(line):
+    """Drop a `#` comment that is not inside quotes. None if a quote is unclosed."""
+    i = cut_unquoted(line, lambda s, j: s[j] == '#' and (j == 0 or s[j - 1].isspace()))
+    if i is None:
+        return None
+    return line if i < 0 else line[:i]
+
+
+def unquote(value, path, line):
+    """Scalar. Quoted strings keep their contents; anything else is literal."""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in '"\'':
+        body = value[1:-1]
+        if value[0] == "'":
+            if "'" in body.replace("''", ''):
+                fail(path, line, 'unescaped quote in string')
+            return body.replace("''", "'")
+        out = []
+        i = 0
+        while i < len(body):
+            if body[i] == '\\':
+                if i + 1 >= len(body):
+                    fail(path, line, 'trailing backslash in string')
+                n = body[i + 1]
+                if n == 'n':
+                    out.append('\n')
+                elif n == 't':
+                    out.append('\t')
+                elif n in '\\"':
+                    out.append(n)
+                else:
+                    fail(path, line, f'unknown escape \\{n}')
+                i += 2
+                continue
+            if body[i] == '"':
+                fail(path, line, 'unescaped quote in string')
+            out.append(body[i])
+            i += 1
+        return ''.join(out)
+    if value and value[0] in '[{*&!|>':
+        fail(path, line, 'use a block list or map; inline and multiline values are not supported')
+    return value
+
+
+def split_key(text, path, line):
+    """`key: value`. The first colon ends the key; the value may contain colons."""
+    i = cut_unquoted(text, lambda s, j: s[j] == ':')
+    if i is None:
+        fail(path, line, 'unclosed quote')
+    if i < 0:
+        fail(path, line, 'expected key: value')
+    key = unquote(text[:i].strip(), path, line)
+    if not key:
+        fail(path, line, 'empty key')
+    rest = text[i + 1:]
+    if rest.startswith(' '):
+        rest = rest[1:]
+    return key, rest.strip()
+
+
+def yaml_lines(text, path):
+    items = []
+    for n, raw in enumerate(text.splitlines(), 1):
+        if '\t' in raw:
+            fail(path, n, 'tab in indentation; use spaces')
+        stripped = strip_comment(raw)
+        if stripped is None:
+            fail(path, n, 'unclosed quote')
+        stripped = stripped.rstrip()
+        if not stripped.strip():
+            continue
+        indent = len(stripped) - len(stripped.lstrip(' '))
+        items.append((n, indent, stripped.strip()))
+    if items and items[0][2] == '---':
+        items = items[1:]
+    return items
+
+
+def parse_yaml(text, path):
+    """Block maps and scalar lists only, so the script stays dependency-free."""
+    items = yaml_lines(text, path)
+    if not items:
+        return {}
+    n, indent, text = items[0]
+    if indent != 0:
+        fail(path, n, 'top level must not be indented')
+    if text.startswith('- ') or text == '-':
+        fail(path, n, 'config must be a map')
+    value, i = parse_map(items, 0, path, 0)
+    if i != len(items):
+        fail(path, items[i][0], 'bad indent')
+    return value
+
+
+def parse_map(items, i, path, indent):
+    mapping = {}
+    while i < len(items):
+        n, got, text = items[i]
+        if got < indent:
+            break
+        if got > indent:
+            fail(path, n, 'bad indent')
+        if text == '---':
+            fail(path, n, 'multiple documents are not supported')
+        if text.startswith('- ') or text == '-':
+            fail(path, n, 'list item in a map')
+        key, rest = split_key(text, path, n)
+        if key in mapping:
+            fail(path, n, f'duplicate key {key!r}')
+        i += 1
+        if rest.startswith(('|', '>')):
+            fail(path, n, 'multiline strings are not supported')
+        if rest:
+            mapping[key] = unquote(rest, path, n)
+            continue
+        nxt = items[i] if i < len(items) else None
+        if nxt and (nxt[2].startswith('- ') or nxt[2] == '-') and nxt[1] >= indent:
+            mapping[key], i = parse_list(items, i, path, items[i][1])
+            continue
+        if i < len(items) and items[i][1] > indent:
+            mapping[key], i = parse_node(items, i, path, indent)
+            if i < len(items) and items[i][1] > indent:
+                fail(path, items[i][0], 'bad indent')
+            continue
+        mapping[key] = None
+    return mapping, i
+
+
+def parse_node(items, i, path, parent_indent):
+    n, indent, text = items[i]
+    if text.startswith('- ') or text == '-':
+        return parse_list(items, i, path, indent)
+    if indent <= parent_indent:
+        fail(path, n, 'bad indent')
+    return parse_map(items, i, path, indent)
+
+
+def parse_list(items, i, path, indent):
+    result = []
+    while i < len(items) and items[i][1] == indent:
+        n, _, text = items[i]
+        if text == '-':
+            fail(path, n, 'empty list item')
+        if not text.startswith('- '):
+            break
+        rest = text[2:].strip()
+        if not rest:
+            fail(path, n, 'empty list item')
+        if rest.startswith(('|', '>')):
+            fail(path, n, 'multiline strings are not supported')
+        i += 1
+        if i < len(items) and items[i][1] > indent:
+            fail(path, items[i][0], 'nested values under a list item are not supported')
+        result.append(unquote(rest, path, n))
+    return result, i
+
+
+def parse_port(value, path):
+    if not isinstance(value, str) or not re.fullmatch(r'[1-9][0-9]*', value):
+        fail(path, 0, 'port must be a number from 1 to 65535')
+    port = int(value)
+    if port > 65535:
+        fail(path, 0, 'port must be a number from 1 to 65535')
+    return port
+
+
+def parse_base(value, path):
+    if not isinstance(value, str) or not os.path.isabs(value):
+        fail(path, 0, 'base must be an absolute path')
+    return value
+
+
+def parse_allow(value, path):
+    if not isinstance(value, list):
+        fail(path, 0, 'allow must be a list of IPv4 addresses')
+    ips = set()
+    for item in value:
+        try:
+            ip = str(ipaddress.IPv4Address(item))
+        except (TypeError, ValueError):
+            fail(path, 0, f'allow: {item!r} is not an IPv4 address')
+        ips.add(ip)
+    return ips
+
+
+def parse_token_map(value, path):
+    """Named token entries. `projects` is the later per-unit limit; not read yet.
+
+    A token is a map, not a string, so that key can be added without a new shape.
+    Reject it now: a limit that is parsed and ignored would look enforced.
+    """
+    if not isinstance(value, dict):
+        fail(path, 0, 'tokens must be a map of name: {token: ...}')
+    found = []
+    seen = {}
+    for name, body in value.items():
+        if not TOKEN_NAME.fullmatch(name):
+            fail(path, 0, f'tokens: {name!r} is not a valid name')
+        if not isinstance(body, dict):
+            fail(path, 0, f'tokens.{name} must be a map with a token key')
+        for key in body:
+            if key == 'projects':
+                # Reserved: a later version limits this token to those units.
+                # Rejected now so a limit cannot be set and silently ignored.
+                fail(path, 0, f'tokens.{name}: projects is not supported yet; omit it')
+            if key != 'token':
+                fail(path, 0, f'tokens.{name}: unknown key {key!r}')
+        token = body.get('token')
+        if (
+            not isinstance(token, str)
+            or not token
+            or not token.isascii()
+            or not token.isprintable()
+            or any(c.isspace() for c in token)
+        ):
+            fail(path, 0, f'tokens.{name}: token must be printable ASCII without spaces')
+        if token in seen:
+            fail(path, 0, f'tokens.{name}: same token as {seen[token]}')
+        seen[token] = name
+        found.append(token)
+    return tuple(found)
+
+
+def interpret(data, path):
+    if not isinstance(data, dict):
+        fail(path, 0, 'config must be a map')
+    for key in data:
+        if key == 'projects':
+            fail(path, 0, 'projects belongs under a token, and is not supported yet')
+        if key not in ('port', 'base', 'allow', 'tokens'):
+            fail(path, 0, f'unknown key {key!r}')
+    port = 8099 if 'port' not in data else parse_port(data['port'], path)
+    base = '/opt/dpl' if 'base' not in data else parse_base(data['base'], path)
+    allow = set() if data.get('allow') is None else parse_allow(data['allow'], path)
+    tokens = () if data.get('tokens') is None else parse_token_map(data['tokens'], path)
+    if not allow and not tokens:
+        fail(path, 0, 'set allow or tokens')
+    return allow, port, base, tokens
+
+
+def load_config(path):
+    try:
+        with open(path, encoding='utf-8-sig') as f:
+            text = f.read()
+    except FileNotFoundError:
+        sys.exit(f'{path}: not found\ncopy dpl-http.yaml.example to {path} and set allow or tokens')
+    except UnicodeDecodeError:
+        fail(path, 0, 'not utf-8')
+    except OSError as e:
+        fail(path, 0, e.strerror or str(e))
+    cfg = interpret(parse_yaml(text, path), path)
+    ignored = [name for name in IGNORED_ENV if name in os.environ]
+    if ignored:
+        sys.stderr.write(f'ignored {", ".join(ignored)}; settings are in {path}\n')
+    return cfg
 
 
 def bearer(header):
@@ -214,6 +501,8 @@ class Handler(BaseHTTPRequestHandler):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 bufsize=0,
+                # yaml base, not the service environment: log reads and dpl must agree
+                env={**os.environ, 'DPL_BASE': BASE},
             )
         except OSError as e:
             return self.reply(500, f'{command} {unit}: {e.strerror}\n')
@@ -308,6 +597,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    global ALLOW, PORT, BASE, TOKENS
+    ALLOW, PORT, BASE, TOKENS = load_config(config_path())
     signal.signal(signal.SIGTERM, lambda *_: sys.exit())  # unwind: kill the running deploy, drop its temp archive
     # ponytail: one request at a time, so deploys never overlap; a second curl waits for the build in progress.
     Server(('', PORT), Handler).serve_forever()
