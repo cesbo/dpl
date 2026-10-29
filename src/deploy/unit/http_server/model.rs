@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     net::{
         IpAddr,
         SocketAddr,
@@ -27,10 +28,10 @@ const DEFAULT_ACCESS_LOG_MAX_FILES: u32 = 1;
 /// Host publish for an http-server. nginx always listens on port 80 inside the
 /// container; this only describes the host side of `podman --publish`.
 ///
-/// `http_port` left out means port 80 on every interface, unless `listen` is
-/// set. `listen` publishes on one host address and replaces that default.
-/// An explicit port together with `listen` is rejected; `http_port: false`
-/// (or `null`) with `listen` publishes only the address.
+/// `listen` left out means port 80 on every interface. A socket address
+/// publishes on that host address only. `listen: false` (or `null`) publishes
+/// nothing. An explicit `http_port` together with `listen` is rejected;
+/// `http_port` remains only so older configs still parse.
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(try_from = "HttpServerConfigRaw")]
 pub struct HttpServerConfig {
@@ -141,6 +142,55 @@ impl<'de> Deserialize<'de> for HttpPortField {
     }
 }
 
+/// `listen` as written. Absent is not `false`: only an absent field keeps the
+/// default publish.
+#[derive(Debug, Default)]
+enum ListenField {
+    #[default]
+    Absent,
+    Disabled,
+    Address(HttpListen),
+}
+
+impl<'de> Deserialize<'de> for ListenField {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ListenVisitor;
+
+        impl<'de> de::Visitor<'de> for ListenVisitor {
+            type Value = ListenField;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a socket address or false")
+            }
+
+            fn visit_bool<E: de::Error>(self, value: bool) -> Result<Self::Value, E> {
+                if value {
+                    Err(E::custom("must be an address or false"))
+                } else {
+                    Ok(ListenField::Disabled)
+                }
+            }
+
+            fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+                Ok(ListenField::Disabled)
+            }
+
+            fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+                Ok(ListenField::Disabled)
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                value.parse().map(ListenField::Address).map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_any(ListenVisitor)
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct HttpServerConfigRaw {
@@ -151,7 +201,7 @@ struct HttpServerConfigRaw {
     http_port: HttpPortField,
 
     #[serde(default)]
-    listen: Option<HttpListen>,
+    listen: ListenField,
 
     #[serde(default)]
     access_log: HttpAccessLogConfig,
@@ -162,18 +212,18 @@ impl TryFrom<HttpServerConfigRaw> for HttpServerConfig {
 
     fn try_from(raw: HttpServerConfigRaw) -> Result<Self, Self::Error> {
         let (http_port, listen) = match (raw.http_port, raw.listen) {
-            (HttpPortField::Present(HttpPort::Port(_)), Some(_)) => {
+            (HttpPortField::Present(HttpPort::Port(_)), ListenField::Address(_) | ListenField::Disabled) => {
                 return Err(
-                    "http_port and listen are mutually exclusive; omit http_port or set it to false"
-                        .to_string(),
+                    "http_port and listen are mutually exclusive; omit http_port".to_string(),
                 );
             }
             (
                 HttpPortField::Absent | HttpPortField::Present(HttpPort::Disabled),
-                Some(listen),
+                ListenField::Address(listen),
             ) => (HttpPort::Disabled, Some(listen)),
-            (HttpPortField::Absent, None) => (HttpPort::Port(DEFAULT_HTTP_PORT), None),
-            (HttpPortField::Present(port), None) => (port, None),
+            (_, ListenField::Disabled) => (HttpPort::Disabled, None),
+            (HttpPortField::Absent, ListenField::Absent) => (HttpPort::Port(DEFAULT_HTTP_PORT), None),
+            (HttpPortField::Present(port), ListenField::Absent) => (port, None),
         };
 
         Ok(Self {
@@ -390,6 +440,26 @@ access_log:
     }
 
     #[test]
+    fn listen_false_publishes_nothing() {
+        let config: HttpServerConfig = serde_yaml::from_str("listen: false\n").unwrap();
+        assert_eq!(config.http_port, HttpPort::Disabled);
+        assert!(config.listen.is_none());
+        assert!(!config.publishes_host_port());
+
+        let config: HttpServerConfig = serde_yaml::from_str("listen: null\n").unwrap();
+        assert!(!config.publishes_host_port());
+    }
+
+    #[test]
+    fn reject_listen_true() {
+        let err = serde_yaml::from_str::<HttpServerConfig>("listen: true\n").unwrap_err();
+        assert!(
+            err.to_string().contains("must be an address or false"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn listen_with_http_port_false_publishes_only_the_address() {
         let config: HttpServerConfig =
             serde_yaml::from_str("http_port: false\nlisten: \"192.0.2.10:80\"\n").unwrap();
@@ -481,7 +551,7 @@ access_log:
         )
         .unwrap_err();
         assert!(
-            err.to_string().contains("invalid type"),
+            err.to_string().contains("a socket address or false"),
             "unexpected error: {err}"
         );
     }

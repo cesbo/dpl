@@ -67,7 +67,7 @@ impl<'a> DomainUnit<'a> {
             return Err(DeployError::step_prepare(
                 format!("check http-server '{}'", self.config.server),
                 std::io::Error::other(
-                    "proxy cloudflare-tunnel requires no published host port (http_port: false, and no listen)",
+                    "proxy cloudflare-tunnel requires no published host port (listen: false)",
                 ),
             ));
         }
