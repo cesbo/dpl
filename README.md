@@ -261,11 +261,11 @@ proxy:
 Use `cloudflare-tunnel` when the domain is served through a
 [`cloudflare-tunnel`](#cloudflare-tunnel) unit: the peer nginx sees is the
 `cloudflared` container on the `dpl` network, not Cloudflare's public ranges.
-The allowlist is the whole container subnet, so the `http-server` must have
-`http_port: false` - the domain deploy refuses otherwise. A published port
-would deliver host-side traffic from inside that subnet (rootless podman
-proxies every connection; rootful masquerades loopback), letting such a
-client spoof `CF-Connecting-IP`.
+The allowlist is the whole container subnet, so the `http-server` must publish
+nothing on the host (`http_port: false`, and no `listen`) - the domain deploy
+refuses otherwise. A published port would deliver host-side traffic from
+inside that subnet (rootless podman proxies every connection; rootful
+masquerades loopback), letting such a client spoof `CF-Connecting-IP`.
 A list fetch failure aborts the deploy rather than rendering an empty
 allowlist.
 
@@ -291,11 +291,26 @@ access_log:
   max_files: 1
 ```
 
+To accept connections only on one host address, set `listen` instead of
+`http_port`. Podman binds that address, so a port opened for one interface's
+IPv6 is not reachable on the others:
+
+```yaml
+type: http-server
+listen: "[2001:db8::1]:80"
+```
+
 - `http_port` - host HTTP port to publish to nginx's container port 80
   (default: `80`); set `false` (or `null`) to publish nothing on the host. Use
   that when a `cloudflare-tunnel` unit is the only ingress: nginx stays
   reachable on the `dpl` network as `http://dpl--<name>:80`, with no inbound
   port on the host
+- `listen` - host address and port to publish to nginx's container port 80,
+  instead of every interface. A quoted socket address: `"[2001:db8::1]:80"`
+  or `"192.0.2.1:8080"`. The address is one assigned to the host, not an
+  interface name. Omit `http_port` or set it to `false`. Setting both
+  `listen` and a port is rejected. A link-local address with a zone
+  (`[fe80::1%eth0]:80`) is rejected: podman binds an address, not an interface
 - `access_log.max_size_mb` - access log rotation threshold in MiB
   (default: `200`)
 - `access_log.max_files` - number of archived access log files to keep
@@ -338,10 +353,10 @@ Notes:
   means the connector process stayed up, not that it registered with
   Cloudflare: a token it rejects at once fails the deploy; one revoked later
   shows up in the log, and serve restarts the connector with backoff.
-- Companion settings: `http_port: false` on the `http-server` unit so the host
-  publishes nothing, and `proxy: {type: cloudflare-tunnel}` on each `domain`
-  served through the tunnel so nginx trusts peers on the `dpl` network (the
-  connector) and logs the real client IP.
+- Companion settings: `http_port: false` and no `listen` on the `http-server`
+  unit so the host publishes nothing, and `proxy: {type: cloudflare-tunnel}`
+  on each `domain` served through the tunnel so nginx trusts peers on the
+  `dpl` network (the connector) and logs the real client IP.
 
 ## Database units
 

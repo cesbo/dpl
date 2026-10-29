@@ -21,7 +21,6 @@ use crate::{
     deploy::{
         DeployError,
         http_server::{
-            HttpPort,
             HttpServerConfig,
             HttpServerUnit,
         },
@@ -61,12 +60,15 @@ impl<'a> DomainUnit<'a> {
         // The tunnel allowlist is the whole container subnet, and a published port
         // delivers host-side traffic from inside that subnet (rootlessport, or
         // masqueraded loopback); such a client could then spoof the client IP.
+        // `listen` is a published port too, just bound to one address.
         if self.config.proxy == Some(ProxyConfig::CloudflareTunnel)
-            && server_config.http_port != HttpPort::Disabled
+            && server_config.publishes_host_port()
         {
             return Err(DeployError::step_prepare(
                 format!("check http-server '{}'", self.config.server),
-                std::io::Error::other("proxy cloudflare-tunnel requires http_port: false"),
+                std::io::Error::other(
+                    "proxy cloudflare-tunnel requires no published host port (http_port: false, and no listen)",
+                ),
             ));
         }
 
@@ -279,6 +281,28 @@ routes:
         assert!(
             err.to_string().contains("check http-server 'web'"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn cloudflare_tunnel_proxy_rejects_a_listen_publish() {
+        let base = TempDir::new().unwrap();
+        let ctx = test_ctx(&base);
+        let name = UnitName::new("site").unwrap();
+        let yaml = "server: web\nhosts:\n  - example.com\nproxy:\n  type: cloudflare-tunnel\n";
+
+        // `http_port: false` alone is not enough: `listen` still publishes a host port.
+        ctx.write_test_unit(
+            "web",
+            "type: http-server\nhttp_port: false\nlisten: \"[2001:db8::1]:80\"\n",
+        );
+        let err = DomainUnit::new(&ctx, &name, domain(yaml))
+            .install_inner()
+            .unwrap_err();
+        let message = err.failure().unwrap().1;
+        assert!(
+            message.contains("no published host port"),
+            "unexpected error: {message}"
         );
     }
 

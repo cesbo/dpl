@@ -1,6 +1,7 @@
 use std::{
     ffi::OsStr,
     io,
+    net::IpAddr,
     path::Path,
     process::{
         Command,
@@ -37,6 +38,16 @@ use crate::log::{
 
 /// How often the foreground runner polls the child for exit and the shutdown flag.
 const POLL: Duration = Duration::from_millis(200);
+
+/// `--publish` argument. `None` binds every interface; an address binds only
+/// that address. IPv6 is bracketed so the colons are not port separators.
+fn publish_spec(host: Option<IpAddr>, host_port: u16, container_port: u16) -> String {
+    match host {
+        None => format!("--publish={host_port}:{container_port}"),
+        Some(IpAddr::V4(ip)) => format!("--publish={ip}:{host_port}:{container_port}"),
+        Some(IpAddr::V6(ip)) => format!("--publish=[{ip}]:{host_port}:{container_port}"),
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum PodmanRunError {
@@ -100,9 +111,15 @@ impl PodmanRun {
         self.arg(arg);
     }
 
-    /// Publish a container’s port, or range of ports, to the host.
+    /// Publish a container port on every host interface.
     pub fn publish(&mut self, host_port: u16, container_port: u16) {
-        self.arg(format!("--publish={host_port}:{container_port}"))
+        self.arg(publish_spec(None, host_port, container_port));
+    }
+
+    /// Publish a container port on one host address. An IPv6 address is
+    /// bracketed, which is the form podman parses (`[2001:db8::1]:80:80`).
+    pub fn publish_at(&mut self, host: IpAddr, host_port: u16, container_port: u16) {
+        self.arg(publish_spec(Some(host), host_port, container_port));
     }
 
     /// Extra DNS name for the container on the dpl network.
@@ -209,5 +226,18 @@ mod tests {
         cmd.args(["-c", "exit 3"]);
 
         assert!(run_foreground(cmd, "test-container", &log).is_err());
+    }
+
+    #[test]
+    fn publish_spec_binds_every_interface_or_one_address() {
+        assert_eq!(publish_spec(None, 8080, 80), "--publish=8080:80");
+        assert_eq!(
+            publish_spec(Some("127.0.0.1".parse().unwrap()), 8080, 80),
+            "--publish=127.0.0.1:8080:80"
+        );
+        assert_eq!(
+            publish_spec(Some("2001:db8::1".parse().unwrap()), 80, 80),
+            "--publish=[2001:db8::1]:80:80"
+        );
     }
 }

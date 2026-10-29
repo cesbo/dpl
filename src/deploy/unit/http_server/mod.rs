@@ -31,8 +31,8 @@ use crate::{
     state::DeployState,
 };
 
-/// nginx always listens on 80 inside the container; `http_port` only maps it on
-/// the host. `dpl inspect` needs it to state the readiness criterion.
+/// nginx always listens on 80 inside the container; `http_port` and `listen`
+/// only map it on the host. `dpl inspect` needs it to state the readiness criterion.
 pub const HTTP_PORT: u16 = 80;
 const GLOBAL_CONFIG_FILE: &str = "00-dpl.conf";
 const GLOBAL_CONFIG: &str = include_str!("templates/00-dpl.conf");
@@ -156,7 +156,9 @@ impl<'a> HttpServerUnit<'a> {
         let mut cmd = crate::podman::PodmanRun::new(&container)
             .map_err(|e| RunError::new(format!("prepare podman to run '{}'", self.name), e))?;
 
-        if let HttpPort::Port(http_port) = self.config.http_port {
+        if let Some(listen) = &self.config.listen {
+            cmd.publish_at(listen.address, listen.port, HTTP_PORT);
+        } else if let HttpPort::Port(http_port) = self.config.http_port {
             cmd.publish(http_port, HTTP_PORT);
         }
 
