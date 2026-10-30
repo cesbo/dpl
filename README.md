@@ -58,8 +58,9 @@ per-unit directory:
 - `<base>/secrets/` - encrypted secrets (`master.key` plus `{name}.json`)
 - `<base>/backup/` - database dumps written before a destructive drop
 
-Containers join the podman network `dpl`. An app's container is named
-`dpl--<name>--<version>` and carries the DNS alias `dpl--<name>`, which stays
+Containers join the podman network `dpl`. A network this dpl creates is
+dual-stack; one that already exists is left unchanged. An app's container is
+named `dpl--<name>--<version>` and carries the DNS alias `dpl--<name>`, which stays
 the same across versions and is what `${<app>:url}` resolves to. Every other
 unit kind (`db-server`, `http-server`, `cloudflare-tunnel`) runs as
 `dpl--<name>`. An app container still named `dpl--<name>` by an older dpl is

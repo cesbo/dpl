@@ -153,9 +153,14 @@ pub fn run_podman(args: &[&str]) -> io::Result<String> {
 }
 
 /// Ensure the shared `dpl` network exists.
+///
+/// A new network is dual-stack. An IPv6 `--publish` DNATs only to a container
+/// address of the same family; without one, a host IPv6 listen accepts the
+/// handshake and never forwards. An existing network is left as it is: podman
+/// cannot add a subnet in place.
 pub fn ensure_network(name: &str) -> io::Result<()> {
     if !network_exists(name) {
-        run_podman(&["network", "create", name])?;
+        run_podman(&["network", "create", "--ipv6", name])?;
     }
 
     Ok(())
