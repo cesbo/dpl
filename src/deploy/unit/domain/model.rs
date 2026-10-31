@@ -49,6 +49,9 @@ pub enum ProxyConfig {
     /// ranges.
     CloudflareTunnel,
     Fastly,
+    /// bunny.net CDN. Trusted peers are the published edge addresses
+    /// (individual IPs, not CIDRs); the visitor IP arrives in `X-Real-IP`.
+    Bunny,
     Custom {
         header: String,
         proxies: Vec<String>,
@@ -469,6 +472,14 @@ routes:
         )
         .unwrap();
         assert_eq!(config.proxy, Some(ProxyConfig::CloudflareTunnel));
+    }
+
+    #[test]
+    fn parse_bunny_proxy() {
+        let config: DomainConfig =
+            serde_yaml::from_str("server: web\nhosts:\n  - example.com\nproxy:\n  type: bunny\n")
+                .unwrap();
+        assert_eq!(config.proxy, Some(ProxyConfig::Bunny));
     }
 
     #[test]

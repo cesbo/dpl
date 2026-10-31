@@ -1,9 +1,10 @@
 //! Resolve a [`ProxyConfig`] into the concrete header + IP allowlist that the
 //! nginx template needs.
 //!
-//! `custom` carries its data inline. `cloudflare` / `fastly` are fetched fresh
-//! from the provider's public IP-list API on every deploy; a fetch or decode
-//! failure aborts the deploy rather than rendering an empty allowlist.
+//! `custom` carries its data inline. `cloudflare` / `fastly` / `bunny` are
+//! fetched fresh from the provider's public IP-list API on every deploy; a
+//! fetch or decode failure aborts the deploy rather than rendering an empty
+//! allowlist.
 //! `cloudflare-tunnel` trusts the shared podman network instead, since the
 //! peer nginx sees is the `cloudflared` container.
 
@@ -38,8 +39,16 @@ const FASTLY_URL: &str = "https://api.fastly.com/public-ip-list";
 /// Header Fastly sets with the original client IP.
 const FASTLY_HEADER: &str = "Fastly-Client-IP";
 
-/// Header + trusted-proxy CIDR list ready for the nginx template
-/// (`real_ip_header` and one `set_real_ip_from` per entry).
+/// bunny.net's published edge server addresses (IPv4). Individual IPs, not CIDRs.
+const BUNNY_IPV4_URL: &str = "https://bunnycdn.com/api/system/edgeserverlist";
+/// bunny.net's published edge server addresses (IPv6).
+const BUNNY_IPV6_URL: &str = "https://bunnycdn.com/api/system/edgeserverlist/IPv6";
+/// Header bunny.net sets with the original client IP.
+const BUNNY_HEADER: &str = "X-Real-IP";
+
+/// Header + trusted-proxy address list ready for the nginx template
+/// (`real_ip_header` and one `set_real_ip_from` per entry). Addresses may be
+/// bare IPs or CIDRs; nginx accepts either.
 #[derive(Debug, Serialize)]
 pub struct ResolvedProxy {
     pub header: String,
@@ -72,7 +81,7 @@ pub enum ProxyError {
     },
 }
 
-/// Turn a configured proxy into its rendered header + CIDR allowlist.
+/// Turn a configured proxy into its rendered header + address allowlist.
 pub fn resolve(proxy: &ProxyConfig) -> Result<ResolvedProxy, ProxyError> {
     match proxy {
         ProxyConfig::Custom { header, proxies } => Ok(ResolvedProxy {
@@ -106,6 +115,16 @@ pub fn resolve(proxy: &ProxyConfig) -> Result<ResolvedProxy, ProxyError> {
             proxies.extend(body.ipv6_addresses);
             Ok(ResolvedProxy {
                 header: FASTLY_HEADER.to_string(),
+                proxies,
+            })
+        }
+        ProxyConfig::Bunny => {
+            // Two documents: a JSON array of addresses per family.
+            let mut proxies: Vec<String> = fetch("bunny", BUNNY_IPV4_URL)?;
+            let ipv6: Vec<String> = fetch("bunny", BUNNY_IPV6_URL)?;
+            proxies.extend(ipv6);
+            Ok(ResolvedProxy {
+                header: BUNNY_HEADER.to_string(),
                 proxies,
             })
         }
@@ -214,6 +233,20 @@ mod tests {
 
         assert_eq!(resolved.header, "X-Forwarded-For");
         assert_eq!(resolved.proxies, vec!["192.0.2.10"]);
+    }
+
+    #[test]
+    fn bunny_merges_ipv4_and_ipv6() {
+        let ipv4: Vec<String> =
+            serde_json::from_str(r#"["89.187.188.227", "185.93.1.243"]"#).unwrap();
+        let ipv6: Vec<String> = serde_json::from_str(r#"["2400:52e0:1500::714:1"]"#).unwrap();
+
+        let mut proxies = ipv4;
+        proxies.extend(ipv6);
+        assert_eq!(
+            proxies,
+            vec!["89.187.188.227", "185.93.1.243", "2400:52e0:1500::714:1"],
+        );
     }
 
     #[test]

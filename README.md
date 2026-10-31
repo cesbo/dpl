@@ -256,6 +256,7 @@ proxy:
 |--------|-------------------|------------------|
 | `cloudflare` | Cloudflare's public IP list, fetched at every deploy | `CF-Connecting-IP` |
 | `fastly` | Fastly's public IP list, fetched at every deploy | `Fastly-Client-IP` |
+| `bunny` | bunny.net's edge server addresses (individual IPs, not CIDRs), fetched at every deploy | `X-Real-IP` |
 | `custom` | `proxies:` list of CIDRs, inline | `header:` |
 | `cloudflare-tunnel` | the `dpl` podman network subnet(s) | `CF-Connecting-IP` |
 
@@ -280,7 +281,7 @@ Without `proxy`, or from any other peer, it is always nginx's `$scheme`.
 
 An `http-server` unit runs nginx and publishes HTTP on the host. nginx listens
 on container port 80 only and does not terminate TLS. For security the server
-must sit behind a proxy (Cloudflare, Fastly, or another); providing HTTPS is
+must sit behind a proxy (Cloudflare, Fastly, bunny.net, or another); providing HTTPS is
 the proxy's job. An `https_port` field is rejected.
 
 ```yaml
